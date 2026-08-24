@@ -26,10 +26,13 @@ jobs:
 
       - name: No service keys or private keys
         run: |
-          # sb_secret_* and service_role keys bypass RLS entirely; a private key is
-          # never legitimate here. The legacy publishable key is public by design
-          # and is checked separately below.
-          if git grep -nIE 'sb_secret_|service_role|BEGIN [A-Z ]*PRIVATE KEY' -- . ':!.github/workflows/guard.yml'; then
+          # Match key SHAPES, not role names. "service_role" on its own is a
+          # Postgres role that legitimately appears in SQL and in grant output —
+          # the first version of this check failed on a migration comment quoting
+          # an ACL. What actually indicates a leak is a secret key prefix, a JWT,
+          # or a private key block.
+          if git grep -nIE 'sb_secret_[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}|SERVICE_ROLE_KEY[[:space:]]*[:=]|BEGIN [A-Z ]*PRIVATE KEY' \
+               -- . ':!.github/workflows/guard.yml'; then
             echo "::error::A secret-shaped string is committed."
             exit 1
           fi
