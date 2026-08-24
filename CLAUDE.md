@@ -91,6 +91,14 @@ Fixed the attendance thing (+ 12 line body)    ← no prefix, past tense, has a 
 
 Fill in every section of `.github/PULL_REQUEST_TEMPLATE.md`; write "해당 없음" rather than deleting a section. Run the Korean text through `/humanize-korean` before posting so it doesn't read as machine-translated. Code identifiers, commit subjects, and inline code comments stay in English.
 
+## Scope rule
+
+**A feature that exists in `index.html` is a requirement, not a candidate for removal.** The president built every one of them deliberately; its presence in the code *is* the spec. Never propose dropping a feature to save rebuild effort, and never treat "probably nobody uses this" as a reason — usage lives in the production database, which we cannot read, so that claim is unverifiable by us.
+
+A broken feature (notice comments losing data, attendance not persisting) is a **bug to fix**, not a reason to delete the feature.
+
+What can be decided on technical grounds is *sequencing* — e.g. rebuild chat last, because its `chat-api` server logic isn't readable from this repo and guessing at it first would be wasteful. Cost estimates are information to hand the president; scope decisions are his.
+
 ## Known production defects
 
 All verified in source. The live deployment (`team-eysl-7vrd.vercel.app`) is byte-identical to `upstream/main`, so these are live right now. Do not quietly "fix" them as a side effect of other work — several are user-visible data loss and need to be reported to the president deliberately.
