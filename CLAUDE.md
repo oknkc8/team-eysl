@@ -125,8 +125,8 @@ Every PR follows the same cycle, and it repeats without asking for approval betw
 1. Open the PR (template filled, `/humanize-korean 가볍게` on the body).
 2. Self-review with codex: `gpt-5.6-sol`, `model_reasoning_effort=medium` for routine diffs, `high` when the diff touches auth, RLS, migrations, or money.
 3. Post the verdict as a PR comment — findings and their severity, in Korean.
-4. Fix anything critical or high, push to the same branch, and note the fix in the thread.
-5. Merge into `dev` once nothing critical remains.
+4. Fix every critical and high finding, push to the same branch, and note the fix in the thread.
+5. Merge into `dev` once no critical or high finding is left open. Mediums and lows may be merged with a note saying why they were deferred.
 
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
@@ -134,9 +134,9 @@ Reviews are cheap here because the diffs are small; keep them small so this stay
 
 `.env` is git-ignored and must stay that way — this repo is public. `.env.example` documents the shape.
 
-Our own Supabase project (ref `gmhzpcxchtcxxkgijohv`) is **dev**. The club president's separate project is production; we have no access to it and must never point a preview build at it. The legacy `index.html` still hardcodes his publishable key, so any deploy built from this repo without swapping keys writes to real member data.
+We have our own Supabase project for **dev**; its ref and connection details live in `.env`, not here. The club president's separate project is production — we have no access to it and must never point a preview build at it. The legacy `index.html` still hardcodes his publishable key, so any deploy built from this repo without swapping keys writes to real member data. `.github/workflows/guard.yml` enforces that his project ref appears nowhere except that one frozen file.
 
-Connection notes, verified 2026-08-24: free-tier direct connections (`db.<ref>.supabase.co`) are IPv6-only and unreachable from this host. Use the session pooler — `aws-0-ap-southeast-1.pooler.supabase.com:5432`, user `postgres.<ref>`. The project sits in Singapore, not Seoul, so expect ~70-80ms more round-trip than a Seoul project would give.
+Connection notes, verified 2026-08-24: free-tier direct connections (`db.<ref>.supabase.co`) are IPv6-only and unreachable from this host — use the session pooler (`aws-0-<region>.pooler.supabase.com:5432`, user `postgres.<ref>`). Our dev project is in Singapore rather than Seoul, so expect ~70-80ms more round-trip than a Seoul project would give.
 
 ## Scope rule
 

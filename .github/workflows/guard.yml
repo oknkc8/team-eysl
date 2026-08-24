@@ -1,0 +1,55 @@
+name: guard
+
+# This repository is public and the legacy app still carries the club president's
+# production Supabase credentials. These checks are the mechanical backstop for the
+# two mistakes that would actually hurt: leaking a secret, and pointing new code at
+# the production database.
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No committed .env
+        run: |
+          if git ls-files --error-unmatch .env 2>/dev/null; then
+            echo "::error::.env is tracked by git. It must stay ignored."
+            exit 1
+          fi
+          echo "ok: .env is not tracked"
+
+      - name: No service keys or private keys
+        run: |
+          # sb_secret_* and service_role keys bypass RLS entirely; a private key is
+          # never legitimate here. The legacy publishable key is public by design
+          # and is checked separately below.
+          if git grep -nIE 'sb_secret_|service_role|BEGIN [A-Z ]*PRIVATE KEY' -- . ':!.github/workflows/guard.yml'; then
+            echo "::error::A secret-shaped string is committed."
+            exit 1
+          fi
+          echo "ok: no secret-shaped strings"
+
+  production-isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Production project ref stays quarantined in the legacy file
+        run: |
+          # rbghqyhzvczavtjwiocc is the club president's LIVE project, holding real
+          # member data we have no authority over. It legitimately appears in the
+          # frozen legacy index.html; anywhere else means new code could write to it.
+          PROD_REF=rbghqyhzvczavtjwiocc
+          HITS=$(git grep -lF "$PROD_REF" -- . ':!index.html' ':!.github/workflows/guard.yml' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::Production project ref found outside the legacy file:"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "ok: production ref confined to index.html"
