@@ -62,6 +62,22 @@ VAPID public key is hardcoded at `index.html:1341`. Subscribe/unsubscribe (~1350
 
 The president edits `upstream` by uploading files through the GitHub web UI (every upstream commit is "Add files via upload"), so `upstream/main` can move without warning and without a merge-friendly history. Pull from it; don't expect to rebase onto it cleanly.
 
+## Workflow rules
+
+**Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`. `main` exists only to track the president's upstream — don't develop on it.
+
+Branch names: `feat/…`, `fix/…`, `docs/…`, `chore/…` (e.g. `fix/attendance-persist`).
+
+**Commit messages are one line.** Imperative subject, no body, no `Co-Authored-By`, no `Claude-Session` trailer, no attribution to any AI tool. Subjects in English, matching the repo's existing history.
+
+```
+Add CLAUDE.md with architecture map          ← good
+Persist admin attendance check-ins           ← good
+Fix the thing (+ 12 lines of explanation)    ← too long, drop the body
+```
+
+**PR descriptions and all prose docs are written in Korean** — PR bodies, README, guides, ADRs. Fill in every section of `.github/PULL_REQUEST_TEMPLATE.md` (요약 / 목적 / 변경사항 / 검증 방법 / 참고); write "해당 없음" rather than deleting a section. Run the text through `/humanize-korean` before posting so it doesn't read as machine-translated. Code identifiers, commit subjects, and inline code comments stay in English.
+
 ## Known production defects
 
 All verified in source. The live deployment (`team-eysl-7vrd.vercel.app`) is byte-identical to `upstream/main`, so these are live right now. Do not quietly "fix" them as a side effect of other work — several are user-visible data loss and need to be reported to the president deliberately.
