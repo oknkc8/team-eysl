@@ -101,6 +101,43 @@ Fill in every section of `.github/PULL_REQUEST_TEMPLATE.md`; write "해당 없�
 
 The light pass is deliberately conservative and reports "이미 좋습니다" when the text needs nothing, so a clean PR body costs one quick call and no edits.
 
+## Feature team
+
+Non-trivial feature work runs through a standing team of subagents, spawned in parallel from one message. Small mechanical edits don't need it — a new screen, a schema change, or anything touching auth does.
+
+| Role | Agent type | Owns |
+|---|---|---|
+| Architect | `oh-my-claudecode:architect` (opus) | stack decisions, module boundaries, where authority lives |
+| PM | `oh-my-claudecode:planner` (opus) | scope, phasing, what ships in this slice |
+| DBA | `everything-claude-code:database-reviewer` | schema, RLS policies, constraints, migration safety |
+| UX | `oh-my-claudecode:designer` | IA, routes, component composition, states and save feedback |
+| Reviewer | codex `gpt-5.6-sol` via CLI | adversarial second opinion; see `<codex_delegation>` |
+
+Two things that cost real time when skipped:
+
+- **A teammate's idle notification is not a report.** Their final message does not reach the lead automatically — ask for the full deliverable via `SendMessage` (bare name, no `@session` suffix) or it is lost.
+- **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
+
+## PR review loop
+
+Every PR follows the same cycle, and it repeats without asking for approval between rounds:
+
+1. Open the PR (template filled, `/humanize-korean 가볍게` on the body).
+2. Self-review with codex: `gpt-5.6-sol`, `model_reasoning_effort=medium` for routine diffs, `high` when the diff touches auth, RLS, migrations, or money.
+3. Post the verdict as a PR comment — findings and their severity, in Korean.
+4. Fix anything critical or high, push to the same branch, and note the fix in the thread.
+5. Merge into `dev` once nothing critical remains.
+
+Reviews are cheap here because the diffs are small; keep them small so this stays true.
+
+## Environments
+
+`.env` is git-ignored and must stay that way — this repo is public. `.env.example` documents the shape.
+
+Our own Supabase project (ref `gmhzpcxchtcxxkgijohv`) is **dev**. The club president's separate project is production; we have no access to it and must never point a preview build at it. The legacy `index.html` still hardcodes his publishable key, so any deploy built from this repo without swapping keys writes to real member data.
+
+Connection notes, verified 2026-08-24: free-tier direct connections (`db.<ref>.supabase.co`) are IPv6-only and unreachable from this host. Use the session pooler — `aws-0-ap-southeast-1.pooler.supabase.com:5432`, user `postgres.<ref>`. The project sits in Singapore, not Seoul, so expect ~70-80ms more round-trip than a Seoul project would give.
+
 ## Scope rule
 
 **A feature that exists in `index.html` is a requirement, not a candidate for removal.** The president built every one of them deliberately; its presence in the code *is* the spec. Never propose dropping a feature to save rebuild effort, and never treat "probably nobody uses this" as a reason — usage lives in the production database, which we cannot read, so that claim is unverifiable by us.

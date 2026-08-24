@@ -1,0 +1,24 @@
+# Secrets — this repository is PUBLIC. Nothing here may ever be committed.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+.supabase/
+
+# Dependencies / build output
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Tooling scratch
+.claude/worktrees/
+_workspace/
+.omc/
+.DS_Store
+*.log
+npm-debug.log*
