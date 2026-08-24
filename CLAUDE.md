@@ -89,7 +89,17 @@ Fixed the attendance thing (+ 12 line body)    ← no prefix, past tense, has a 
 
 **Headings are English; prose is Korean.** That split applies to PR bodies, README, guides, and ADRs alike — every title, section heading, and subheading in English (Summary / Purpose / Changes / Verification / References), with the text under them written in Korean. PR titles are English too.
 
-Fill in every section of `.github/PULL_REQUEST_TEMPLATE.md`; write "해당 없음" rather than deleting a section. Run the Korean text through `/humanize-korean` before posting so it doesn't read as machine-translated. Code identifiers, commit subjects, and inline code comments stay in English.
+Fill in every section of `.github/PULL_REQUEST_TEMPLATE.md`; write "해당 없음" rather than deleting a section. Code identifiers, commit subjects, and inline code comments stay in English.
+
+**`/humanize-korean` strips translationese from Korean prose. Match the effort to the text:**
+
+| Text | Call |
+|---|---|
+| README, guides, ADRs — anything substantial | Full run (`/humanize-korean`), which diagnoses then rewrites |
+| PR body | One light pass right before opening the PR: `/humanize-korean 가볍게` — a final check, not a rewrite |
+| Commit subjects, short replies, inline comments | Skip — too short to be worth a call |
+
+The light pass is deliberately conservative and reports "이미 좋습니다" when the text needs nothing, so a clean PR body costs one quick call and no edits.
 
 ## Scope rule
 
