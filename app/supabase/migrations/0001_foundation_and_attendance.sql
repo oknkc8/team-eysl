@@ -10,6 +10,9 @@
 -- ---------------------------------------------------------------------- members
 create table if not exists public.members (
   id                               uuid primary key default gen_random_uuid(),
+  -- SET NULL, deliberately not CASCADE. The club soft-deletes by setting
+  -- status='blocked'; cascading from auth.users would let deleting one login
+  -- destroy that member's attendance and record history along with it.
   auth_user_id                     uuid unique references auth.users(id) on delete set null,
   nickname                         text not null,
   short_name                       text,
@@ -193,6 +196,11 @@ create policy applications_self_delete on public.activity_applications
 -- attendance: deny-all. RLS is on with zero policies and the grants are revoked
 -- below, so the table is reachable only through the RPCs. Server authority is
 -- then the only path, rather than a policy we hope is written correctly.
+--
+-- The tradeoff, stated so nobody rediscovers it the hard way: with no policy
+-- there is no second line of defense. A bug in is_staff() or in an RPC body is
+-- the whole story here, where a policy-backed table would still refuse the row.
+-- That is why is_staff() is tested directly rather than only through the UI.
 revoke all on public.attendance from anon, authenticated;
 
 grant select on public.member_public_v to authenticated;
