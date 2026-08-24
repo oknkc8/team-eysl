@@ -56,11 +56,37 @@ VAPID public key is hardcoded at `index.html:1341`. Subscribe/unsubscribe (~1350
 - `xlsx@0.18.5` (SheetJS) — parses uploaded Excel files for bulk swim-record import (`extractExcelResults`, ~line 3038+).
 - `pdfjs-dist@3.11.174` — parses uploaded PDF files for record import (worker configured `index.html:958-959`, usage ~line 3084+).
 
+## Repo topology
+
+`origin` is **oknkc8/team-eysl**, a fork we own (ADMIN). `upstream` is **cutepms123-blip/team-eysl**, the club president's original — we have READ only there and must never assume push access. Work happens on `dev` and branches off it. Both repos are **public**, so no key, token, or `.env` may ever be committed.
+
+The president edits `upstream` by uploading files through the GitHub web UI (every upstream commit is "Add files via upload"), so `upstream/main` can move without warning and without a merge-friendly history. Pull from it; don't expect to rebase onto it cleanly.
+
+## Known production defects
+
+All verified in source. The live deployment (`team-eysl-7vrd.vercel.app`) is byte-identical to `upstream/main`, so these are live right now. Do not quietly "fix" them as a side effect of other work — several are user-visible data loss and need to be reported to the president deliberately.
+
+| Defect | Where | Note |
+|---|---|---|
+| Admin attendance check-in never persisted | `setAtt`/`togglePaid` `index.html:3780-3781`, state in `attRecords` `:1178` | No DB call anywhere in the path, and no attendance table exists. Lost on every refresh. |
+| Notice comments overwrite each other | `addComment()` `:2001` | Whole jsonb array replaced from a stale client copy, so concurrent comments silently destroy one another. Author is stored as a nickname string, not `member_id`. |
+| Training capacity race | `applyTraining()` `:2384` | Browser decides seat-vs-waitlist and computes `wait_order` from a cached count, then sends it. Simultaneous applicants overbook or collide on order. |
+| Attribute-context XSS | `:3779` | Member nickname interpolated unescaped into `onclick="setAtt('${e.id}','${n}',…)"` — an apostrophe in a nickname becomes executable script. Line `:3764`, fifteen lines up, escapes correctly, so this is an omission rather than a policy. |
+| 4 of 6 admin routes have no router guard | `showPage()` `:1629-1648` | Only `recordUploadManager` (`:1641`) and `memberApproval` (`:1644`) check a role. `memberAdmin`, `adminSchedule`, `applicationAdmin`, `attendanceAdmin` are hidden only by drawer link visibility (`applyRole()` `:1813`), so `showPage('memberAdmin')` from devtools opens them. |
+| Waitlist offer expiry may never advance | `:1330`, `:2399`, `:2410` | UI promises "자동으로 다음 대기자에게 기회가 넘어갑니다" but the client only *filters out* expired offers; nothing promotes the next person. Whether a server-side job exists is UNVERIFIED. |
+| `activities.details.participants/waitlist/offer` is dead data | written `:3590`, read `:1206`, overwritten `:1312` | `loadPersistentContent` rebuilds participants from `activity_applications` on every load, so the jsonb copy is write-only. Two sources of truth; the table is the real one. |
+
+**Not verifiable from this repo** (needs the president's Supabase dashboard): whether RLS actually enforces anything, the source of all 14 RPCs and the 3 Edge Functions, and whether `member_history_v4` returns real per-event attendance or merely synthesizes from the `members.historical_*` counters. Treat every claim about server-side enforcement as an assumption until checked — and do not probe production authorization to find out, since that system isn't ours.
+
+## External integrations
+
+`myranking.co.kr` (Korean swim ranking site) is **off-limits to automated access**. Its `robots.txt` is `User-agent: * / Disallow: /` for everything except Google/Naver/Daum/Bing, with an operator comment stating they enforce it server-side with rate limits. Do not build a fetcher or scraper against it regardless of scale. The legitimate paths are (a) written permission from the operator, or (b) the better option anyway: meet result sheets are already public documents that the club already possesses, and myranking is itself just an OCR aggregator of them — so the automation win is the *parser*, not a fetch. `whoisfast.com` has a permissive robots.txt but masks athlete names by one character, so it cannot supply the 실명 the record matcher keys on. `data.go.kr` publishes no swim-record dataset.
+
 <codex_delegation>
 Global `~/.claude/CLAUDE.md` already carries the full ruleset — do not duplicate it here. Project-specific only:
 
 - Verified on this machine 2026-08-24: `codex-cli 0.147.0`, model `gpt-5.6-sol`.
-- Sessions on this repo run inside a git worktree. A `codex exec "$(cat prompt.md)"` written inline is refused by worktree isolation ("too complex to verify"). Put the invocation in a wrapper `.sh` and run it as one plain command instead.
+- Background sessions on this repo are forced into a git worktree, where a `codex exec "$(cat prompt.md)"` written inline is refused ("too complex to verify"). Put the invocation in a wrapper `.sh` and run it as one plain command instead.
 - Canonical call (the `-o` artifact is the source of truth, never stdout):
   `codex exec -m gpt-5.6-sol -c model_reasoning_effort="high" --json -o /path/verdict.txt "$PROMPT"`
 - 2026-08-24, this repo: the `codex:rescue` skill returned a contentless `"Complete."` twice in a row despite 51 real `tool_uses` and 10+ min runtime; a `SendMessage` resume produced the same. A *completed* status with an empty result means the delivery channel failed, not that the work is absent. One retry, then drop the codex track and verify load-bearing facts directly.
