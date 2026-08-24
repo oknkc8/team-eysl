@@ -1,7 +1,14 @@
 # Secrets — this repository is PUBLIC. Nothing here may ever be committed.
-.env
-.env.*
+# Match anywhere in the tree, not just the root, and cover the variants people
+# actually create: .env~, dev.env, production.env, .env.local.bak.
+.env*
+**/.env*
+*.env
+**/*.env
+*.env.*
+# Re-include the template. Must come after the patterns above to win.
 !.env.example
+!**/.env.example
 .envrc
 .envrc.*
 *.pem

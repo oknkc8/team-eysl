@@ -11,7 +11,8 @@ TEAM EYSL — a Korean swimming club's member/training-management PWA ("TEAM EYS
 - `index.html` (~3,850 lines) **is** the app: markup, all CSS (one `<style>` block), and all JS (five `<script>` blocks, ~270 flat global functions) in one file.
 - `sw.js` — service worker (network-first fetch, web push handling).
 - `manifest.webmanifest`, `icon-*.png` — PWA manifest/icons.
-- There is no `package.json`, no bundler, no framework, no test suite, no linter, and no CI. Every commit in `git log` is "Add files via upload" — this repo has historically been maintained by uploading edited files through the GitHub web UI, not from a local git workflow. Expect the code itself to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
+- The legacy app has no build step of its own: no bundler, no framework, no tests. Every commit on `upstream` is "Add files via upload" — the president maintains it by uploading edited files through the GitHub web UI. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
+- The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest, ESLint), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
 
 ## Commands
 
@@ -126,7 +127,9 @@ Every PR follows the same cycle, and it repeats without asking for approval betw
 2. Self-review with codex: `gpt-5.6-sol`, `model_reasoning_effort=medium` for routine diffs, `high` when the diff touches auth, RLS, migrations, or money.
 3. Post the verdict as a PR comment — findings and their severity, in Korean.
 4. Fix every critical and high finding, push to the same branch, and note the fix in the thread.
-5. Merge into `dev` once no critical or high finding is left open. Mediums and lows may be merged with a note saying why they were deferred.
+5. Merge into `dev` only when **all three** hold: CI is green, no critical or high finding is left open, and anything the change claims to do has actually been exercised (a migration applied and queried back, a screen loaded, a test run). Mediums and lows may ship with a note saying why they were deferred.
+
+A review finding is not fixed because the diff changed — it is fixed when the fix is verified the same way the defect was found. Grants were the lesson: `revoke ... from public` looked correct and left `anon` holding EXECUTE until the live ACL was queried.
 
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
@@ -148,15 +151,17 @@ What can be decided on technical grounds is *sequencing* — e.g. rebuild chat l
 
 ## Known production defects
 
-All verified in source. The live deployment (`team-eysl-7vrd.vercel.app`) is byte-identical to `upstream/main`, so these are live right now. Do not quietly "fix" them as a side effect of other work — several are user-visible data loss and need to be reported to the president deliberately.
+All verified in source, and the live deployment is byte-identical to `upstream/main`, so these are live right now. Do not quietly "fix" them as a side effect of other work — several are user-visible data loss and need to be reported to the president deliberately.
+
+Deliberately kept vague: this repo is public and these defects sit in someone else's running app holding real member data. Enough detail to work from, not enough to hand someone a recipe. Keep it that way until the president has fixed them or handed us the app.
 
 | Defect | Where | Note |
 |---|---|---|
 | Admin attendance check-in never persisted | `setAtt`/`togglePaid` `index.html:3780-3781`, state in `attRecords` `:1178` | No DB call anywhere in the path, and no attendance table exists. Lost on every refresh. |
 | Notice comments overwrite each other | `addComment()` `:2001` | Whole jsonb array replaced from a stale client copy, so concurrent comments silently destroy one another. Author is stored as a nickname string, not `member_id`. |
 | Training capacity race | `applyTraining()` `:2384` | Browser decides seat-vs-waitlist and computes `wait_order` from a cached count, then sends it. Simultaneous applicants overbook or collide on order. |
-| Attribute-context XSS | `:3779` | Member nickname interpolated unescaped into `onclick="setAtt('${e.id}','${n}',…)"` — an apostrophe in a nickname becomes executable script. Line `:3764`, fifteen lines up, escapes correctly, so this is an omission rather than a policy. |
-| 4 of 6 admin routes have no router guard | `showPage()` `:1629-1648` | Only `recordUploadManager` (`:1641`) and `memberApproval` (`:1644`) check a role. `memberAdmin`, `adminSchedule`, `applicationAdmin`, `attendanceAdmin` are hidden only by drawer link visibility (`applyRole()` `:1813`), so `showPage('memberAdmin')` from devtools opens them. |
+| Attribute-context XSS in the attendance admin render | `:3779` | A member-controlled value reaches a script context unescaped. The render fifteen lines above escapes correctly, so this is an omission rather than a policy. |
+| Most admin routes have no router guard | `showPage()` `:1629-1648` | Only two of the admin screens check a role; the rest rely on drawer link visibility (`applyRole()` `:1813`), which is presentation, not access control. |
 | Waitlist offer expiry may never advance | `:1330`, `:2399`, `:2410` | UI promises "자동으로 다음 대기자에게 기회가 넘어갑니다" but the client only *filters out* expired offers; nothing promotes the next person. Whether a server-side job exists is UNVERIFIED. |
 | `activities.details.participants/waitlist/offer` is dead data | written `:3590`, read `:1206`, overwritten `:1312` | `loadPersistentContent` rebuilds participants from `activity_applications` on every load, so the jsonb copy is write-only. Two sources of truth; the table is the real one. |
 
