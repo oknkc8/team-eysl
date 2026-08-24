@@ -24,3 +24,6 @@ _workspace/
 .DS_Store
 *.log
 npm-debug.log*
+
+# supabase CLI scratch
+app/supabase/.temp/
