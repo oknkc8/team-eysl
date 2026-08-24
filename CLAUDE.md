@@ -66,17 +66,30 @@ The president edits `upstream` by uploading files through the GitHub web UI (eve
 
 **Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`. `main` exists only to track the president's upstream — don't develop on it.
 
-Branch names: `feat/…`, `fix/…`, `docs/…`, `chore/…` (e.g. `fix/attendance-persist`).
+**Commit subjects and PR titles both carry a Conventional Commits prefix**, drawn from the same set as the branch prefix:
 
-**Commit messages are one line.** Imperative subject, no body, no `Co-Authored-By`, no `Claude-Session` trailer, no attribution to any AI tool. Subjects in English, matching the repo's existing history.
+| Prefix | Use for | Branch |
+|---|---|---|
+| `feat:` | new user-facing capability | `feat/…` |
+| `fix:` | defect repair | `fix/…` |
+| `docs:` | documentation only | `docs/…` |
+| `chore:` | tooling, config, workflow, deps | `chore/…` |
+| `refactor:` | behavior-preserving restructure | `refactor/…` |
+| `test:` | tests only | `test/…` |
+
+So a branch `fix/attendance-persist` carries commits like `fix: persist admin attendance check-ins` and opens a PR titled the same way.
+
+**Commit subjects are one line.** Prefix, then an imperative phrase in English. No body, no `Co-Authored-By`, no `Claude-Session` trailer, no attribution to any AI tool.
 
 ```
-Add CLAUDE.md with architecture map          ← good
-Persist admin attendance check-ins           ← good
-Fix the thing (+ 12 lines of explanation)    ← too long, drop the body
+fix: persist admin attendance check-ins        ← good
+docs: add CLAUDE.md with architecture map      ← good
+Fixed the attendance thing (+ 12 line body)    ← no prefix, past tense, has a body
 ```
 
-**PR descriptions and all prose docs are written in Korean** — PR bodies, README, guides, ADRs. Fill in every section of `.github/PULL_REQUEST_TEMPLATE.md` (요약 / 목적 / 변경사항 / 검증 방법 / 참고); write "해당 없음" rather than deleting a section. Run the text through `/humanize-korean` before posting so it doesn't read as machine-translated. Code identifiers, commit subjects, and inline code comments stay in English.
+**Headings are English; prose is Korean.** That split applies to PR bodies, README, guides, and ADRs alike — every title, section heading, and subheading in English (Summary / Purpose / Changes / Verification / References), with the text under them written in Korean. PR titles are English too.
+
+Fill in every section of `.github/PULL_REQUEST_TEMPLATE.md`; write "해당 없음" rather than deleting a section. Run the Korean text through `/humanize-korean` before posting so it doesn't read as machine-translated. Code identifiers, commit subjects, and inline code comments stay in English.
 
 ## Known production defects
 
