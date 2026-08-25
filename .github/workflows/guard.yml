@@ -46,7 +46,25 @@ jobs:
           # whatever the value was. The one file this step claims to protect was
           # the one file it could never flag. Strip the prefix before deciding,
           # and keep the full line for the error message.
-          PLACEHOLDER='your-|example|placeholder|xxx|changeme|\$\{|\$[A-Z_]'
+          # Two more shapes count as "not a literal", both added after this step
+          # failed on the very change that removed the last hardcoded password:
+          #
+          #   export const PASSWORD = readRunPassword()   <- a function call
+          #   PWTEST_PASSWORD=<something>                 <- a docs placeholder
+          #
+          # An identifier followed by () is code fetching a value, not a value;
+          # <angle brackets> is the conventional way to write "put yours here".
+          #
+          # Both are anchored to the assignment, and that anchoring is the whole
+          # point. An unanchored `\(\)` let this line through:
+          #
+          #   PGPASSWORD='hunter2correcthorse' # see readRunPassword()
+          #
+          # — a real secret excused by a function name in a trailing comment.
+          # Requiring the call or the placeholder to BE the value keeps the
+          # narrowing honest: it recognises two shapes that cannot be a password,
+          # rather than any line that happens to mention one.
+          PLACEHOLDER='your-|example|placeholder|xxx|changeme|\$\{|\$[A-Z_]|=[[:space:]]*<[^>]+>|=[[:space:]]*[A-Za-z_][A-Za-z0-9_.]*\(\)[[:space:]]*;?[[:space:]]*$'
           HITS=$(git grep -nIE '(PASSWORD|PASSWD|PGPASSWORD)[[:space:]]*=[[:space:]]*.{6,}' \
                    -- . ':!.github/workflows/guard.yml' || true)
           REAL=$(printf '%s\n' "$HITS" | while IFS= read -r line; do
