@@ -13,7 +13,9 @@ export function HomePage() {
         <Tile to="/notices" title="공지사항" desc="새 소식과 댓글" />
         <Tile to="/schedule" title="일정" desc="훈련·대회 신청과 대기" />
         <Tile to="/attendance" title="내 출석" desc="출석·지각 기록 보기" />
+        <Tile to="/records" title="기록" desc="개인 최고 기록과 변화" />
         {isStaff(user) && <Tile to="/admin/attendance" title="출석 관리" desc="일정별 출석 체크" />}
+        {isStaff(user) && <Tile to="/admin/records/new" title="기록 등록" desc="회원별 대회 기록 입력" />}
       </nav>
       <button
         onClick={() => void supabase.auth.signOut()}

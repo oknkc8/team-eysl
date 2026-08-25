@@ -11,6 +11,8 @@ import { NoticeEditPage } from '../features/notices/NoticeEditPage'
 import { ScheduleListPage } from '../features/schedule/ScheduleListPage'
 import { ActivityDetailPage } from '../features/schedule/ActivityDetailPage'
 import { AdminActivityEditPage } from '../features/schedule/AdminActivityEditPage'
+import { MyRecordsPage } from '../features/records/MyRecordsPage'
+import { AdminRecordEditPage } from '../features/records/AdminRecordEditPage'
 
 // Access is decided by position in this tree, not by a check inside each screen.
 export const router = createBrowserRouter([
@@ -25,11 +27,16 @@ export const router = createBrowserRouter([
       { path: '/notices/:noticeId', element: <NoticeDetailPage /> },
       { path: '/schedule', element: <ScheduleListPage /> },
       { path: '/schedule/:activityId', element: <ActivityDetailPage /> },
+      { path: '/records', element: <MyRecordsPage /> },
       {
         element: <RequireStaff />,
         children: [
           { path: '/admin/attendance', element: <AdminActivityListPage /> },
           { path: '/admin/attendance/:activityId', element: <AdminCheckInPage /> },
+          // Under /admin for the same reason the schedule editor is: a member
+          // typing the URL meets RequireStaff rather than a sibling member
+          // route that ranked matching might award them instead.
+          { path: '/admin/records/new', element: <AdminRecordEditPage /> },
           // Under /admin rather than beside /schedule/:activityId, so creating
           // and editing cannot be reached by a member typing a URL that ranked
           // matching might award to the sibling detail route.

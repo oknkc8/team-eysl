@@ -83,3 +83,20 @@ describe('schedule routes are guarded by tree position', () => {
     expect(guardsFor(`/admin/schedule/${ACTIVITY_ID}/edit`)).not.toContain('/schedule/:activityId')
   })
 })
+
+describe('record routes are guarded by tree position', () => {
+  it('lets any approved member read their own records', () => {
+    expect(guardsFor('/records')).toEqual(['auth', '/records'])
+  })
+
+  // Filing a result is staff-only in the tree, and can_manage_records() is what
+  // enforces it in the database — upsert_record() raises 42501 for anyone else,
+  // so reaching this screen is not the same as being allowed to write.
+  it('puts filing a record behind RequireStaff', () => {
+    expect(guardsFor('/admin/records/new')).toEqual(['auth', 'staff', '/admin/records/new'])
+  })
+
+  it('does not let the member records route swallow the admin path', () => {
+    expect(guardsFor('/admin/records/new')).not.toContain('/records')
+  })
+})
