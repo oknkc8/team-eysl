@@ -17,6 +17,20 @@ if (!parsed.success) {
   )
 }
 
+// The club president's live project, holding real member data we have no
+// authority over. The CI guard only inspects committed files, so a mistyped
+// deployment variable would sail past it and let this build write to production.
+// Refuse at startup instead: a blank screen is recoverable, corrupted attendance
+// records are not.
+const FORBIDDEN_PROJECT_REF = 'rbghqyhzvczavtjwiocc'
+
+if (parsed.data.VITE_SUPABASE_URL.includes(FORBIDDEN_PROJECT_REF)) {
+  throw new Error(
+    'VITE_SUPABASE_URL points at the production project. This build must never ' +
+      'connect to it — point it at our own project instead.',
+  )
+}
+
 export const env = {
   SUPABASE_URL: parsed.data.VITE_SUPABASE_URL,
   SUPABASE_PUBLISHABLE_KEY: parsed.data.VITE_SUPABASE_PUBLISHABLE_KEY,

@@ -6,6 +6,10 @@
 *.env
 **/*.env
 *.env.*
+# Editor backups of name-prefixed env files: dev.env~, production.env.bak
+*.env~
+**/*.env~
+*.env.*~
 # Re-include the template. Must come after the patterns above to win.
 !.env.example
 !**/.env.example
