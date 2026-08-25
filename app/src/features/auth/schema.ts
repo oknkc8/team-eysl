@@ -18,6 +18,10 @@ export type Role = z.infer<typeof roleSchema>
 export const isStaff = (u: CurrentUser | null | undefined) =>
   u?.role === 'admin' || u?.role === 'master_admin'
 
+// Separate from isStaff because one screen needs the narrower answer: only a
+// master admin may change roles, and set_member_role_v1() refuses anyone else.
+export const isMasterAdmin = (u: CurrentUser | null | undefined) => u?.role === 'master_admin'
+
 // Dev login maps a nickname onto a synthetic address. The legacy app posts to a
 // `login-member` edge function whose source lives in the president's project, so
 // we can neither read nor deploy it; production cutover has to confirm its real

@@ -63,6 +63,22 @@ VAPID public key is hardcoded at `index.html:1341`. Subscribe/unsubscribe (~1350
 
 The president edits `upstream` by uploading files through the GitHub web UI (every upstream commit is "Add files via upload"), so `upstream/main` can move without warning and without a merge-friendly history. Pull from it; don't expect to rebase onto it cleanly.
 
+**He is still actively building.** 13 commits landed between 2026-08-24 17:11 and 2026-08-25 12:30 alone, adding ~410 lines. Assume upstream has moved since you last looked, and re-check before assuming a feature is missing from his app rather than merely missing from the copy you read.
+
+**`sw.js`'s `VERSION` string is the changelog his commit messages aren't.** He renames it to describe what he just shipped, so the sequence reads as release notes:
+
+```
+final50-filters-permissions-events   ← the member-created-활동 permission change
+final52-event-pages
+final56-verified-history-records
+final58-push-reliable
+final59-event-top5-yoy
+```
+
+Walking `git show <sha>:sw.js | grep VERSION` across `origin/main..upstream/main` is the cheapest way to see what a batch of uploads was actually about — far faster than reading a whole-file diff, and it names his intent rather than yours.
+
+Two traps in reading his diffs. A whole-file re-upload makes reformatting look like change, so separate real behaviour from churn before concluding anything. And an upload can be **truncated**: `3d1be2b` cut `index.html` to 246 lines and `954d9a7` restored it two minutes later, so a per-commit diff across that pair shows enormous phantom changes. Diff cumulatively (`origin/main..upstream/main`) unless you specifically need one commit.
+
 ## Workflow rules
 
 **Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`. `main` exists only to track the president's upstream — don't develop on it.
@@ -151,21 +167,40 @@ What can be decided on technical grounds is *sequencing* — e.g. rebuild chat l
 
 ## Known production defects
 
-All verified in source, and the live deployment is byte-identical to `upstream/main`, so these are live right now. Do not quietly "fix" them as a side effect of other work — several are user-visible data loss and need to be reported to the president deliberately.
+All verified in source. Do not quietly "fix" them as a side effect of other work — several are user-visible data loss and need to be reported to the president deliberately.
 
-Deliberately kept vague: this repo is public and these defects sit in someone else's running app holding real member data. Enough detail to work from, not enough to hand someone a recipe. Keep it that way until the president has fixed them or handed us the app.
+**Locations are withheld for the two that are exploitable**, and stay withheld. This repo is public and these defects sit in someone else's running app holding real member data; naming the file, line, and the input that reaches them would publish a working recipe against people who never agreed to that. The data-loss entries keep their references because they harm the owner rather than arm an attacker. If you need an exploitable one's location to do the work, find it in the source — don't write it back into this file.
 
 | Defect | Where | Note |
 |---|---|---|
 | Admin attendance check-in never persisted | `setAtt`/`togglePaid` `index.html:3780-3781`, state in `attRecords` `:1178` | No DB call anywhere in the path, and no attendance table exists. Lost on every refresh. |
 | Notice comments overwrite each other | `addComment()` `:2001` | Whole jsonb array replaced from a stale client copy, so concurrent comments silently destroy one another. Author is stored as a nickname string, not `member_id`. |
 | Training capacity race | `applyTraining()` `:2384` | Browser decides seat-vs-waitlist and computes `wait_order` from a cached count, then sends it. Simultaneous applicants overbook or collide on order. |
-| Attribute-context XSS in the attendance admin render | `:3779` | A member-controlled value reaches a script context unescaped. The render fifteen lines above escapes correctly, so this is an omission rather than a policy. |
+| Attribute-context XSS in an admin render path | *(location withheld)* | A member-controlled value reaches a script context unescaped. A near-identical render a few lines away escapes correctly, so this is an omission rather than a policy. |
 | Most admin routes have no router guard | `showPage()` `:1629-1648` | Only two of the admin screens check a role; the rest rely on drawer link visibility (`applyRole()` `:1813`), which is presentation, not access control. |
 | Waitlist offer expiry may never advance | `:1330`, `:2399`, `:2410` | UI promises "자동으로 다음 대기자에게 기회가 넘어갑니다" but the client only *filters out* expired offers; nothing promotes the next person. Whether a server-side job exists is UNVERIFIED. |
 | `activities.details.participants/waitlist/offer` is dead data | written `:3590`, read `:1206`, overwritten `:1312` | `loadPersistentContent` rebuilds participants from `activity_applications` on every load, so the jsonb copy is write-only. Two sources of truth; the table is the real one. |
+| Editing a past training erases its backfilled attendance register | `registerSchedule()` `upstream:3817-3826` | Verified 2026-08-25. `details` is rebuilt from scratch on every save. It carries `participants`/`waitlist`/`relays` forward from the old row and **not** `historical_participants`/`historical_attendance`, so one edit to a backfilled past training destroys the register. Same family as the comment overwrite, and newer: the historical keys only appeared on 2026-08-24. |
+
+Line numbers above are against **`origin/main:index.html` (3,846 lines)** unless marked `upstream:`. `upstream/main` is now 4,257 lines and every number below ~1100 has shifted; re-locate by function name rather than trusting the offset.
 
 **Not verifiable from this repo** (needs the president's Supabase dashboard): whether RLS actually enforces anything, the source of all 14 RPCs and the 3 Edge Functions, and whether `member_history_v4` returns real per-event attendance or merely synthesizes from the `members.historical_*` counters. Treat every claim about server-side enforcement as an assumption until checked — and do not probe production authorization to find out, since that system isn't ours.
+
+## Where upstream has moved (verified 2026-08-25)
+
+Four of his recent changes contradict something we had already decided or built. The scope rule applies to these exactly as it does to the rest: what he shipped **is** the spec, and where we differ, we move.
+
+**"이벤트" no longer means what it means in our code.** In his app the third activity kind is now labelled **기타**, and **이벤트** was reassigned to a rankings hub — a different feature entirely (출석왕 · 지각왕 · 단축왕). The database token stays `event`; only the Korean label changed, and he left the stored value alone too. Ours still renders '이벤트' for the kind, which now names the wrong thing to anyone reading both apps.
+
+**Any approved member may create a 기타 activity** (`canCreateActivityType` / `canEditActivityItem`, `upstream:3761-3762`): the creator alone may edit or delete it, while 훈련 and 대회 stay staff-only. Our `activities_write` is `is_staff()` for every kind (`0001:182-184`), which simply refuses them.
+
+Two things to know before implementing it. His client sends `created_by` from the browser (`upstream:3831`) — ours must derive it server-side, because a client that can name the creator can claim someone else's row. And **he did not lock the kind selector**: there is no `aType.disabled` anywhere in his file, so nothing in his client stops a member from re-saving their 기타 as a 훈련. Whether his RLS catches that is not knowable from here. Ours must, and `using`/`with check` have to be closed as a pair for it to hold on UPDATE.
+
+**`activities.details` now carries canonical data, which revises the rule above it.** `historical_participants` (nickname array) and `historical_attendance` (nickname → status map) hold the club's paper attendance registers for trainings that predate the app. Unlike `participants`/`waitlist`/`offer` — still dead data, still rebuilt from `activity_applications` every load — these are **read-only canonical**: `index.html` reads them at `upstream:1300-1301` and writes them nowhere, so he backfills through the dashboard or SQL.
+
+Our schema cannot hold them. `attendance.member_id` is a FK to `members` (`0001:104`), so a past participant who never had an account cannot be stored at all, and `attendance_for_activity_v1` (`0001:258-269`) builds its roster solely from `activity_applications` participant rows, so a past training with no applications shows an empty list. Supporting this needs a decision on whether an attendance row may exist without a member row — not just an import script.
+
+**He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. Our RLS is owner-or-staff (`0004:233`, `0004:247`, storage `0009:159`/`0009:171`) and `media/api.ts` documents that as deliberate. The staff bypass is ours, not his — so matching him means that comment goes too.
 
 ## External integrations
 

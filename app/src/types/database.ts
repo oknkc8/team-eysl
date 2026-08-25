@@ -202,6 +202,97 @@ export type Database = {
           },
         ]
       }
+      media_files: {
+        Row: {
+          created_at: string
+          file_name: string
+          folder_id: string | null
+          id: string
+          mime_type: string
+          storage_path: string
+          uploader_id: string
+        }
+        Insert: {
+          created_at?: string
+          file_name: string
+          folder_id?: string | null
+          id?: string
+          mime_type?: string
+          storage_path: string
+          uploader_id: string
+        }
+        Update: {
+          created_at?: string
+          file_name?: string
+          folder_id?: string | null
+          id?: string
+          mime_type?: string
+          storage_path?: string
+          uploader_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "media_files_folder_id_fkey"
+            columns: ["folder_id"]
+            isOneToOne: false
+            referencedRelation: "media_folders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_files_uploader_id_fkey"
+            columns: ["uploader_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_files_uploader_id_fkey"
+            columns: ["uploader_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      media_folders: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "media_folders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_folders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       members: {
         Row: {
           auth_user_id: string | null
@@ -277,6 +368,383 @@ export type Database = {
         }
         Relationships: []
       }
+      messages: {
+        Row: {
+          attachment_path: string | null
+          attachment_type: string | null
+          body: string | null
+          created_at: string
+          id: string
+          recipient_id: string | null
+          room_type: string
+          sender_id: string
+        }
+        Insert: {
+          attachment_path?: string | null
+          attachment_type?: string | null
+          body?: string | null
+          created_at?: string
+          id?: string
+          recipient_id?: string | null
+          room_type: string
+          sender_id: string
+        }
+        Update: {
+          attachment_path?: string | null
+          attachment_type?: string | null
+          body?: string | null
+          created_at?: string
+          id?: string
+          recipient_id?: string | null
+          room_type?: string
+          sender_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_recipient_id_fkey"
+            columns: ["recipient_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_recipient_id_fkey"
+            columns: ["recipient_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notice_attachments: {
+        Row: {
+          created_at: string
+          file_name: string
+          id: string
+          mime_type: string
+          notice_id: string
+          sort_order: number
+          storage_path: string
+        }
+        Insert: {
+          created_at?: string
+          file_name: string
+          id?: string
+          mime_type?: string
+          notice_id: string
+          sort_order?: number
+          storage_path: string
+        }
+        Update: {
+          created_at?: string
+          file_name?: string
+          id?: string
+          mime_type?: string
+          notice_id?: string
+          sort_order?: number
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notice_attachments_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "notices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notice_comments: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          member_id: string
+          notice_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          id?: string
+          member_id: string
+          notice_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          member_id?: string
+          notice_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notice_comments_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notice_comments_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notice_comments_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "notices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notices: {
+        Row: {
+          body: string
+          created_at: string
+          created_by: string | null
+          id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notices_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notices_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          id: string
+          member_id: string
+          p256dh: string
+          updated_at: string
+          user_agent: string | null
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          id?: string
+          member_id: string
+          p256dh: string
+          updated_at?: string
+          user_agent?: string | null
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          id?: string
+          member_id?: string
+          p256dh?: string
+          updated_at?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_subscriptions_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "push_subscriptions_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      record_uploads: {
+        Row: {
+          category: string
+          created_at: string
+          file_name: string
+          id: string
+          mime_type: string
+          note: string | null
+          storage_path: string
+          uploaded_by: string
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          file_name: string
+          id?: string
+          mime_type?: string
+          note?: string | null
+          storage_path: string
+          uploaded_by: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          file_name?: string
+          id?: string
+          mime_type?: string
+          note?: string | null
+          storage_path?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "record_uploads_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "record_uploads_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      records: {
+        Row: {
+          category: string
+          created_at: string
+          created_by: string | null
+          distance_m: number
+          event_date: string
+          event_name: string
+          id: string
+          member_id: string
+          metadata: Json
+          result_centiseconds: number
+          result_display: string
+          stroke: string
+          subcategory: string
+          teammates: string[]
+          updated_at: string
+          upload_id: string | null
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          created_by?: string | null
+          distance_m: number
+          event_date: string
+          event_name?: string
+          id?: string
+          member_id: string
+          metadata?: Json
+          result_centiseconds: number
+          result_display: string
+          stroke: string
+          subcategory?: string
+          teammates?: string[]
+          updated_at?: string
+          upload_id?: string | null
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          created_by?: string | null
+          distance_m?: number
+          event_date?: string
+          event_name?: string
+          id?: string
+          member_id?: string
+          metadata?: Json
+          result_centiseconds?: number
+          result_display?: string
+          stroke?: string
+          subcategory?: string
+          teammates?: string[]
+          updated_at?: string
+          upload_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "records_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "records_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "records_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "records_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "records_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "record_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       schema_migrations: {
         Row: {
           applied_at: string
@@ -294,6 +762,22 @@ export type Database = {
       }
     }
     Views: {
+      activity_seats_v: {
+        Row: {
+          activity_id: string | null
+          participant_count: number | null
+          waitlist_count: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_applications_activity_id_fkey"
+            columns: ["activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       member_public_v: {
         Row: {
           avatar_path: string | null
@@ -326,6 +810,22 @@ export type Database = {
       }
     }
     Functions: {
+      append_notice_comment: {
+        Args: { p_body: string; p_notice_id: string }
+        Returns: {
+          body: string
+          created_at: string
+          id: string
+          member_id: string
+          notice_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "notice_comments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       apply_to_activity: {
         Args: { p_activity_id: string }
         Returns: {
@@ -393,10 +893,243 @@ export type Database = {
           title: string
         }[]
       }
+      can_manage_records: { Args: never; Returns: boolean }
       current_member_id: { Args: never; Returns: string }
       expire_stale_offers: { Args: never; Returns: number }
       is_master_admin: { Args: never; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      offer_seat_to_next_waitlister: {
+        Args: { p_activity_id: string }
+        Returns: string
+      }
+      race_my_history_v1: {
+        Args: never
+        Returns: {
+          activity_date: string
+          source: string
+          status: string
+          title: string
+        }[]
+      }
+      respond_waitlist_offer: {
+        Args: { p_accept: boolean; p_activity_id: string }
+        Returns: {
+          activity_id: string
+          application_type: string
+          created_at: string
+          details: Json
+          id: string
+          member_id: string
+          offer_expires_at: string | null
+          offer_status: string
+          updated_at: string
+          wait_order: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_applications"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      send_message_v1: {
+        Args: {
+          p_attachment_path?: string
+          p_attachment_type?: string
+          p_body?: string
+          p_recipient_id?: string
+          p_room_type: string
+        }
+        Returns: {
+          attachment_path: string | null
+          attachment_type: string | null
+          body: string | null
+          created_at: string
+          id: string
+          recipient_id: string | null
+          room_type: string
+          sender_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "messages"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_member_blocked_v1: {
+        Args: { p_blocked: boolean; p_member_id: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_member_role_v1: {
+        Args: { p_member_id: string; p_role: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_member_status_v1: {
+        Args: { p_member_id: string; p_status: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_member_team_role_v1: {
+        Args: { p_member_id: string; p_team_role: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      team_event_rankings_v1: { Args: never; Returns: Json }
+      upsert_record: {
+        Args: {
+          p_category: string
+          p_distance_m: number
+          p_event_date: string
+          p_event_name?: string
+          p_member_id: string
+          p_metadata?: Json
+          p_result_centiseconds: number
+          p_result_display: string
+          p_stroke: string
+          p_subcategory: string
+          p_teammates?: string[]
+          p_upload_id?: string
+        }
+        Returns: {
+          category: string
+          created_at: string
+          created_by: string | null
+          distance_m: number
+          event_date: string
+          event_name: string
+          id: string
+          member_id: string
+          metadata: Json
+          result_centiseconds: number
+          result_display: string
+          stroke: string
+          subcategory: string
+          teammates: string[]
+          updated_at: string
+          upload_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "records"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       [_ in never]: never
