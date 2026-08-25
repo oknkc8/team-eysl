@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { useCurrentUser } from '../auth/useCurrentUser'
-import { isStaff } from '../auth/schema'
+import { creatableKinds } from './permissions'
 import { msUntil } from './countdown'
 import { formatDateLabel, formatTimeRange, todayKey } from './order'
 import {
@@ -31,6 +31,12 @@ const CARD = {
 export function ScheduleListPage() {
   const { user } = useCurrentUser()
   const [filter, setFilter] = useState<Filter>('all')
+  // Since 0015 every approved member may file a 기타, so this button is no longer
+  // staff-only — what changes with the role is how many kinds the form offers.
+  const kinds = creatableKinds(user)
+  // A member gets one kind and the button names it; staff get three and the
+  // button stays generic, because the form is where they pick.
+  const soleKind = kinds.length === 1 ? kinds[0] : undefined
 
   const query = useQuery({
     queryKey: ['schedule', filter],
@@ -41,11 +47,11 @@ export function ScheduleListPage() {
     <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: 0 }}>일정</h1>
-        {/* Presentation only. /admin/schedule/new sits under RequireStaff in the
-            route tree, so hiding this button is not what keeps others out. */}
-        {isStaff(user) && (
+        {/* Presentation only, as before: activities_member_event_insert is what
+            refuses a member's 훈련, and the label just avoids offering one. */}
+        {kinds.length > 0 && (
           <Link
-            to="/admin/schedule/new"
+            to="/schedule/new"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -58,7 +64,7 @@ export function ScheduleListPage() {
               textDecoration: 'none',
             }}
           >
-            새 일정
+            {soleKind ? `${KIND_LABEL[soleKind]} 등록` : '새 일정'}
           </Link>
         )}
       </header>

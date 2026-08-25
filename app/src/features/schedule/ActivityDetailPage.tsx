@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { SaveState } from '../../components/ui/SaveState'
+import { useCurrentUser } from '../auth/useCurrentUser'
+import { canEditActivity } from './permissions'
 import { formatCountdown, msUntil } from './countdown'
 import { formatDateLabel, formatTimeRange, todayKey } from './order'
 import {
@@ -76,8 +78,14 @@ export function ActivityDetailPage() {
 
 function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId: string }) {
   const { activity, mine } = entry
+  const { user } = useCurrentUser()
   const time = formatTimeRange(activity.start_time, activity.end_time)
   const isPast = activity.activity_date < todayKey()
+  // Staff for anything, the creator for their own 기타 — the same question
+  // activities_member_event_update asks, asked here only to decide what to draw.
+  // A past activity keeps the link: fixing a wrong time after the fact is the
+  // most likely reason to open it.
+  const mayEdit = canEditActivity(user, activity)
 
   const seats =
     activity.capacity === null
@@ -95,18 +103,38 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
       )}
 
       <article style={CARD}>
-        <span
-          style={{
-            display: 'inline-block',
-            padding: '2px 8px',
-            borderRadius: 999,
-            background: '#eef0f2',
-            color: '#6b7178',
-            fontSize: 11,
-          }}
-        >
-          {KIND_LABEL[activity.kind]}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span
+            style={{
+              padding: '2px 8px',
+              borderRadius: 999,
+              background: '#eef0f2',
+              color: '#6b7178',
+              fontSize: 11,
+            }}
+          >
+            {KIND_LABEL[activity.kind]}
+          </span>
+          <span style={{ flex: 1 }} />
+          {mayEdit && (
+            <Link
+              to={`/schedule/${activity.id}/edit`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                minHeight: 44,
+                padding: '0 14px',
+                margin: -10,
+                borderRadius: 13,
+                color: '#6b7178',
+                fontSize: 13,
+                textDecoration: 'none',
+              }}
+            >
+              수정
+            </Link>
+          )}
+        </div>
         <h1 style={{ fontSize: 20, letterSpacing: -0.6, margin: '8px 0 0', lineHeight: 1.4 }}>
           {activity.title}
         </h1>

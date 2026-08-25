@@ -66,25 +66,33 @@ describe('schedule routes are guarded by tree position', () => {
     expect(guardsFor(`/schedule/${ACTIVITY_ID}`)).toEqual(['auth', '/schedule/:activityId'])
   })
 
-  // The editor lives under /admin so it shares no path segment shape with the
-  // member detail route: there is no pair for ranked matching to choose between,
-  // which is what made /notices/new worth a test of its own.
-  it('puts creating an activity behind RequireStaff', () => {
-    expect(guardsFor('/admin/schedule/new')).toEqual(['auth', 'staff', '/admin/schedule/new'])
+  // /schedule/new is a literal sibling of the dynamic /schedule/:activityId, so
+  // which one wins is decided by ranked matching rather than declaration order —
+  // the trap /notices/new springs. If the dynamic route won, "기타 등록" would
+  // open a detail page for an activity whose id reads "new".
+  it('sends /schedule/new to the editor, not the detail route', () => {
+    expect(guardsFor('/schedule/new')).toEqual(['auth', '/schedule/new'])
+    expect(guardsFor('/schedule/new')).not.toContain('/schedule/:activityId')
   })
 
-  it('puts editing an activity behind RequireStaff', () => {
-    expect(guardsFor(`/admin/schedule/${ACTIVITY_ID}/edit`)).toEqual([
+  // Creating and editing sit on RequireAuth rather than RequireStaff since 0015:
+  // any approved member may file a 기타 and its creator alone may change it, and
+  // neither fact is something a position in the route tree can express. The four
+  // RLS policies express it; canEditActivity() only decides what renders.
+  it('keeps creating and editing an activity on RequireAuth, not RequireStaff', () => {
+    expect(guardsFor('/schedule/new')).not.toContain('staff')
+    expect(guardsFor(`/schedule/${ACTIVITY_ID}/edit`)).toEqual([
       'auth',
-      'staff',
-      '/admin/schedule/:activityId/edit',
+      '/schedule/:activityId/edit',
     ])
   })
 
-  // A member typing the staff URL must not be handed the member detail screen
-  // by a stray match — it has to land on the guard and be redirected.
-  it('does not let the member detail route swallow an admin path', () => {
-    expect(guardsFor(`/admin/schedule/${ACTIVITY_ID}/edit`)).not.toContain('/schedule/:activityId')
+  // The staff-only pair these replaced. Leaving them mounted would have meant
+  // two URLs for one screen, one of them behind a guard that no longer decides
+  // anything — which is the shape this project keeps warning about.
+  it('no longer answers the retired /admin/schedule paths', () => {
+    expect(guardsFor('/admin/schedule/new')).toEqual(['*'])
+    expect(guardsFor(`/admin/schedule/${ACTIVITY_ID}/edit`)).toEqual(['*'])
   })
 })
 
@@ -100,8 +108,13 @@ describe('record routes are guarded by tree position', () => {
     expect(guardsFor('/admin/records/new')).toEqual(['auth', 'staff', '/admin/records/new'])
   })
 
+  it('puts the sheet upload behind RequireStaff too', () => {
+    expect(guardsFor('/admin/records/upload')).toEqual(['auth', 'staff', '/admin/records/upload'])
+  })
+
   it('does not let the member records route swallow the admin path', () => {
     expect(guardsFor('/admin/records/new')).not.toContain('/records')
+    expect(guardsFor('/admin/records/upload')).not.toContain('/records')
   })
 })
 
@@ -148,6 +161,37 @@ describe('member routes are guarded by tree position', () => {
   })
 })
 
+describe('chat routes are guarded by tree position', () => {
+  it('keeps both chat screens on RequireAuth', () => {
+    expect(guardsFor('/chat')).toEqual(['auth', '/chat'])
+    expect(guardsFor(`/chat/dm/${MEMBER_ID}`)).toEqual(['auth', '/chat/dm/:memberId'])
+  })
+
+  // A dm is a member-to-member conversation, not an admin surface: messages_read
+  // (0005) hands each row to its two participants and send_message_v1 derives
+  // the sender from the session, so there is no staff-only chat route and no
+  // test claiming there is.
+  it('does not put chat behind a staff guard', () => {
+    expect(guardsFor('/chat')).not.toContain('staff')
+    expect(guardsFor(`/chat/dm/${MEMBER_ID}`)).not.toContain('staff')
+  })
+
+  // /members/:memberId is the other route shaped like "a member id in a path".
+  // If it ever swallowed this one, tapping a conversation would open a profile.
+  it('does not let the member detail route swallow a dm', () => {
+    expect(guardsFor(`/chat/dm/${MEMBER_ID}`)).not.toContain('/members/:memberId')
+  })
+})
+
+describe('notification settings is guarded by tree position', () => {
+  // Each member manages their own devices, and push_subscriptions_self (0004)
+  // is what confines them to their own rows — the guard only decides who sees
+  // a screen, as everywhere else here.
+  it('puts 알림 설정 on RequireAuth only', () => {
+    expect(guardsFor('/settings/notifications')).toEqual(['auth', '/settings/notifications'])
+  })
+})
+
 describe('media routes are guarded by tree position', () => {
   it('lets any approved member browse folders and their contents', () => {
     expect(guardsFor('/media')).toEqual(['auth', '/media'])
@@ -172,5 +216,41 @@ describe('media routes are guarded by tree position', () => {
   // a folder id, and the folder route must not answer for it.
   it('does not let the folder route swallow /files', () => {
     expect(guardsFor('/files')).not.toContain('/media/:folderId')
+  })
+})
+
+describe('event ranking routes are guarded by tree position', () => {
+  // The hub and the three ranking screens are readable by every approved
+  // member, which is what the president's app does. team_event_rankings_v1()
+  // refuses anyone else in the database, so RequireAuth keeps out nobody the
+  // server would have answered anyway.
+  it('puts the hub and a ranking on RequireAuth', () => {
+    expect(guardsFor('/events')).toEqual(['auth', '/events'])
+    expect(guardsFor('/events/attendance')).toEqual(['auth', '/events/:kind'])
+    expect(guardsFor('/events/improve')).toEqual(['auth', '/events/:kind'])
+  })
+
+  it('does not put a ranking behind a staff guard', () => {
+    expect(guardsFor('/events/late')).not.toContain('staff')
+    expect(guardsFor('/events/late')).not.toContain('master')
+  })
+})
+
+describe('my race history route is guarded by tree position', () => {
+  // /schedule/mine is a literal sibling of the dynamic /schedule/:activityId,
+  // so which one answers is decided by ranked matching rather than declaration
+  // order — the same pairing that made /notices/new worth its own test. If the
+  // dynamic route won, the screen would try to load an activity called "mine".
+  it('sends /schedule/mine to the race history screen, not the detail route', () => {
+    expect(guardsFor('/schedule/mine')).toEqual(['auth', '/schedule/mine'])
+    expect(guardsFor('/schedule/mine')).not.toContain('/schedule/:activityId')
+  })
+
+  // race_my_history_v1() takes no member id and reads the caller from the
+  // session, so there is no URL a member could type to reach another member's
+  // history — RequireAuth is the whole gate this route needs.
+  it('keeps it on RequireAuth only', () => {
+    expect(guardsFor('/schedule/mine')).not.toContain('staff')
+    expect(guardsFor('/schedule/mine')).not.toContain('master')
   })
 })

@@ -1,19 +1,20 @@
 import { supabase } from '../../lib/supabase'
 import { shiftDays, sortUpcomingFirst, todayKey } from './order'
+import { toKind, type ActivityKind } from './kinds'
+import { dedupeRaceHistory, type RaceHistoryRow } from './raceHistory'
 
-export type ActivityKind = 'training' | 'race' | 'event'
+// The kind vocabulary lives in kinds.ts, which imports nothing: this module
+// loads the Supabase client at import time, so anything testable had to move out
+// from under it. Re-exported so call sites keep a single import.
+export { ACTIVITY_KINDS, KIND_LABEL, toKind } from './kinds'
+export type { ActivityKind } from './kinds'
+
+// Same reason as kinds.ts: the dedupe rule is testable without a client.
+export { isFinished, isWaiting } from './raceHistory'
+export type { RaceHistoryRow } from './raceHistory'
+
 export type ApplicationType = 'participant' | 'waitlist'
 export type OfferStatus = 'none' | 'offered' | 'accepted' | 'declined' | 'expired'
-
-export const ACTIVITY_KINDS: readonly ActivityKind[] = ['training', 'race', 'event']
-
-// Korean is a render-time concern; the database stores English tokens, the same
-// split as attendance's STATUS_LABEL.
-export const KIND_LABEL: Record<ActivityKind, string> = {
-  training: '훈련',
-  race: '대회',
-  event: '이벤트',
-}
 
 export type Activity = {
   id: string
@@ -24,6 +25,14 @@ export type Activity = {
   end_time: string | null
   place: string | null
   capacity: number | null
+  /**
+   * Who filed it. Derived by the activities_created_by trigger (0015) from the
+   * session, never from the request — a member who could send this column could
+   * file an activity in somebody else's name and then edit it as its owner.
+   * Read here because canEditActivity() needs it; null on rows filed before
+   * anyone was attributed.
+   */
+  created_by: string | null
 }
 
 export type MyApplication = {
@@ -43,7 +52,8 @@ export type ScheduleEntry = Seats & {
   mine: MyApplication | null
 }
 
-const ACTIVITY_COLUMNS = 'id, kind, title, activity_date, start_time, end_time, place, capacity'
+const ACTIVITY_COLUMNS =
+  'id, kind, title, activity_date, start_time, end_time, place, capacity, created_by'
 const APPLICATION_COLUMNS =
   'id, activity_id, application_type, wait_order, offer_status, offer_expires_at'
 
@@ -55,11 +65,8 @@ const NO_SEATS: Seats = { participant_count: 0, waitlist_count: 0 }
 // ---------------------------------------------------------------- narrowing
 // Every one of these columns is constrained by a CHECK in 0001, but the
 // generated types widen them to `string`. Narrowing happens once, here, rather
-// than as a cast at each render site.
-
-function toKind(value: string): ActivityKind {
-  return (ACTIVITY_KINDS as readonly string[]).includes(value) ? (value as ActivityKind) : 'event'
-}
+// than as a cast at each render site. toKind() is the same idea and lives in
+// kinds.ts with the labels it goes with.
 
 // These two fallbacks lean to the less privileged reading on purpose: an
 // unrecognised type counts as a waitlist entry and an unrecognised offer as no
@@ -83,6 +90,7 @@ type ActivityRow = {
   end_time: string | null
   place: string | null
   capacity: number | null
+  created_by: string | null
 }
 
 const toActivity = (row: ActivityRow): Activity => ({ ...row, kind: toKind(row.kind) })
@@ -274,10 +282,16 @@ export async function respondToOffer(input: {
   return toApplication(data)
 }
 
-// ------------------------------------------------------------- staff writes
-// Guarded by activities_write (is_staff) in the database and by RequireStaff in
-// the route tree. Nothing here re-checks the role, because a check here would
-// only decide what to render.
+// ------------------------------------------------------------------- writes
+// Four RLS policies decide these, not this file (0015). Staff keep every command
+// on every kind through activities_write; an approved member may insert a row
+// only when kind = 'event' and may update or delete it only while they are its
+// creator and it is still a 기타.
+//
+// Nothing here re-checks any of that. permissions.ts mirrors the same rules for
+// the screens, so a button is offered only when the write behind it would
+// succeed — but the refusal itself is the database's, and these functions are
+// written to surface it rather than to pre-empt it.
 
 export type ActivityInput = {
   kind: ActivityKind
@@ -289,19 +303,31 @@ export type ActivityInput = {
   capacity: number | null
 }
 
+/**
+ * File an activity. created_by is deliberately absent from the payload: the
+ * activities_created_by trigger (0015) fills it from the session, and a value
+ * sent from here would be overwritten anyway. Asking the server who we are
+ * first, as this used to, was both a round trip and a claim the client is not
+ * entitled to make.
+ */
 export async function createActivity(input: ActivityInput): Promise<Activity> {
-  const { data: memberId, error: memberError } = await supabase.rpc('current_member_id')
-  if (memberError) throw memberError
-
   const { data, error } = await supabase
     .from('activities')
-    .insert({ ...input, title: input.title.trim(), created_by: memberId })
+    .insert({ ...input, title: input.title.trim() })
     .select(ACTIVITY_COLUMNS)
     .single()
   if (error) throw error
   return toActivity(data)
 }
 
+/**
+ * Save an edit. A row RLS declines to hand over simply does not match, so
+ * .single() is what turns a refusal into a thrown error instead of a silent
+ * success — the caller must never report 저장됨 for a write the database
+ * discarded. kind is sent like any other field; a member trying to promote their
+ * own 기타 to 훈련 fails the policy's WITH CHECK and lands here as an error,
+ * which is what the live probe against the dev database showed.
+ */
 export async function updateActivity(
   input: ActivityInput & { activityId: string },
 ): Promise<Activity> {
@@ -322,8 +348,35 @@ export async function updateActivity(
   return toActivity(data)
 }
 
-/** Cascades to applications and attendance, so the caller confirms first. */
+/**
+ * Cascades to applications and attendance, so the caller confirms first.
+ *
+ * The .select() is not decoration. A delete that matches no row under RLS
+ * returns no error — the same trap CancelButton documents — so a member who
+ * reached this for somebody else's activity would otherwise be told it worked.
+ * Nothing came back means nothing was deleted.
+ */
 export async function deleteActivity(activityId: string): Promise<void> {
-  const { error } = await supabase.from('activities').delete().eq('id', activityId)
+  const { data, error } = await supabase
+    .from('activities')
+    .delete()
+    .eq('id', activityId)
+    .select('id')
   if (error) throw error
+  if (!data || data.length === 0) throw new Error('삭제할 권한이 없거나 이미 삭제된 일정입니다')
+}
+
+/**
+ * The viewer's own race history. Takes no member id — the server reads it from
+ * the session, the same as attendance_my_history_v1.
+ *
+ * Unlike listSchedule, this is not filtered to a date window: a member's race
+ * history is the whole point of the screen, so an old meet has to stay
+ * reachable. The rows arrive newest first and already carry a Korean status the
+ * server computed in Asia/Seoul.
+ */
+export async function getMyRaceHistory(): Promise<RaceHistoryRow[]> {
+  const { data, error } = await supabase.rpc('race_my_history_v1')
+  if (error) throw error
+  return dedupeRaceHistory((data ?? []) as RaceHistoryRow[])
 }

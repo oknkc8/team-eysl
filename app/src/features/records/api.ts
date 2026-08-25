@@ -1,5 +1,7 @@
 import { supabase } from '../../lib/supabase'
 import { personalBests, relayRecords, withDeltas, type WithDelta } from './derive'
+import type { Json } from '../../types/database'
+import type { RosterEntry } from './parser'
 
 export type RecordCategory = 'meet' | 'fin' | 'other'
 export type RecordSubcategory = 'personal' | 'relay'
@@ -184,6 +186,37 @@ export async function listMemberOptions(): Promise<MemberOption[]> {
   return options
 }
 
+/**
+ * Everyone a parsed 실명 can be matched against.
+ *
+ * Off `members`, not `member_public_v`: the view carries no real_name, and
+ * matching a meet sheet is the one place this app needs one. members_read
+ * (0001:173-175) is `auth_user_id = auth.uid() or is_staff()`, so a non-staff
+ * caller gets their own row and this list collapses to nothing — the same
+ * shape of protection the approval queue relies on.
+ *
+ * Approved only, and only members who have a 실명 on file. The legacy applied
+ * exactly these two filters (index.html:2819-2826) and it still holds: a
+ * pending or blocked member is not somebody a meet result should attach to,
+ * and a member with no 실명 can never match anything anyway.
+ */
+export async function listMatchRoster(): Promise<RosterEntry[]> {
+  const { data, error } = await supabase
+    .from('members')
+    .select('id, nickname, real_name')
+    .eq('status', 'approved')
+    .order('nickname', { ascending: true })
+  if (error) throw error
+
+  const roster: RosterEntry[] = []
+  for (const row of data ?? []) {
+    const realName = (row.real_name ?? '').replace(/\s+/g, ' ').trim()
+    if (!realName) continue
+    roster.push({ memberId: row.id, nickname: row.nickname, realName })
+  }
+  return roster
+}
+
 // ------------------------------------------------------------------ writes
 
 export type RecordInput = {
@@ -206,8 +239,11 @@ export type RecordInput = {
  *
  * The returned row is the server's copy, including in the case where the swim
  * was already on file and the insert did nothing.
+ *
+ * `metadata` is the only thing that differs between a typed record and a parsed
+ * one, so it is the only parameter the two entry points below disagree about.
  */
-export async function createRecord(input: RecordInput): Promise<SwimRecord> {
+async function upsertRecord(input: RecordInput, metadata: Json): Promise<SwimRecord> {
   const { data, error } = await supabase.rpc('upsert_record', {
     p_member_id: input.memberId,
     p_category: input.category,
@@ -221,11 +257,46 @@ export async function createRecord(input: RecordInput): Promise<SwimRecord> {
     p_result_centiseconds: input.resultCentiseconds,
     p_event_name: input.eventName,
     p_teammates: input.teammates,
-    // Marks the row as hand-entered. Once the sheet parser lands this is what
-    // separates a result somebody typed from one a file produced — worth having
-    // when a parsed row and a typed row disagree.
-    p_metadata: { source: 'manual' },
+    p_metadata: metadata,
   })
   if (error) throw error
   return toRecord(data)
+}
+
+/** A result somebody typed on 기록 추가. */
+export async function createRecord(input: RecordInput): Promise<SwimRecord> {
+  // Marks the row as hand-entered — what separates a result somebody typed from
+  // one a file produced, worth having when a parsed row and a typed row
+  // disagree.
+  return upsertRecord(input, { source: 'manual' })
+}
+
+/** Where a parsed row came from, kept so a wrong import can be traced back. */
+export type SheetSource = {
+  fileName: string
+  sheetName: string
+  /** 1-based, the row number Excel shows. */
+  rowNumber: number
+}
+
+/**
+ * A result a meet sheet produced, filed after a person confirmed it.
+ *
+ * The provenance is the point: `source: 'sheet'` plus the file, sheet and row
+ * means a record that turns out to be wrong can be traced back to the cell it
+ * was read from, rather than being an unexplained number on somebody's profile.
+ * The legacy stored the same three things (index.html:2891).
+ */
+export async function createRecordFromSheet(
+  input: RecordInput,
+  source: SheetSource,
+): Promise<SwimRecord> {
+  return upsertRecord(input, {
+    source: 'sheet',
+    source_file: source.fileName,
+    source_sheet: source.sheetName,
+    source_row: source.rowNumber,
+    team: 'EYSL',
+    imported_at: new Date().toISOString(),
+  })
 }

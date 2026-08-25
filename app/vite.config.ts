@@ -9,8 +9,21 @@ export default defineConfig({
     react(),
     // Replaces the legacy hand-maintained sw.js, whose cache busting required
     // bumping a VERSION string and a ?v= query in two files by hand.
+    //
+    // injectManifest rather than the default generateSW: web push needs `push`
+    // and `notificationclick` listeners in the worker, and generateSW emits
+    // neither — Workbox has no opinion about what a notification looks like, so
+    // there is no option that adds them. injectManifest builds src/sw.js
+    // instead and only fills in its precache list, which is why that file is
+    // ours to write. Everything else here is unchanged.
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
       registerType: 'autoUpdate',
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'],
+      },
       manifest: {
         name: 'TEAM EYSL',
         short_name: 'TEAM EYSL',

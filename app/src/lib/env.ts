@@ -5,6 +5,16 @@ import { z } from 'zod'
 const schema = z.object({
   VITE_SUPABASE_URL: z.string().url(),
   VITE_SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
+  // Optional, unlike the two above, and deliberately so: without it the app
+  // still runs and every other screen works — only 알림 설정 has to say it is
+  // not configured. Making it required would turn "push is not set up yet" into
+  // a blank page for the whole club.
+  //
+  // Public by design. A VAPID key pair is public half in the browser, private
+  // half wherever notifications are sent from; the private half has no business
+  // in a VITE_ variable, which ships to every visitor, and none in this
+  // repository, which is public.
+  VITE_VAPID_PUBLIC_KEY: z.string().optional(),
 })
 
 const parsed = schema.safeParse(import.meta.env)
@@ -36,4 +46,7 @@ if (parsed.data.VITE_SUPABASE_URL.toLowerCase().includes(FORBIDDEN_PROJECT_REF))
 export const env = {
   SUPABASE_URL: parsed.data.VITE_SUPABASE_URL,
   SUPABASE_PUBLISHABLE_KEY: parsed.data.VITE_SUPABASE_PUBLISHABLE_KEY,
+  // null rather than '' so "not configured" is a state the settings screen can
+  // test for, instead of a key that fails later inside pushManager.subscribe().
+  VAPID_PUBLIC_KEY: parsed.data.VITE_VAPID_PUBLIC_KEY?.trim() || null,
 }

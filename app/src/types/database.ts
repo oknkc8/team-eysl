@@ -902,6 +902,15 @@ export type Database = {
         Args: { p_activity_id: string }
         Returns: string
       }
+      race_my_history_v1: {
+        Args: never
+        Returns: {
+          activity_date: string
+          source: string
+          status: string
+          title: string
+        }[]
+      }
       respond_waitlist_offer: {
         Args: { p_accept: boolean; p_activity_id: string }
         Returns: {
@@ -919,6 +928,31 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "activity_applications"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      send_message_v1: {
+        Args: {
+          p_attachment_path?: string
+          p_attachment_type?: string
+          p_body?: string
+          p_recipient_id?: string
+          p_room_type: string
+        }
+        Returns: {
+          attachment_path: string | null
+          attachment_type: string | null
+          body: string | null
+          created_at: string
+          id: string
+          recipient_id: string | null
+          room_type: string
+          sender_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "messages"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -1055,6 +1089,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      team_event_rankings_v1: { Args: never; Returns: Json }
       upsert_record: {
         Args: {
           p_category: string
