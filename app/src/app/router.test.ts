@@ -7,23 +7,27 @@ import { matchRoutes, type RouteObject } from 'react-router'
 let router: (typeof import('./router'))['router']
 let RequireAuth: (typeof import('./guards'))['RequireAuth']
 let RequireStaff: (typeof import('./guards'))['RequireStaff']
+let RequireMasterAdmin: (typeof import('./guards'))['RequireMasterAdmin']
 
 beforeAll(async () => {
   vi.stubEnv('VITE_SUPABASE_URL', 'https://ourdevproject.supabase.co')
   vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_test')
   ;({ router } = await import('./router'))
-  ;({ RequireAuth, RequireStaff } = await import('./guards'))
+  ;({ RequireAuth, RequireStaff, RequireMasterAdmin } = await import('./guards'))
 })
 
 afterAll(() => vi.unstubAllEnvs())
 
 const NOTICE_ID = '00000000-0000-4000-8000-000000000001'
 const ACTIVITY_ID = '00000000-0000-4000-8000-000000000002'
+const MEMBER_ID = '00000000-0000-4000-8000-000000000003'
+const FOLDER_ID = '00000000-0000-4000-8000-000000000004'
 
 function guardsFor(pathname: string) {
   const matches = matchRoutes(router.routes as RouteObject[], pathname) ?? []
   return matches.map((m) => {
     const element = m.route.element as { type?: unknown } | undefined
+    if (element?.type === RequireMasterAdmin) return 'master'
     if (element?.type === RequireStaff) return 'staff'
     if (element?.type === RequireAuth) return 'auth'
     return m.route.path ?? 'screen'
@@ -98,5 +102,54 @@ describe('record routes are guarded by tree position', () => {
 
   it('does not let the member records route swallow the admin path', () => {
     expect(guardsFor('/admin/records/new')).not.toContain('/records')
+  })
+})
+
+describe('member routes are guarded by tree position', () => {
+  it('lets any approved member read the roster and one member', () => {
+    expect(guardsFor('/members')).toEqual(['auth', '/members'])
+    expect(guardsFor(`/members/${MEMBER_ID}`)).toEqual(['auth', '/members/:memberId'])
+  })
+
+  // /members/approval and /members/roles are literal siblings of the dynamic
+  // /members/:memberId, so which wins is decided by ranked matching rather than
+  // declaration order — the same trap /notices/new sprang. If the dynamic route
+  // won, a member could reach the approval queue by typing a URL.
+  // Master-admin, not merely staff: the legacy app gates approval on
+  // isMasterAdmin, and set_member_status_v1() refuses an admin in the database.
+  // Widening who may admit members is the president's decision, not ours.
+  it('puts the approval queue behind RequireMasterAdmin, not the detail route', () => {
+    expect(guardsFor('/members/approval')).toEqual([
+      'auth',
+      'staff',
+      'master',
+      '/members/approval',
+    ])
+  })
+
+  it('puts role management behind RequireMasterAdmin', () => {
+    expect(guardsFor('/members/roles')).toEqual(['auth', 'staff', 'master', '/members/roles'])
+  })
+
+  // An admin who is not the master must meet the master guard rather than the
+  // member detail screen, so the redirect is the one this route intends.
+  it('does not let the member detail route swallow either admin path', () => {
+    expect(guardsFor('/members/approval')).not.toContain('/members/:memberId')
+    expect(guardsFor('/members/roles')).not.toContain('/members/:memberId')
+  })
+})
+
+describe('media routes are guarded by tree position', () => {
+  it('lets any approved member browse folders and their contents', () => {
+    expect(guardsFor('/media')).toEqual(['auth', '/media'])
+    expect(guardsFor(`/media/${FOLDER_ID}`)).toEqual(['auth', '/media/:folderId'])
+  })
+
+  // Uploading and creating folders are staff-only in the UI but not in RLS
+  // (media_files_insert / media_folders_insert accept any approved member), so
+  // there is no staff-only media route to guard — and no test claiming there is.
+  it('keeps both media screens on RequireAuth only', () => {
+    expect(guardsFor('/media')).not.toContain('staff')
+    expect(guardsFor(`/media/${FOLDER_ID}`)).not.toContain('staff')
   })
 })

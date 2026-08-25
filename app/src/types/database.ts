@@ -923,6 +923,72 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      set_member_role_v1: {
+        Args: { p_member_id: string; p_role: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_member_status_v1: {
+        Args: { p_member_id: string; p_status: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       upsert_record: {
         Args: {
           p_category: string
