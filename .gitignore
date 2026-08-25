@@ -1,0 +1,40 @@
+# Secrets — this repository is PUBLIC. Nothing here may ever be committed.
+# Match anywhere in the tree, not just the root, and cover the variants people
+# actually create: .env~, dev.env, production.env, .env.local.bak.
+.env*
+**/.env*
+*.env
+**/*.env
+*.env.*
+# Editor backups of name-prefixed env files: dev.env~, production.env.bak
+*.env~
+**/*.env~
+*.env.*~
+# Re-include the template. Must come after the patterns above to win.
+!.env.example
+!**/.env.example
+.envrc
+.envrc.*
+*.pem
+*.key
+secrets/
+.supabase/
+
+# Dependencies / build output
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Tooling scratch
+.claude/worktrees/
+_workspace/
+.omc/
+.DS_Store
+*.log
+npm-debug.log*
+
+# supabase CLI scratch
+app/supabase/.temp/

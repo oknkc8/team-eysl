@@ -1,0 +1,113 @@
+name: guard
+
+# This repository is public and the legacy app still carries the club president's
+# production Supabase credentials. These checks are the mechanical backstop for the
+# two mistakes that would actually hurt: leaking a secret, and pointing new code at
+# the production database.
+
+on:
+  pull_request:
+  # Every branch, not just dev/main. A secret pushed to a feature branch of a
+  # public repo is exposed the moment it lands — waiting for a PR to check is
+  # waiting until after the damage.
+  push:
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No committed env file, anywhere in the tree
+        run: |
+          # Checking only the root .env missed app/.env, which is exactly where
+          # this project's second env file lives. Match any tracked env file
+          # except the template.
+          TRACKED=$(git ls-files | grep -E '(^|/)\.env($|\.)|(^|/)[^/]*\.env$' \
+                    | grep -v '\.env\.example$' || true)
+          if [ -n "$TRACKED" ]; then
+            echo "::error::An env file is tracked by git:"
+            echo "$TRACKED"
+            exit 1
+          fi
+          echo "ok: no env files tracked"
+
+      - name: No database password, including in the template
+        run: |
+          # A DB password has no fixed prefix to match on, so look for the
+          # assignment shape instead and require the value to be a placeholder.
+          # .env.example is deliberately in scope: it is the one env file that
+          # IS committed, so a real password pasted there ships to everyone.
+          #
+          # The placeholder filter must see ONLY the matched text. `git grep -n`
+          # prefixes each hit with `file:line:`, and the path `.env.example`
+          # contains the literal "example" — so filtering the whole line threw
+          # away every hit from that file on the strength of its own name,
+          # whatever the value was. The one file this step claims to protect was
+          # the one file it could never flag. Strip the prefix before deciding,
+          # and keep the full line for the error message.
+          PLACEHOLDER='your-|example|placeholder|xxx|changeme|\$\{|\$[A-Z_]'
+          HITS=$(git grep -nIE '(PASSWORD|PASSWD|PGPASSWORD)[[:space:]]*=[[:space:]]*.{6,}' \
+                   -- . ':!.github/workflows/guard.yml' || true)
+          REAL=$(printf '%s\n' "$HITS" | while IFS= read -r line; do
+                   [ -n "$line" ] || continue
+                   text=${line#*:}; text=${text#*:}
+                   printf '%s\n' "$text" | grep -qiE "$PLACEHOLDER" || printf '%s\n' "$line"
+                 done)
+          if [ -n "$REAL" ]; then
+            echo "::error::A password-shaped assignment with a real-looking value is committed:"
+            printf '%s\n' "$REAL"
+            exit 1
+          fi
+          echo "ok: no password-shaped assignments"
+
+      - name: No service keys or private keys
+        run: |
+          # Match key SHAPES, not role names. "service_role" on its own is a
+          # Postgres role that legitimately appears in SQL and in grant output —
+          # the first version of this check failed on a migration comment quoting
+          # an ACL. What actually indicates a leak is a secret key prefix, a JWT,
+          # or a private key block.
+          if git grep -nIE 'sb_secret_[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}|SERVICE_ROLE_KEY[[:space:]]*[:=]|BEGIN [A-Z ]*PRIVATE KEY' \
+               -- . ':!.github/workflows/guard.yml'; then
+            echo "::error::A secret-shaped string is committed."
+            exit 1
+          fi
+          echo "ok: no secret-shaped strings"
+
+  production-isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Production project ref stays quarantined in the legacy file
+        run: |
+          # rbghqyhzvczavtjwiocc is the club president's LIVE project, holding real
+          # member data we have no authority over. It legitimately appears in the
+          # frozen legacy index.html; anywhere else means new code could write to it.
+          # Two kinds of appearance are legitimate and everything else is not:
+          #   index.html          — the frozen legacy app, which genuinely connects there
+          #   app/src/lib/env.ts  — the runtime blocklist that REFUSES that ref, plus its test
+          # A ref inside a blocklist is the opposite of a leak, so allow exactly
+          # those paths rather than weakening the check everywhere.
+          # -i because hostnames are case-insensitive: an uppercased ref reaches
+          # the same database, so a literal match is not a guard.
+          PROD_REF=rbghqyhzvczavtjwiocc
+          HITS=$(git grep -liF "$PROD_REF" -- . \
+                   ':!index.html' \
+                   ':!app/src/lib/env.ts' \
+                   ':!app/src/lib/env.test.ts' \
+                   ':!.github/workflows/guard.yml' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::Production project ref found outside the legacy file and the runtime blocklist:"
+            echo "$HITS"
+            exit 1
+          fi
+
+          # And prove the blocklist is still a blocklist, not a config value that
+          # someone quietly turned into a connection target.
+          if ! grep -q 'FORBIDDEN_PROJECT_REF' app/src/lib/env.ts; then
+            echo "::error::env.ts no longer declares FORBIDDEN_PROJECT_REF — the runtime guard is gone."
+            exit 1
+          fi
+          echo "ok: production ref confined to the legacy file and the runtime blocklist"
