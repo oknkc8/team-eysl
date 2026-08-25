@@ -56,9 +56,14 @@ export function MemberListPage() {
             가입 승인
           </Link>
           {isMasterAdmin(user) && (
-            <Link to="/members/roles" style={ADMIN_LINK}>
-              권한 관리
-            </Link>
+            <>
+              <Link to="/members/roles" style={ADMIN_LINK}>
+                권한 관리
+              </Link>
+              <Link to="/members/blocked" style={ADMIN_LINK}>
+                회원 내보내기
+              </Link>
+            </>
           )}
         </div>
       )}

@@ -34,7 +34,34 @@ export function mediaObjectPath(input: {
   now?: number
   nonce?: string
 }): string {
+  return objectPath({ ...input, prefix: 'media' })
+}
+
+/**
+ * The same key, under `resources/` instead of `media/`.
+ *
+ * 자료실 files are media_files rows with a null folder_id, so the row shape does
+ * not distinguish them — the object prefix does, and it is the only thing that
+ * makes a bucket listing readable. The legacy app draws the same line
+ * (index.html:2762 uploads with prefix 'resources', :2749 with 'media').
+ */
+export function resourceObjectPath(input: {
+  memberId: string
+  fileName: string
+  now?: number
+  nonce?: string
+}): string {
+  return objectPath({ ...input, prefix: 'resources' })
+}
+
+function objectPath(input: {
+  memberId: string
+  fileName: string
+  prefix: 'media' | 'resources'
+  now?: number
+  nonce?: string
+}): string {
   const millis = input.now ?? Date.now()
   const nonce = input.nonce ?? Math.random().toString(36).slice(2, 8)
-  return `${input.memberId}/media/${millis}_${nonce}_${safeObjectName(input.fileName)}`
+  return `${input.memberId}/${input.prefix}/${millis}_${nonce}_${safeObjectName(input.fileName)}`
 }

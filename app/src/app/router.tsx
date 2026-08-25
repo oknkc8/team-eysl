@@ -17,8 +17,10 @@ import { MemberListPage } from '../features/members/MemberListPage'
 import { MemberDetailPage } from '../features/members/MemberDetailPage'
 import { MemberApprovalPage } from '../features/members/MemberApprovalPage'
 import { MemberRolesPage } from '../features/members/MemberRolesPage'
+import { MemberAccessPage } from '../features/members/MemberAccessPage'
 import { MediaFolderListPage } from '../features/media/MediaFolderListPage'
 import { MediaFolderPage } from '../features/media/MediaFolderPage'
+import { ResourceListPage } from '../features/media/ResourceListPage'
 
 // Access is decided by position in this tree, not by a check inside each screen.
 export const router = createBrowserRouter([
@@ -38,6 +40,12 @@ export const router = createBrowserRouter([
       { path: '/members/:memberId', element: <MemberDetailPage /> },
       { path: '/media', element: <MediaFolderListPage /> },
       { path: '/media/:folderId', element: <MediaFolderPage /> },
+      // 자료실. A sibling of /media rather than a child, because its rows are
+      // the ones with no folder — /media/:folderId could only reach them
+      // through an id that does not exist. Uploading here is staff-only in the
+      // UI but not in RLS (media_files_insert takes any approved member), so
+      // there is no staff-only resource route to guard.
+      { path: '/files', element: <ResourceListPage /> },
       {
         element: <RequireStaff />,
         children: [
@@ -71,6 +79,11 @@ export const router = createBrowserRouter([
             children: [
               { path: '/members/approval', element: <MemberApprovalPage /> },
               { path: '/members/roles', element: <MemberRolesPage /> },
+              // 회원 내보내기. Master-admin for the same reason as its
+              // neighbours — the legacy screen says 가입 승인·회원
+              // 내보내기·권한 지정/해제는 총관리자만 (index.html:1127) — and
+              // set_member_blocked_v1 refuses anyone else in the database.
+              { path: '/members/blocked', element: <MemberAccessPage /> },
             ],
           },
         ],

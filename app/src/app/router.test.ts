@@ -131,11 +131,20 @@ describe('member routes are guarded by tree position', () => {
     expect(guardsFor('/members/roles')).toEqual(['auth', 'staff', 'master', '/members/roles'])
   })
 
+  // Blocking is what actually ends somebody's access — current_member_id()
+  // stops answering for them — so it sits with approval and roles rather than
+  // with the merely staff-only screens. set_member_blocked_v1 refuses an admin
+  // in the database, matching the legacy gate at index.html:1127.
+  it('puts 회원 내보내기 behind RequireMasterAdmin', () => {
+    expect(guardsFor('/members/blocked')).toEqual(['auth', 'staff', 'master', '/members/blocked'])
+  })
+
   // An admin who is not the master must meet the master guard rather than the
   // member detail screen, so the redirect is the one this route intends.
-  it('does not let the member detail route swallow either admin path', () => {
+  it('does not let the member detail route swallow any admin path', () => {
     expect(guardsFor('/members/approval')).not.toContain('/members/:memberId')
     expect(guardsFor('/members/roles')).not.toContain('/members/:memberId')
+    expect(guardsFor('/members/blocked')).not.toContain('/members/:memberId')
   })
 })
 
@@ -151,5 +160,17 @@ describe('media routes are guarded by tree position', () => {
   it('keeps both media screens on RequireAuth only', () => {
     expect(guardsFor('/media')).not.toContain('staff')
     expect(guardsFor(`/media/${FOLDER_ID}`)).not.toContain('staff')
+  })
+
+  // 자료실 is the same table with a null folder_id, and media_files_read shows
+  // it to every approved member, so it is guarded exactly like /media.
+  it('puts 자료실 on RequireAuth', () => {
+    expect(guardsFor('/files')).toEqual(['auth', '/files'])
+  })
+
+  // A sibling of /media, not a child: a literal /files cannot be mistaken for
+  // a folder id, and the folder route must not answer for it.
+  it('does not let the folder route swallow /files', () => {
+    expect(guardsFor('/files')).not.toContain('/media/:folderId')
   })
 })

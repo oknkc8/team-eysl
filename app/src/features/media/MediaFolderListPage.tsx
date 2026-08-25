@@ -36,6 +36,13 @@ export function MediaFolderListPage() {
   return (
     <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
       <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: 0 }}>미디어</h1>
+      <p style={{ fontSize: 12, color: '#6b7178', margin: '6px 0 0', lineHeight: 1.6 }}>
+        폴더에 속하지 않은 문서는{' '}
+        <Link to="/files" style={{ color: '#11805b' }}>
+          자료실
+        </Link>
+        에 있습니다.
+      </p>
 
       {/* Presentation only, and worth being precise about: media_folders_insert
           (0004) accepts any approved member, so hiding this form is a tidiness

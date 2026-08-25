@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import type { Role } from '../auth/schema'
+import type { AssignableTeamRole } from './teamRole'
 
 // Avatars live in their own bucket, separate from team-files: an avatar is
 // readable by every approved member, while a media file's object path also
@@ -87,9 +88,28 @@ export type ApprovalQueue = {
   processed: ApprovalCandidate[]
 }
 
+/** A roster member plus the standing that decides whether they can still get in. */
+export type MemberAccess = RosterMember & { status: MemberStatus }
+
+/**
+ * The two lists 회원 내보내기 works on.
+ *
+ * Split here rather than in the screen so the rule has one home: only an
+ * approved member can be blocked and only a blocked member can be restored,
+ * which is what set_member_blocked_v1 enforces. Anyone pending or rejected
+ * belongs to the approval queue and appears on neither list.
+ */
+export type MemberAccessLists = {
+  active: MemberAccess[]
+  blocked: MemberAccess[]
+}
+
 const ROSTER_COLUMNS = 'id, nickname, short_name, avatar_path, team_role, role'
 const APPROVAL_COLUMNS =
   'id, nickname, real_name, join_date_text, join_reason, lesson_level, swim_experience, status, role, created_at'
+// Read off members rather than member_public_v, which is approved-only
+// (0001:158-161) — a blocked member is precisely who this list has to show.
+const ACCESS_COLUMNS = 'id, nickname, short_name, avatar_path, team_role, role, status'
 const PRIVATE_COLUMNS =
   'real_name, birth_date_text, birth_year, gender, location, join_date_text, join_reason, lesson_level, swim_experience, notes, status, historical_attendance_count_legacy, historical_late_count_legacy'
 
@@ -293,10 +313,50 @@ export async function getApprovalQueue(): Promise<ApprovalQueue> {
   }
 }
 
+/**
+ * Everyone whose access is a live question: approved members and blocked ones.
+ *
+ * Off members rather than member_public_v, because the view is confined to
+ * approved rows (0001:158-161) and a blocked member would simply be absent —
+ * which is exactly the person this screen exists to show and restore.
+ * members_read hands a non-staff caller only their own row, so the lists
+ * collapse to nothing for anyone who should not have them.
+ *
+ * Avatars are signed for both lists in one request, the same as listRoster:
+ * a blocked member is still a face somebody is deciding about.
+ */
+export async function getMemberAccessLists(): Promise<MemberAccessLists> {
+  const { data, error } = await supabase
+    .from('members')
+    .select(ACCESS_COLUMNS)
+    .in('status', ['approved', 'blocked'])
+    .order('nickname', { ascending: true })
+  if (error) throw error
+
+  const rows = data ?? []
+  const paths = rows.map((row) => row.avatar_path).filter((path): path is string => !!path)
+  const avatars = await signAvatars(paths)
+
+  const active: MemberAccess[] = []
+  const blocked: MemberAccess[] = []
+  for (const row of rows) {
+    const [member] = toRoster([row], avatars)
+    if (!member) continue
+    const entry: MemberAccess = { ...member, status: toStatus(row.status) }
+    // toStatus leans to 'pending' for a token it does not recognise, so an
+    // unreadable status lands on neither list rather than on the one that
+    // offers a 내보내기 button.
+    if (entry.status === 'approved') active.push(entry)
+    else if (entry.status === 'blocked') blocked.push(entry)
+  }
+  return { active, blocked }
+}
+
 // ------------------------------------------------------------------ writes
 // Never an update against members — the table has no write policy at all
 // (0001:171-175), so a direct update matches zero rows rather than raising.
-// Both RPCs check the caller themselves and raise 42501 when they should.
+// Verified again for 0011: as an `admin`, `update members set team_role = …`
+// reported UPDATE 0. Every RPC below checks the caller itself and raises 42501.
 
 export async function setMemberStatus(input: {
   memberId: string
@@ -321,6 +381,51 @@ export async function setMemberRole(input: { memberId: string; role: Role }): Pr
   const { error } = await supabase.rpc('set_member_role_v1', {
     p_member_id: input.memberId,
     p_role: input.role,
+  })
+  if (error) throw error
+}
+
+/**
+ * Set or clear a member's 팀 역할.
+ *
+ * The one that matters is '코치': can_manage_records() (0004:167) reads it to
+ * decide who may upload 결과지, and until 0011 nothing in the schema could
+ * write the column at all — so that branch had never once been true.
+ *
+ * `null` here means 지정 안 함, and it goes over the wire as '' because the
+ * generated Args type declares p_team_role as a plain string — plpgsql has no
+ * way to say "nullable text" in a signature. That is not a workaround: the
+ * function runs nullif(btrim(...)) precisely so the two spellings of empty
+ * arrive at the same NULL, and it never stores '' — a value that would read as
+ * set everywhere and match nothing.
+ */
+export async function setMemberTeamRole(input: {
+  memberId: string
+  teamRole: AssignableTeamRole | null
+}): Promise<void> {
+  const { error } = await supabase.rpc('set_member_team_role_v1', {
+    p_member_id: input.memberId,
+    p_team_role: input.teamRole ?? '',
+  })
+  if (error) throw error
+}
+
+/**
+ * 회원 내보내기, and its undo.
+ *
+ * Blocking is what actually ends somebody's access: current_member_id()
+ * (0001:123-129) only answers for an approved row, so every RLS policy and
+ * every RPC stops recognising them at once. It deletes nothing — the member,
+ * their records and their attendance all stay — which is why the same call
+ * with `blocked: false` puts them back exactly as they were.
+ */
+export async function setMemberBlocked(input: {
+  memberId: string
+  blocked: boolean
+}): Promise<void> {
+  const { error } = await supabase.rpc('set_member_blocked_v1', {
+    p_member_id: input.memberId,
+    p_blocked: input.blocked,
   })
   if (error) throw error
 }

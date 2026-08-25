@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mediaObjectPath, safeObjectName } from './path'
+import { mediaObjectPath, resourceObjectPath, safeObjectName } from './path'
 
 const MEMBER_ID = '00000000-0000-4000-8000-000000000001'
 const NOW = 1_756_090_034_969
@@ -49,5 +49,35 @@ describe('mediaObjectPath', () => {
     const first = mediaObjectPath({ memberId: MEMBER_ID, fileName: '사진.jpg', now: NOW })
     const second = mediaObjectPath({ memberId: MEMBER_ID, fileName: '사진.jpg', now: NOW })
     expect(first).not.toBe(second)
+  })
+})
+
+describe('resourceObjectPath', () => {
+  // 자료실 files are media_files rows with a null folder_id, so nothing in the
+  // row says which screen put them there. The prefix is what makes a bucket
+  // listing readable, and it matches the legacy split (index.html:2749/:2762).
+  it('files a resource under resources/ rather than media/', () => {
+    expect(
+      resourceObjectPath({ memberId: MEMBER_ID, fileName: '회칙.pdf', now: NOW, nonce: NONCE }),
+    ).toBe(`${MEMBER_ID}/resources/1756090034969_a1b2c3_회칙.pdf`)
+  })
+
+  // Same policy applies to both: team_files_insert (0009) compares the first
+  // path segment against current_member_id().
+  it('still puts the member id first', () => {
+    const path = resourceObjectPath({ memberId: MEMBER_ID, fileName: 'x.pdf', now: NOW })
+    expect(path.split('/')[0]).toBe(MEMBER_ID)
+  })
+
+  it('sanitizes the name the same way', () => {
+    expect(
+      resourceObjectPath({ memberId: MEMBER_ID, fileName: 'a/b 안내.pdf', now: NOW, nonce: NONCE }),
+    ).toBe(`${MEMBER_ID}/resources/1756090034969_a1b2c3_a_b_안내.pdf`)
+  })
+
+  it('does not collide with a media upload of the same name in the same millisecond', () => {
+    expect(
+      resourceObjectPath({ memberId: MEMBER_ID, fileName: '사진.jpg', now: NOW, nonce: NONCE }),
+    ).not.toBe(mediaObjectPath({ memberId: MEMBER_ID, fileName: '사진.jpg', now: NOW, nonce: NONCE }))
   })
 })
