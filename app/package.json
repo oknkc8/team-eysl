@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "typecheck:functions": "tsc -p tsconfig.functions.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:psql": "bash scripts/psql.sh",

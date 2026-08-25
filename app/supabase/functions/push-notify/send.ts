@@ -14,6 +14,7 @@
  */
 
 import webpush from 'npm:web-push@3.6.7'
+import { isAllowedPushEndpoint } from './endpoint.ts'
 
 /** One row of push_subscriptions, as push_notify_context_v1() returns it. */
 export type Recipient = {
@@ -34,6 +35,15 @@ export type SendReport = {
   sent: number
   /** Rows deleted because the endpoint is gone for good. */
   pruned: number
+  /**
+   * Rows this sender would not make a request to at all.
+   *
+   * Counted apart from `failed` because it is a different fact and the log
+   * should be able to say which happened: a failure is a push service that did
+   * not answer, and a refusal is a row naming somewhere we do not send. Only
+   * rows written before the 0023 constraint can reach this.
+   */
+  refused: number
   /** Everything else — the row stays, and the next event tries again. */
   failed: number
   /** Enough to diagnose from the function logs without naming the member. */
@@ -99,7 +109,7 @@ export async function sendToAll(input: {
   onGone: (subscriptionId: string) => Promise<void>
 }): Promise<SendReport> {
   const body = JSON.stringify(input.payload)
-  const report: SendReport = { sent: 0, pruned: 0, failed: 0, errors: [] }
+  const report: SendReport = { sent: 0, pruned: 0, refused: 0, failed: 0, errors: [] }
 
   const queue = [...input.recipients]
   const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
@@ -136,6 +146,15 @@ async function deliver(
   onGone: (subscriptionId: string) => Promise<void>,
   report: SendReport,
 ): Promise<void> {
+  // Before the crypto, because a row we will not send to is not worth
+  // encrypting for. The row is left alone: it is refused, not deleted, for the
+  // same reason an undecryptable one is — see the encrypt failure below.
+  if (!isAllowedPushEndpoint(recipient.endpoint)) {
+    report.refused += 1
+    report.errors.push(`refused: ${host(recipient.endpoint)}`)
+    return
+  }
+
   let request: PushRequest
   try {
     request = webpush.generateRequestDetails(
@@ -150,6 +169,17 @@ async function deliver(
     // working registration disappears.
     report.failed += 1
     report.errors.push(`encrypt: ${describe(error)}`)
+    return
+  }
+
+  // The URL fetch is actually given, rather than the one the row held.
+  // generateRequestDetails() returns an endpoint of its own making — for the
+  // legacy GCM path it rewrites the one it was handed — and checking the input
+  // while sending something else would be a check in name only. It costs a
+  // regex on a string we already have.
+  if (!isAllowedPushEndpoint(request.endpoint)) {
+    report.refused += 1
+    report.errors.push(`refused after signing: ${host(request.endpoint)}`)
     return
   }
 

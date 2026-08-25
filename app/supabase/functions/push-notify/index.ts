@@ -57,6 +57,19 @@
  *
  * Anything else is refused. This endpoint is reachable by the whole internet;
  * that is exactly why nothing here trusts the request body.
+ *
+ * ------------------------------------------------------------ what it will fetch
+ *
+ * Not whatever a row happens to say. An approved member used to be able to
+ * store any URL in push_subscriptions.endpoint and then press 테스트 알림
+ * 보내기, which made this function — holding the service role, inside our
+ * network — issue that request on their behalf. 0023 closes the write side
+ * (a validating RPC, a CHECK constraint, a device cap) and endpoint.ts closes
+ * this side: an endpoint that is not a known push service is skipped rather
+ * than fetched, because rows written before that constraint still exist.
+ *
+ * self_test is also rate limited, in the database rather than in this process
+ * (push_self_test_allow_v1). Proving push works takes one send.
  */
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.112.4'
@@ -76,11 +89,48 @@ const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-function json(body: unknown, status = 200): Response {
+function json(body: unknown, status = 200, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', ...extra },
   })
+}
+
+/**
+ * Whether this member may raise self_test right now.
+ *
+ * The counter is in the database (push_self_test_quota, 0023) rather than in
+ * this process, because a function instance remembers nothing between
+ * invocations — Supabase may run the next request somewhere else entirely, so
+ * a limit held in memory is a limit that resets whenever the platform decides
+ * to. Returns null when the send may proceed, or the refusal to return.
+ */
+async function selfTestRateLimit(db: SupabaseClient, memberId: string): Promise<Response | null> {
+  const { data, error } = await db.rpc('push_self_test_allow_v1', { p_member: memberId })
+  if (error) {
+    // Refused rather than allowed. A limiter that fails open is not a limiter,
+    // and the cost of being wrong here is one member not getting a test push.
+    console.error('push-notify: rate limit check failed', error.message)
+    return json({ ok: false, error: 'could not check the rate limit' }, 503)
+  }
+
+  const verdict = (data ?? {}) as { allowed?: boolean; reason?: string; retry_after_seconds?: number }
+  if (verdict.allowed === true) return null
+
+  const retryAfter = Math.max(1, Number(verdict.retry_after_seconds ?? 60))
+  console.log(`push-notify self_test: refused (${verdict.reason ?? 'rate limited'}), retry in ${retryAfter}s`)
+  // retry_after_seconds is what the settings screen turns into a sentence; the
+  // header is there because 429 without one is a status code and not an answer.
+  return json(
+    {
+      ok: false,
+      error: 'too many test notifications',
+      reason: verdict.reason ?? 'rate_limited',
+      retry_after_seconds: retryAfter,
+    },
+    429,
+    { 'Retry-After': String(retryAfter) },
+  )
 }
 
 /**
@@ -220,6 +270,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
   const authorized = await authorize(request, body, db)
   if (authorized instanceof Response) return authorized
 
+  // Only self_test, and before anything expensive. It is the one event a member
+  // can raise directly; the other three come from the database, which does not
+  // need protecting from itself.
+  if (authorized.event === 'self_test') {
+    const limited = await selfTestRateLimit(db, authorized.id)
+    if (limited) return limited
+  }
+
   const vapid = readVapid()
   if (typeof vapid === 'string') return json({ ok: false, error: vapid }, 500)
 
@@ -230,6 +288,28 @@ Deno.serve(async (request: Request): Promise<Response> => {
   if (error) {
     console.error('push-notify: context lookup failed', error.message)
     return json({ ok: false, error: 'could not read the event' }, 500)
+  }
+
+  // push_notify_context_v1 answers null when the event describes nothing to
+  // send: no such row, a waitlist offer that lapsed between the queue insert
+  // and now, or an activity whose creator is not staff (0023). Distinguished
+  // from an empty audience because they are different facts — "there is nothing
+  // to notify about" and "nobody has a device" would otherwise read the same in
+  // the log, which is the confusion this whole feature keeps producing.
+  if (context === null) {
+    console.log(`push-notify ${authorized.event}: nothing to notify about`)
+    return json({
+      ok: true,
+      event: authorized.event,
+      skipped: true,
+      sent: 0,
+      pruned: 0,
+      refused: 0,
+      failed: 0,
+      subscription_count: 0,
+      member_count: 0,
+      errors: [],
+    })
   }
 
   const facts = (context ?? {}) as {
@@ -249,6 +329,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       event: authorized.event,
       sent: 0,
       pruned: 0,
+      refused: 0,
       failed: 0,
       subscription_count: 0,
       member_count: facts.member_count ?? 0,
@@ -274,7 +355,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
   // where the club's actual delivery record lives.
   console.log(
     `push-notify ${authorized.event}: sent=${report.sent} pruned=${report.pruned} ` +
-      `failed=${report.failed} of ${recipients.length}`,
+      `refused=${report.refused} failed=${report.failed} of ${recipients.length}`,
   )
   if (report.errors.length > 0) console.warn('push-notify errors:', report.errors.join('; '))
 
@@ -283,6 +364,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     event: authorized.event,
     sent: report.sent,
     pruned: report.pruned,
+    refused: report.refused,
     failed: report.failed,
     subscription_count: recipients.length,
     member_count: facts.member_count ?? 0,

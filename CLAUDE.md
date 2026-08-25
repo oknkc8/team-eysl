@@ -13,7 +13,7 @@ TEAM EYSL — a Korean swimming club's member/training-management PWA ("TEAM EYS
 - `manifest.webmanifest`, `icon-*.png` — PWA manifest/icons.
 - The legacy app has no build step of its own: no bundler, no framework, no tests. Every commit on `upstream` is "Add files via upload" — the president maintains it by uploading edited files through the GitHub web UI. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
 - The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
-- **There is no linter.** `app/package.json` has no eslint dependency and no `lint` script — `npx eslint` silently resolves to an unrelated global v6.4.0 and fails on the config. The only gates that exist are `./node_modules/.bin/tsc --noEmit` and `./node_modules/.bin/vitest run`. Do not claim a lint pass; three separate agents reported running one before this was checked.
+- **There is no linter.** `app/package.json` has no eslint dependency and no `lint` script — `npx eslint` silently resolves to an unrelated global v6.4.0 and fails on the config. The only gates that exist are `./node_modules/.bin/tsc --noEmit` (which reads `src` only), `./node_modules/.bin/tsc -p tsconfig.functions.json` (which reads `supabase/functions`), and `./node_modules/.bin/vitest run`. Do not claim a lint pass; three separate agents reported running one before this was checked.
 
 ## Commands
 
@@ -170,6 +170,14 @@ It was found by planting stale offers and waiting for a real scheduled tick. **A
 **A view's grants are the whole gate.** `authenticated=arwdDxtm` on a table is unremarkable — RLS is what refuses. The identical string on a view means the opposite, because there is no RLS behind it: `member_public_v` was auto-updatable, DEFINER-mode, exposed `role`, and let any approved member PATCH themselves to `master_admin` (closed in `0019`). Three grant audits printed that string and read it as ordinary. When auditing, **split views from tables and read them under different rules.**
 
 **`npx tsc --noEmit` does not report the truth on this machine.** A wrapper rewrites its output to "TypeScript compilation completed" and swallows real errors; twelve of them sat behind that for hours while `npm run build` was failing. Run `./node_modules/.bin/tsc --noEmit` and check the exit code. The same caution applies to any tool whose output looks suspiciously tidy.
+
+**And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
+
+That makes "typecheck passes" narrower than it sounds, and it is the kind of claim that gets repeated because it was true about the part somebody happened to be looking at. **Say which tree you checked, not just that the check was green.**
+
+`npm run typecheck:functions` (`app/tsconfig.functions.json`) now covers that second tree, and it is worth knowing exactly how far it reaches. It catches everything about **our** code — wrong property names, wrong argument counts, a value of the wrong type moving between `index.ts`, `send.ts`, `payload.ts` and `endpoint.ts`. It does **not** catch us being wrong about Deno or about `web-push`: neither is installed here, so both are hand-declared in `supabase/functions/_shims/`, and a wrong declaration is a check that agrees with the mistake. `supabase-js` is the exception — it maps to the real installed package, so those types are genuine. Deno is not installed, so `deno check` remains the thing this stands in for rather than replaces, and the function's runtime behaviour still rests on the Docker edge-runtime harness under `tmp/pushverify/`, which is a test, not a typecheck.
+
+**Both typecheck commands have to be run; neither implies the other.** `npm run typecheck` reads `src`, `npm run typecheck:functions` reads `supabase/functions`, and a green one says nothing about the other tree.
 
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 

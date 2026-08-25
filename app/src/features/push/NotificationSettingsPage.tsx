@@ -10,6 +10,7 @@ import {
   forgetDevice,
   readPushStatus,
   sendTestPush,
+  MAX_PUSH_DEVICES,
   type PushDevice,
   type TestPushResult,
 } from './api'
@@ -121,7 +122,7 @@ export function NotificationSettingsPage() {
   const toggle = useMutation({
     mutationFn: async (next: 'enable' | 'disable') => {
       if (next === 'disable') return disablePush(memberId)
-      await enablePush(memberId)
+      await enablePush()
       return { browserUnsubscribed: true }
     },
     onMutate: () => {
@@ -303,6 +304,13 @@ export function NotificationSettingsPage() {
                         : '보낼 수 있는 기기가 없습니다.'}
                       {testResult.pruned > 0 &&
                         ` 만료된 등록 ${testResult.pruned}개는 삭제했습니다. 다시 등록해주세요.`}
+                      {/* A registration stored before the app checked what a
+                          push address may be. It can never receive anything,
+                          and the server will not write to it, so the only way
+                          out is to remove it from the list below — saying so is
+                          the difference between a dead end and a next step. */}
+                      {testResult.refused > 0 &&
+                        ` ${testResult.refused}개는 알림을 보낼 수 없는 주소여서 건너뛰었습니다. 아래 목록에서 지운 뒤 다시 등록해주세요.`}
                       {testResult.failed > 0 && ` ${testResult.failed}개는 전송에 실패했습니다.`}
                     </p>
                   )}
@@ -330,9 +338,10 @@ export function NotificationSettingsPage() {
           arrive, and what will not, so nobody waits for a notification this app
           never sends. */}
       <p style={{ fontSize: 11, color: '#6b7178', lineHeight: 1.7, margin: '18px 2px 0' }}>
-        새 공지가 올라오거나 새 일정이 등록되면 알림이 갑니다. 대기 중이던 자리가 나면 그
+        새 공지가 올라오거나 운영진이 새 일정을 등록하면 알림이 갑니다. 회원이 직접 만든 기타
+        일정은 알림을 보내지 않으니 일정 화면에서 확인해주세요. 대기 중이던 자리가 나면 그
         회원에게만 따로 알림이 가고, 수락 기한이 함께 표시됩니다. 채팅 메시지는 아직 알림을 보내지
-        않습니다.
+        않습니다. 알림을 받을 기기는 최대 {MAX_PUSH_DEVICES}대까지 등록할 수 있습니다.
       </p>
     </div>
   )

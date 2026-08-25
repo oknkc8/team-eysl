@@ -36,6 +36,15 @@ export type PushDevice = {
   isThisDevice: boolean
 }
 
+/**
+ * How many devices one member may register.
+ *
+ * The rule is the server's — push_subscription_register_v1 raises 53400 past
+ * this — and the number is repeated here only so the screen can say it before
+ * the member hits it. endpoint.rule.test.ts fails if the two disagree.
+ */
+export const MAX_PUSH_DEVICES = 5
+
 export type PushStatus = {
   state: PushState
   support: PushSupport
@@ -156,7 +165,7 @@ export async function readPushStatus(memberId: string): Promise<PushStatus> {
  * unconditionally to work around this (repairPushSubscription,
  * index.html:1520); comparing the keys means only a wrong one is replaced.
  */
-export async function enablePush(memberId: string): Promise<void> {
+export async function enablePush(): Promise<void> {
   const key = env.VAPID_PUBLIC_KEY
   if (!key) throw new Error('이 빌드에는 알림 키가 설정되어 있지 않습니다')
   const applicationServerKey = vapidKeyToBytes(key)
@@ -183,7 +192,7 @@ export async function enablePush(memberId: string): Promise<void> {
     })
   }
 
-  await storeSubscription(memberId, subscription)
+  await storeSubscription(subscription)
 }
 
 /**
@@ -214,7 +223,8 @@ export async function disablePush(memberId: string): Promise<{ browserUnsubscrib
  *
  * The row for a phone that was reinstalled or thrown away cannot be reached
  * from that device any more, so it is removed from wherever the member is now.
- * push_subscriptions_self (0004) confines this to their own rows.
+ * push_subscriptions_self_delete (0023, which split 0004's FOR ALL policy into
+ * the two commands a client can still reach) confines this to their own rows.
  */
 export async function forgetDevice(deviceId: string): Promise<void> {
   const { data, error } = await supabase
@@ -235,6 +245,14 @@ export type TestPushResult = {
   sent: number
   /** Registrations deleted mid-send because their endpoint is gone. */
   pruned: number
+  /**
+   * Registrations the server would not send to at all.
+   *
+   * Only rows stored before the endpoint rule existed can be counted here, and
+   * they can never receive anything, so the screen tells the member to remove
+   * them rather than leaving them to wonder why nothing arrived.
+   */
+  refused: number
   failed: number
 }
 
@@ -278,7 +296,24 @@ export async function sendTestPush(): Promise<TestPushResult> {
   }
 
   const body: unknown = await response.json().catch(() => ({}))
-  const payload = (body ?? {}) as { ok?: boolean; error?: string; sent?: number; pruned?: number; failed?: number }
+  const payload = (body ?? {}) as {
+    ok?: boolean
+    error?: string
+    sent?: number
+    pruned?: number
+    refused?: number
+    failed?: number
+    retry_after_seconds?: number
+  }
+
+  // Rate limited. The server's own words are English and would be shown
+  // verbatim, so this is the one refusal worth composing here — and it is the
+  // one a member can act on by simply waiting.
+  if (response.status === 429) {
+    const seconds = Math.max(1, Number(payload.retry_after_seconds ?? 60))
+    const wait = seconds >= 60 ? `약 ${Math.ceil(seconds / 60)}분` : `${seconds}초`
+    throw new Error(`테스트 알림을 너무 자주 보냈습니다. ${wait} 뒤에 다시 시도해주세요.`)
+  }
 
   if (!response.ok || payload.ok !== true) {
     // The function's own words when it has any — "push is not configured:
@@ -290,13 +325,61 @@ export async function sendTestPush(): Promise<TestPushResult> {
   return {
     sent: Number(payload.sent ?? 0),
     pruned: Number(payload.pruned ?? 0),
+    refused: Number(payload.refused ?? 0),
     failed: Number(payload.failed ?? 0),
   }
 }
 
 // --------------------------------------------------------------- internals
 
-async function storeSubscription(memberId: string, subscription: PushSubscription): Promise<void> {
+/**
+ * Tell the server which host it just turned away.
+ *
+ * The allowlist in 0023 is deliberately narrow, which means it is probably
+ * wrong about some browser nobody here could test — Samsung Internet is the
+ * named suspect, and Korea is why it matters. Rather than widening the list on
+ * a hunch, every refusal leaves the host behind, so the first real one names
+ * the line to add.
+ *
+ * Never throws. This is diagnostics; a member being told why their browser was
+ * refused must not turn into a different, worse error because the bookkeeping
+ * call failed.
+ */
+async function recordUnsupportedEndpoint(endpoint: string): Promise<void> {
+  try {
+    await supabase.rpc('record_unsupported_push_endpoint_v1', {
+      p_endpoint: endpoint,
+      p_user_agent: navigator.userAgent,
+    })
+  } catch {
+    // Deliberately empty. The server logs the refusal on its own (0024), so
+    // this failing costs the durable record, not the signal itself.
+  }
+}
+
+/** The push service a URL names, for a sentence the member can act on. */
+function endpointHost(endpoint: string): string {
+  try {
+    return new URL(endpoint).host
+  } catch {
+    return endpoint.slice(0, 40)
+  }
+}
+
+/**
+ * Register this browser.
+ *
+ * Through push_subscription_register_v1 rather than a direct upsert, because
+ * `authenticated` no longer holds INSERT or UPDATE on push_subscriptions
+ * (0023). The endpoint used to be free text that the sender would later fetch
+ * with the service role, which made every member a request forwarder; the RPC
+ * is what checks it, and it also counts devices, which no policy could.
+ *
+ * Every refusal it can raise is turned into a sentence here. A member who is
+ * told 알림 등록을 저장하지 못했습니다 learns nothing they can do something
+ * about, and two of these have an obvious next step.
+ */
+async function storeSubscription(subscription: PushSubscription): Promise<void> {
   const json = subscription.toJSON()
   const p256dh = json.keys?.p256dh
   const auth = json.keys?.auth
@@ -304,25 +387,46 @@ async function storeSubscription(memberId: string, subscription: PushSubscriptio
   // never deliver anything, so it is better not written.
   if (!p256dh || !auth) throw new Error('구독 정보를 읽지 못했습니다')
 
-  const { data, error } = await supabase
-    .from('push_subscriptions')
-    .upsert(
-      {
-        member_id: memberId,
-        endpoint: subscription.endpoint,
-        p256dh,
-        auth,
-        // What lets a member tell three rows apart on the settings screen.
-        user_agent: navigator.userAgent,
-        updated_at: new Date().toISOString(),
-      },
-      // The table's unique (member_id, endpoint) — re-enabling on a device that
-      // is already registered refreshes the row rather than duplicating it.
-      { onConflict: 'member_id,endpoint' },
-    )
-    .select('id')
-  if (error) throw error
-  if ((data ?? []).length === 0) throw new Error('알림 등록을 저장하지 못했습니다')
+  // The member is not sent. The RPC reads it from the session with
+  // current_member_id(), the same way every other write in this app does, so
+  // there is no member id on the wire for anyone to change.
+  const { data, error } = await supabase.rpc('push_subscription_register_v1', {
+    p_endpoint: subscription.endpoint,
+    p_p256dh: p256dh,
+    p_auth: auth,
+    p_user_agent: navigator.userAgent,
+  })
+
+  if (error) {
+    // 22023 — the endpoint is not a push service this app will send to. Naming
+    // the host is what makes this reportable: it is the one piece of
+    // information that tells us which browser to add support for.
+    if (error.code === '22023') {
+      // And recorded, so the allowlist stops being a guess. It has to happen
+      // here rather than inside the register RPC: that function signals refusal
+      // by raising, and a raise rolls its transaction back — a row written
+      // there would vanish with it (0025 explains this at length; 0024 makes
+      // the same point about why its half is a log). Awaited so a refusal is
+      // not reported to the member before it has been recorded.
+      await recordUnsupportedEndpoint(subscription.endpoint)
+      throw new Error(
+        `이 브라우저가 쓰는 알림 서버(${endpointHost(subscription.endpoint)})는 아직 지원하지 않습니다. 관리자에게 알려주세요.`,
+      )
+    }
+    // 53400 — too many devices. The list right below this card is the remedy.
+    if (error.code === '53400') {
+      throw new Error(
+        `등록할 수 있는 기기는 최대 ${MAX_PUSH_DEVICES}대입니다. 아래 목록에서 쓰지 않는 기기를 지운 뒤 다시 시도해주세요.`,
+      )
+    }
+    // 42501 — signed in, but not an approved member.
+    if (error.code === '42501') {
+      throw new Error('승인된 회원만 알림을 등록할 수 있습니다.')
+    }
+    throw error
+  }
+
+  if (!data) throw new Error('알림 등록을 저장하지 못했습니다')
 }
 
 /** Whether an existing subscription was created against this VAPID key. */
