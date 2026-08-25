@@ -59,7 +59,7 @@
  * that is exactly why nothing here trusts the request body.
  */
 
-import { createClient } from 'npm:@supabase/supabase-js@2.112.4'
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.112.4'
 import { buildPayload, type PushEvent } from './payload.ts'
 import { sendToAll, type Recipient, type VapidDetails } from './send.ts'
 
@@ -131,14 +131,14 @@ function secretMatches(given: string | null, expected: string): boolean {
  * Who is asking, and what they are allowed to ask for.
  *
  * Returns the event and the row id to look up, or a refusal. The member branch
- * never reads an id from the request: current_member_id() answers from the
- * session, so a member can only ever test their own devices.
+ * never reads an id from the request: the member is resolved from the session
+ * token the caller presented, so a member can only ever test their own devices.
  */
 async function authorize(
   request: Request,
   body: Record<string, unknown>,
+  db: SupabaseClient,
 ): Promise<{ event: PushEvent; id: string } | Response> {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
   const triggerSecret = Deno.env.get('PUSH_TRIGGER_SECRET')?.trim() ?? ''
   const event = typeof body.event === 'string' ? body.event : ''
 
@@ -168,22 +168,32 @@ async function authorize(
     return json({ ok: false, error: 'unauthorized' }, 401)
   }
 
-  // The publishable key plus the member's own header: this client is bound by
-  // RLS exactly as their browser is, which is what makes the answer trustworthy.
-  const asMember = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '', {
-    global: { headers: { Authorization: authorization } },
-    auth: { persistSession: false },
-  })
+  // The token is checked against the Auth server rather than merely decoded
+  // here: a JWT is only a claim until something with the signing key agrees.
+  const { data: auth, error: authError } = await db.auth.getUser(
+    authorization.slice('Bearer '.length),
+  )
+  if (authError || !auth.user) return json({ ok: false, error: 'unauthorized' }, 401)
 
-  const { data, error } = await asMember.rpc('current_member_id')
-  if (error) return json({ ok: false, error: 'unauthorized' }, 401)
-  // null means signed in but not an approved member — pending, rejected or
-  // blocked. current_member_id() is the same gate every other screen sits behind.
-  if (typeof data !== 'string' || data === '') {
-    return json({ ok: false, error: 'not an approved member' }, 403)
-  }
+  // The same two conditions current_member_id() applies — auth_user_id matches
+  // and status is 'approved' — spelled out rather than delegated to the RPC,
+  // because calling that RPC would need a client bound to the member's session,
+  // and that client needs an anon key this function is not guaranteed to have:
+  // a project issuing sb_publishable_ keys may never populate SUPABASE_ANON_KEY.
+  // Reading the row with the service key depends on nothing but the service key,
+  // which the platform always injects.
+  const { data: member, error: memberError } = await db
+    .from('members')
+    .select('id')
+    .eq('auth_user_id', auth.user.id)
+    .eq('status', 'approved')
+    .maybeSingle()
+  if (memberError) return json({ ok: false, error: 'unauthorized' }, 401)
+  // Signed in but pending, rejected or blocked. Refused by name, because this is
+  // the one refusal on this endpoint a member can act on.
+  if (!member) return json({ ok: false, error: 'not an approved member' }, 403)
 
-  return { event: 'self_test', id: data }
+  return { event: 'self_test', id: member.id }
 }
 
 Deno.serve(async (request: Request): Promise<Response> => {
@@ -197,21 +207,21 @@ Deno.serve(async (request: Request): Promise<Response> => {
     return json({ ok: false, error: 'body must be JSON' }, 400)
   }
 
-  const authorized = await authorize(request, body)
-  if (authorized instanceof Response) return authorized
-
-  const vapid = readVapid()
-  if (typeof vapid === 'string') return json({ ok: false, error: vapid }, 500)
-
-  // Service role, and only from here down: reading another member's devices is
-  // the whole job, and no RLS policy could allow it without allowing everyone.
-  // Nothing member-supplied reaches this client except an id the branch above
-  // either read from a trigger or took from the caller's own session.
+  // Service role. Reading another member's devices is the whole job here, and no
+  // RLS policy could permit it without permitting everyone. Nothing
+  // member-supplied ever reaches this client as an identifier: the ids it is
+  // given come from a trigger or from a verified session, never from the body.
   const db = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     { auth: { persistSession: false } },
   )
+
+  const authorized = await authorize(request, body, db)
+  if (authorized instanceof Response) return authorized
+
+  const vapid = readVapid()
+  if (typeof vapid === 'string') return json({ ok: false, error: vapid }, 500)
 
   const { data: context, error } = await db.rpc('push_notify_context_v1', {
     p_event: authorized.event,

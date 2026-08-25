@@ -1,5 +1,9 @@
--- 0020 — make the database say what the media screens say, and say what the
+-- 0021 — make the database say what the media screens say, and say what the
 -- president's app says.
+--
+-- (Renumbered from 0020, which another agent took while this was being written.
+-- 0006 carries the same kind of stale self-reference in its own header; both are
+-- harmless until somebody greps for a number and lands in the wrong file.)
 --
 -- The finding: MediaFolderPage hid folder creation and upload behind isStaff()
 -- while media_folders_insert / media_files_insert (0004:230,244) admitted any

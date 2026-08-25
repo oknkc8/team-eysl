@@ -114,7 +114,20 @@ export async function sendToAll(input: {
   return report
 }
 
-type PushRequest = { endpoint: string; headers: Record<string, string>; body: Uint8Array | null }
+/**
+ * What generateRequestDetails() hands back, as fetch needs to see it.
+ *
+ * `<ArrayBuffer>` is spelled out for the same reason vapidKeyToBytes does it in
+ * src/features/push/support.ts: a bare `Uint8Array` means
+ * `Uint8Array<ArrayBufferLike>`, which could be backed by a SharedArrayBuffer,
+ * and BodyInit cannot be. Leaving it off fails the typecheck at the fetch call
+ * with an error about URLSearchParams that has nothing to do with anything here.
+ */
+type PushRequest = {
+  endpoint: string
+  headers: Record<string, string>
+  body: Uint8Array<ArrayBuffer> | null
+}
 
 async function deliver(
   recipient: Recipient,
