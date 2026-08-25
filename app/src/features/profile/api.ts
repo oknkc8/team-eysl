@@ -10,6 +10,21 @@ const AVATAR_URL_TTL_SECONDS = 600
 /** His own limit (upstream:3609): an image, and no larger than 5MB. */
 export const MAX_AVATAR_BYTES = 5 * 1024 * 1024
 
+/**
+ * The types the profile-images bucket accepts.
+ *
+ * THIS LIST AND THE BUCKET'S `allowed_mime_types` (0029) ARE ONE RULE WRITTEN
+ * TWICE, and they have to be edited together. Postgres holds the authoritative
+ * copy; this one exists so a member learns the answer before uploading rather
+ * than after.
+ *
+ * It replaces a `type.startsWith('image/')` test, which was the wider of the two
+ * — so image/bmp and image/tiff passed here and were refused by the bucket,
+ * which is the one mismatch shape that produces a confusing failure: the screen
+ * says yes, the upload says no, and nothing explains why.
+ */
+export const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+
 export type MyProfile = {
   id: string
   nickname: string
@@ -34,11 +49,17 @@ function toRole(value: string | null): Role {
  *
  * Checked here as well as server-side because the alternative is a member
  * waiting for a 30MB upload to finish before being told it was never allowed.
- * The database is still what decides: the storage policy refuses any key outside
- * `<my member id>/<name>` whatever this function says.
+ * The database is still what decides, and after 0029 it genuinely does: the
+ * bucket carries the same type list and a 5MB file_size_limit, and the storage
+ * policy refuses any key outside `<my member id>/<name>`. Until 0029 this
+ * function was the only size check anywhere, which made it a courtesy rather
+ * than a control — an approved member calling the storage API directly could put
+ * anything of any size under their own prefix.
  */
 export function validateAvatarFile(file: { type: string; size: number }): string | null {
-  if (!file.type.startsWith('image/')) return '이미지 파일만 등록할 수 있습니다.'
+  if (!ALLOWED_AVATAR_TYPES.includes(file.type)) {
+    return 'JPG, PNG, WEBP, GIF 이미지만 등록할 수 있습니다.'
+  }
   if (file.size > MAX_AVATAR_BYTES) return '프로필 사진은 5MB 이하로 올려주세요.'
   return null
 }

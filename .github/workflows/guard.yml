@@ -85,9 +85,12 @@ jobs:
           # rbghqyhzvczavtjwiocc is the club president's LIVE project, holding real
           # member data we have no authority over. It legitimately appears in the
           # frozen legacy index.html; anywhere else means new code could write to it.
-          # Two kinds of appearance are legitimate and everything else is not:
-          #   index.html          — the frozen legacy app, which genuinely connects there
-          #   app/src/lib/env.ts  — the runtime blocklist that REFUSES that ref, plus its test
+          # Three kinds of appearance are legitimate and everything else is not:
+          #   index.html            — the frozen legacy app, which genuinely connects there
+          #   app/src/lib/env.ts    — the runtime blocklist that REFUSES that ref, plus its test
+          #   app/scripts/_env.sh   — the same blocklist for psql/migrate/seed, which is
+          #                           the more dangerous path: it runs DDL as `postgres`
+          #                           and seeds an approved master_admin.
           # A ref inside a blocklist is the opposite of a leak, so allow exactly
           # those paths rather than weakening the check everywhere.
           # -i because hostnames are case-insensitive: an uppercased ref reaches
@@ -97,17 +100,30 @@ jobs:
                    ':!index.html' \
                    ':!app/src/lib/env.ts' \
                    ':!app/src/lib/env.test.ts' \
+                   ':!app/scripts/_env.sh' \
                    ':!.github/workflows/guard.yml' || true)
           if [ -n "$HITS" ]; then
-            echo "::error::Production project ref found outside the legacy file and the runtime blocklist:"
+            echo "::error::Production project ref found outside the legacy file and the runtime blocklists:"
             echo "$HITS"
             exit 1
           fi
 
-          # And prove the blocklist is still a blocklist, not a config value that
-          # someone quietly turned into a connection target.
+          # And prove each blocklist is still a blocklist, not a config value that
+          # someone quietly turned into a connection target. An allowlisted path
+          # that stops refusing is worse than one that never existed: the ref is
+          # still sitting there, and the check above now says nothing about it.
           if ! grep -q 'FORBIDDEN_PROJECT_REF' app/src/lib/env.ts; then
             echo "::error::env.ts no longer declares FORBIDDEN_PROJECT_REF — the runtime guard is gone."
             exit 1
           fi
-          echo "ok: production ref confined to the legacy file and the runtime blocklist"
+          if ! grep -q 'FORBIDDEN_PROJECT_REF' app/scripts/_env.sh; then
+            echo "::error::_env.sh no longer declares FORBIDDEN_PROJECT_REF — the database guard is gone."
+            exit 1
+          fi
+          # The positive half matters just as much: without an allowlist a .env
+          # whose every variable agrees and all point elsewhere sails through.
+          if ! grep -q 'ALLOWED_PROJECT_REF' app/scripts/_env.sh; then
+            echo "::error::_env.sh no longer declares ALLOWED_PROJECT_REF — the database allowlist is gone."
+            exit 1
+          fi
+          echo "ok: production ref confined to the legacy file and the two runtime blocklists"

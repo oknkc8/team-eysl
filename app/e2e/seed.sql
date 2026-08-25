@@ -5,11 +5,62 @@
 -- contract: nothing here touches a row it did not create, and cleanup removes
 -- exactly what this file inserts.
 --
--- Run with:  bash scripts/psql.sh -v ON_ERROR_STOP=1 -f e2e/seed.sql
+-- Run with:  PWTEST_PASSWORD=<something> bash scripts/psql.sh -v ON_ERROR_STOP=1 -f e2e/seed.sql
+--            (or just `npm run test:e2e`, which generates one and passes it in)
 --
--- Accounts are created directly rather than through the app because the rewrite
--- has no signup screen yet, and the legacy `login-member` edge function lives in
--- the president's project, which we can neither read nor deploy.
+-- Accounts are created directly rather than through the app because creating an
+-- auth user through the API needs the service role key, which is not in .env and
+-- has no business being there.
+--
+-- THE PASSWORD COMES FROM THE ENVIRONMENT, never from this file. It used to be
+-- the literal `pwtest-password-1`, which — in a PUBLIC repository, on a file that
+-- creates an approved master_admin — published working administrator credentials
+-- for whatever database this last ran against. global-setup.ts now generates one
+-- per run into the git-ignored e2e/.auth/password and passes it here.
+\getenv pwtest_password PWTEST_PASSWORD
+
+-- \getenv leaves the variable unset when the environment has nothing, and an
+-- unset :'var' reaches the server as literal text and fails with a syntax error
+-- naming the wrong thing. Default it, then refuse deliberately.
+\if :{?pwtest_password}
+\else
+\set pwtest_password ''
+\endif
+
+-- Checked in plain SQL, NOT in a `do $$ ... $$` block. psql substitutes :'var'
+-- everywhere except inside a quoted string, and a dollar-quoted body is a quoted
+-- string — so the plpgsql version of this check shipped `:'pwtest_password'`
+-- verbatim to the server and died on `syntax error at or near ":"`, which names
+-- neither the variable nor the reason.
+--
+-- 'true'/'false' as text rather than a bare boolean because \if accepts those
+-- spellings, while psql renders a boolean as t/f.
+select
+  case when btrim(:'pwtest_password') = '' then 'true' else 'false' end as pw_missing,
+  -- The same two bounds register_member_v1 enforces, so a bad generator surfaces
+  -- here rather than as four accounts nobody can sign in to. Bytes for the upper
+  -- bound: bcrypt truncates at 72 bytes, and a Korean character is three.
+  case when length(:'pwtest_password') < 8
+         or octet_length(:'pwtest_password') > 72
+       then 'true' else 'false' end as pw_unusable
+\gset
+
+\if :pw_missing
+\echo ''
+\echo 'e2e/seed.sql: PWTEST_PASSWORD is not set.'
+\echo 'Run `npm run test:e2e`, which generates one per run into e2e/.auth/password,'
+\echo 'or export one yourself before running this file by hand.'
+-- Deliberate failure, so ON_ERROR_STOP turns this into a non-zero exit. The cast
+-- is what carries the sentence into the error text itself, for whoever sees only
+-- the captured stderr and not the \echo lines above.
+select 'PWTEST_PASSWORD is not set'::int;
+\endif
+
+\if :pw_unusable
+\echo ''
+\echo 'e2e/seed.sql: PWTEST_PASSWORD must be 8 to 72 bytes.'
+select 'PWTEST_PASSWORD must be 8 to 72 bytes'::int;
+\endif
 
 begin;
 
@@ -69,7 +120,11 @@ select
   a.nickname || '@eysl.local',
   -- bcrypt, the hash GoTrue itself writes. A plaintext value here would make
   -- signInWithPassword fail with nothing but "invalid credentials".
-  crypt('pwtest-password-1', gen_salt('bf')),
+  --
+  -- Cost 10 explicitly, for the reason 0029 gives at length: gen_salt('bf') with
+  -- no second argument is cost 6, and seeding fixtures at a weaker cost than the
+  -- product writes would quietly make the tests a poor model of the real thing.
+  crypt(:'pwtest_password', gen_salt('bf', 10)),
   -- Confirmed inline: this project has no mail transport, so an unconfirmed
   -- user could never sign in.
   now(), now(), now(),

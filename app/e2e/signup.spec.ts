@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { APP_ENV, STATE, expect, openAs, test, waitForScreen } from './fixtures'
+import { APP_ENV, PASSWORD, STATE, expect, openAs, test, waitForScreen } from './fixtures'
 
 /**
  * 가입 신청, driven the way the defect was found: by pressing the button.
@@ -19,8 +19,15 @@ import { APP_ENV, STATE, expect, openAs, test, waitForScreen } from './fixtures'
  */
 test.use({ storageState: { cookies: [], origins: [] } })
 
-/** The password every account made here is created with. */
-const PASSWORD = 'pwtest-signup-1'
+/**
+ * The password every account made here is created with — the run password from
+ * fixtures, not a literal.
+ *
+ * These accounts are made by the test through the real 가입 신청 flow, so they
+ * are `pending` and reach nothing; but cleanup can fail, and a pending account
+ * whose password is printed in a public repository is still an account somebody
+ * else can sign into. Per-run means a leftover one is dead on arrival.
+ */
 
 /**
  * A nickname no other run is using.

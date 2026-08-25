@@ -1,4 +1,4 @@
-import { SEED, STATE, expect, signIn, test, waitForScreen } from './fixtures'
+import { PASSWORD, SEED, STATE, expect, signIn, test, waitForScreen } from './fixtures'
 
 /**
  * The flows that carry risk, as opposed to the per-screen smoke pass.
@@ -51,7 +51,10 @@ test.describe('로그인', () => {
   test('없는 닉네임도 같은 문구로 거절한다', async ({ page }) => {
     await page.goto('/login')
     await page.getByLabel('닉네임').fill('pwtestnobody')
-    await page.getByLabel('비밀번호').fill('pwtest-password-1')
+    // Any value would do — the nickname belongs to nobody, so the password is
+    // never reached. It uses the run password rather than a literal only so that
+    // no password string is written down in this public repository at all.
+    await page.getByLabel('비밀번호').fill(PASSWORD)
     await page.getByRole('button', { name: '로그인' }).click()
 
     // Deliberately identical to the wrong-password message: a different one here
