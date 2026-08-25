@@ -24,7 +24,9 @@ if (!parsed.success) {
 // records are not.
 const FORBIDDEN_PROJECT_REF = 'rbghqyhzvczavtjwiocc'
 
-if (parsed.data.VITE_SUPABASE_URL.includes(FORBIDDEN_PROJECT_REF)) {
+// Compared lowercased: hostnames are case-insensitive, so an uppercased ref
+// resolves to exactly the same database while sailing past a literal match.
+if (parsed.data.VITE_SUPABASE_URL.toLowerCase().includes(FORBIDDEN_PROJECT_REF)) {
   throw new Error(
     'VITE_SUPABASE_URL points at the production project. This build must never ' +
       'connect to it — point it at our own project instead.',

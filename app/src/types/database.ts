@@ -762,6 +762,22 @@ export type Database = {
       }
     }
     Views: {
+      activity_seats_v: {
+        Row: {
+          activity_id: string | null
+          participant_count: number | null
+          waitlist_count: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_applications_activity_id_fkey"
+            columns: ["activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       member_public_v: {
         Row: {
           avatar_path: string | null
@@ -882,6 +898,27 @@ export type Database = {
       expire_stale_offers: { Args: never; Returns: number }
       is_master_admin: { Args: never; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      respond_waitlist_offer: {
+        Args: { p_accept: boolean; p_activity_id: string }
+        Returns: {
+          activity_id: string
+          application_type: string
+          created_at: string
+          details: Json
+          id: string
+          member_id: string
+          offer_expires_at: string | null
+          offer_status: string
+          updated_at: string
+          wait_order: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_applications"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       upsert_record: {
         Args: {
           p_category: string

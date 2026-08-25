@@ -7,8 +7,10 @@ name: guard
 
 on:
   pull_request:
+  # Every branch, not just dev/main. A secret pushed to a feature branch of a
+  # public repo is exposed the moment it lands — waiting for a PR to check is
+  # waiting until after the damage.
   push:
-    branches: [dev, main]
 
 jobs:
   secrets:
@@ -16,13 +18,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: No committed .env
+      - name: No committed env file, anywhere in the tree
         run: |
-          if git ls-files --error-unmatch .env 2>/dev/null; then
-            echo "::error::.env is tracked by git. It must stay ignored."
+          # Checking only the root .env missed app/.env, which is exactly where
+          # this project's second env file lives. Match any tracked env file
+          # except the template.
+          TRACKED=$(git ls-files | grep -E '(^|/)\.env($|\.)|(^|/)[^/]*\.env$' \
+                    | grep -v '\.env\.example$' || true)
+          if [ -n "$TRACKED" ]; then
+            echo "::error::An env file is tracked by git:"
+            echo "$TRACKED"
             exit 1
           fi
-          echo "ok: .env is not tracked"
+          echo "ok: no env files tracked"
+
+      - name: No database password, including in the template
+        run: |
+          # A DB password has no fixed prefix to match on, so look for the
+          # assignment shape instead and require the value to be a placeholder.
+          # .env.example is deliberately in scope: it is the one env file that
+          # IS committed, so a real password pasted there ships to everyone.
+          if git grep -nIE '(PASSWORD|PASSWD|PGPASSWORD)[[:space:]]*=[[:space:]]*.{6,}' \
+               -- . ':!.github/workflows/guard.yml' \
+             | grep -viE "your-|example|placeholder|xxx|changeme|\\\$\{|\\\$[A-Z_]"; then
+            echo "::error::A password-shaped assignment with a real-looking value is committed."
+            exit 1
+          fi
+          echo "ok: no password-shaped assignments"
 
       - name: No service keys or private keys
         run: |
@@ -53,8 +75,10 @@ jobs:
           #   app/src/lib/env.ts  — the runtime blocklist that REFUSES that ref, plus its test
           # A ref inside a blocklist is the opposite of a leak, so allow exactly
           # those paths rather than weakening the check everywhere.
+          # -i because hostnames are case-insensitive: an uppercased ref reaches
+          # the same database, so a literal match is not a guard.
           PROD_REF=rbghqyhzvczavtjwiocc
-          HITS=$(git grep -lF "$PROD_REF" -- . \
+          HITS=$(git grep -liF "$PROD_REF" -- . \
                    ':!index.html' \
                    ':!app/src/lib/env.ts' \
                    ':!app/src/lib/env.test.ts' \
