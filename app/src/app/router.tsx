@@ -1,6 +1,9 @@
 import { createBrowserRouter } from 'react-router'
 import { RequireAuth, RequireMasterAdmin, RequireStaff } from './guards'
 import { LoginPage, PendingPage } from '../features/auth/LoginPage'
+import { SignupPage } from '../features/auth/SignupPage'
+import { MyPage } from '../features/profile/MyPage'
+import { ApplicationAdminPage } from '../features/schedule/ApplicationAdminPage'
 import { HomePage } from '../features/home/HomePage'
 import { MyAttendancePage } from '../features/attendance/MyAttendancePage'
 import { AdminActivityListPage } from '../features/attendance/AdminActivityListPage'
@@ -12,9 +15,11 @@ import { ScheduleListPage } from '../features/schedule/ScheduleListPage'
 import { ActivityDetailPage } from '../features/schedule/ActivityDetailPage'
 import { ActivityEditPage } from '../features/schedule/ActivityEditPage'
 import { MyRecordsPage } from '../features/records/MyRecordsPage'
+import { MemberRecordsPage } from '../features/records/MemberRecordsPage'
 import { AdminRecordEditPage } from '../features/records/AdminRecordEditPage'
 import { MemberListPage } from '../features/members/MemberListPage'
 import { MemberDetailPage } from '../features/members/MemberDetailPage'
+import { MemberActivityPage } from '../features/members/MemberActivityPage'
 import { MemberApprovalPage } from '../features/members/MemberApprovalPage'
 import { MemberRolesPage } from '../features/members/MemberRolesPage'
 import { MemberAccessPage } from '../features/members/MemberAccessPage'
@@ -31,11 +36,24 @@ import { NotificationSettingsPage } from '../features/push/NotificationSettingsP
 // Access is decided by position in this tree, not by a check inside each screen.
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
+  // Outside RequireAuth, and that is the whole point: somebody signing up has no
+  // session yet and no members row, so any guard above this route would turn the
+  // only way into the club into a redirect back to the login screen they cannot
+  // use. It sits beside /login rather than under it for the same reason /pending
+  // does — all three are the screens for people the app cannot yet identify.
+  { path: '/signup', element: <SignupPage /> },
   { path: '/pending', element: <PendingPage /> },
   {
     element: <RequireAuth />,
     children: [
       { path: '/', element: <HomePage /> },
+      // 마이페이지. Every approved member has one and it only ever shows their
+      // own row: getMyProfile filters on the session's auth id, and the two
+      // write RPCs (set_my_real_name_v1, set_my_avatar_path_v1, both 0027)
+      // derive the target from the session rather than taking a member id — so
+      // there is no URL that reaches somebody else's profile, and RequireAuth is
+      // the whole gate this route needs.
+      { path: '/mypage', element: <MyPage /> },
       { path: '/attendance', element: <MyAttendancePage /> },
       { path: '/notices', element: <NoticeListPage /> },
       { path: '/notices/:noticeId', element: <NoticeDetailPage /> },
@@ -71,13 +89,30 @@ export const router = createBrowserRouter([
       { path: '/records', element: <MyRecordsPage /> },
       { path: '/members', element: <MemberListPage /> },
       { path: '/members/:memberId', element: <MemberDetailPage /> },
+      // 상세 기록 and 활동 현황, the two drill-downs off 회원 상세.
+      //
+      // On RequireAuth rather than RequireStaff, and the reason is that neither
+      // set is expressible here. records_read (0004:222-224) admits the member
+      // themselves or can_manage_records(), which includes any member whose
+      // team_role is '코치' — and CurrentUser carries no team_role, so no guard
+      // and no client-side predicate can name that set. RequireStaff would turn
+      // a coach away from a screen the database answers for them, and would bar
+      // a member from their own rows; both would be the guard contradicting the
+      // database rather than agreeing with it.
+      //
+      // So the tree grants the screens to any approved member, each asks the
+      // server the same question its policy asks (can_manage_records / is_staff,
+      // both granted to authenticated), and a refusal is printed as a sentence.
+      // That is the pattern /schedule/:activityId/edit already follows above.
+      { path: '/members/:memberId/records', element: <MemberRecordsPage /> },
+      { path: '/members/:memberId/activities/:kind', element: <MemberActivityPage /> },
       { path: '/media', element: <MediaFolderListPage /> },
       { path: '/media/:folderId', element: <MediaFolderPage /> },
       // 자료실. A sibling of /media rather than a child, because its rows are
       // the ones with no folder — /media/:folderId could only reach them
-      // through an id that does not exist. Uploading here is staff-only in the
-      // UI but not in RLS (media_files_insert takes any approved member), so
-      // there is no staff-only resource route to guard.
+      // through an id that does not exist. Every approved member may upload
+      // here (media_files_insert, 0021, matching upstream:2960), so there is no
+      // staff-only resource route to guard.
       { path: '/files', element: <ResourceListPage /> },
       { path: '/chat', element: <ChatPage /> },
       // A child of /chat rather than a sibling of it, because there is no
@@ -94,6 +129,15 @@ export const router = createBrowserRouter([
         children: [
           { path: '/admin/attendance', element: <AdminActivityListPage /> },
           { path: '/admin/attendance/:activityId', element: <AdminCheckInPage /> },
+          // 활동 취합본. Beside the attendance pair rather than under it: the two
+          // answer different questions about the same activity — who applied,
+          // and who turned up — and neither is a step in the other.
+          //
+          // RequireStaff is presentation here as everywhere. applications_read
+          // (0001:188-190) hands a non-staff caller only their own rows, so the
+          // screen asks is_staff() itself and prints a Korean refusal rather
+          // than rendering one member's history as if it were the club's.
+          { path: '/admin/applications', element: <ApplicationAdminPage /> },
           // Under /admin so it shares no segment shape with /records: a member
           // typing the URL meets RequireStaff rather than a sibling member route
           // that ranked matching might award them instead. Filing a result stays

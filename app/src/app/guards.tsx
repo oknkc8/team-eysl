@@ -1,9 +1,10 @@
 import { Navigate, Outlet, useLocation } from 'react-router'
+import { AppShell } from '../components/layout/AppShell'
 import { useCurrentUser } from '../features/auth/useCurrentUser'
 import { isMasterAdmin, isStaff } from '../features/auth/schema'
 
 function Loading() {
-  return <div style={{ padding: 24, color: '#858b94' }}>불러오는 중…</div>
+  return <div className="page">불러오는 중…</div>
 }
 
 // Every authenticated route descends from this, so a new screen is guarded by
@@ -20,7 +21,16 @@ export function RequireAuth() {
   if (!user) return <Loading />
   if (user.status !== 'approved') return <Navigate to="/pending" replace />
 
-  return <Outlet />
+  // The header and bottom nav hang here rather than on each screen, so every
+  // route below inherits the frame the club knows and a new one cannot forget
+  // it. Nothing above this point gets it: /login, /signup and /pending are for
+  // people the app cannot identify yet, and a nav they cannot use would only
+  // offer five destinations that all redirect back.
+  return (
+    <AppShell>
+      <Outlet />
+    </AppShell>
+  )
 }
 
 export function RequireStaff() {

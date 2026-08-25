@@ -12,7 +12,8 @@ TEAM EYSL — a Korean swimming club's member/training-management PWA ("TEAM EYS
 - `sw.js` — service worker (network-first fetch, web push handling).
 - `manifest.webmanifest`, `icon-*.png` — PWA manifest/icons.
 - The legacy app has no build step of its own: no bundler, no framework, no tests. Every commit on `upstream` is "Add files via upload" — the president maintains it by uploading edited files through the GitHub web UI. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
-- The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest, ESLint), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
+- The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
+- **There is no linter.** `app/package.json` has no eslint dependency and no `lint` script — `npx eslint` silently resolves to an unrelated global v6.4.0 and fails on the config. The only gates that exist are `./node_modules/.bin/tsc --noEmit` (which reads `src` only), `./node_modules/.bin/tsc -p tsconfig.functions.json` (which reads `supabase/functions`), and `./node_modules/.bin/vitest run`. Do not claim a lint pass; three separate agents reported running one before this was checked.
 
 ## Commands
 
@@ -81,7 +82,13 @@ Two traps in reading his diffs. A whole-file re-upload makes reformatting look l
 
 ## Workflow rules
 
-**Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`. `main` exists only to track the president's upstream — don't develop on it.
+**Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`.
+
+**`main` is our release line** (changed 2026-08-25; it previously mirrored the president's upstream). `dev` merges into it through a `chore/release-vX.Y.Z` PR, and the merge commit gets a matching `vX.Y.Z` tag. Nothing else lands on `main`.
+
+Mirroring upstream on a local branch turned out to buy nothing: `git fetch upstream` gives `upstream/main` as a remote-tracking ref, and every comparison we actually run — `git diff origin/main..upstream/main`, `git show upstream/main:index.html` — works off that ref directly. So `main` was free to become what it is normally for.
+
+Versioning is semver, and the version lives in `app/package.json`. Below 1.0 while the rebuild has gaps a user would notice: dues is deferred, no production Supabase project exists, and push registers but cannot send. A tag says "this state was reviewed and verified", so **do not cut one while a critical or high review finding is open** — the tag is the claim, and an unfixed escalation makes it a false one.
 
 **Commit subjects and PR titles both carry a Conventional Commits prefix**, drawn from the same set as the branch prefix:
 
@@ -130,10 +137,12 @@ Non-trivial feature work runs through a standing team of subagents, spawned in p
 | UX | `oh-my-claudecode:designer` | IA, routes, component composition, states and save feedback |
 | Reviewer | codex `gpt-5.6-sol` via CLI | adversarial second opinion; see `<codex_delegation>` |
 
-Two things that cost real time when skipped:
+Four things that cost real time when skipped:
 
 - **A teammate's idle notification is not a report.** Their final message does not reach the lead automatically — ask for the full deliverable via `SendMessage` (bare name, no `@session` suffix) or it is lost.
 - **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
+- **Hand out migration numbers up front; do not let agents pick.** Checking `ls` and the ledger immediately before writing narrows the race, it does not close it — `0020` and `0024` were each claimed twice on 2026-08-25, the second collision forty-eight seconds apart, by parties who had both just checked. Resolving it afterwards means renaming a file, deleting a ledger row and re-applying, with a window where the ledger and the directory disagree. Assign `0031` to one agent and `0032` to the next in their briefs, or give only one of them the task.
+- **Never reconstruct a function body from a report.** `CREATE OR REPLACE` on an existing function is the same trap as porting the result parser: writing 0024 from a teammate's description silently dropped `p_user_agent` and changed the conflict target from `(member_id, endpoint)` to `(endpoint)` — the first would have broken the client's call, the second the device cap, and both would have applied cleanly. Read the current definition out of the migration that owns it and change only the line you came to change.
 
 ## PR review loop
 
@@ -146,6 +155,35 @@ Every PR follows the same cycle, and it repeats without asking for approval betw
 5. Merge into `dev` only when **all three** hold: CI is green, no critical or high finding is left open, and anything the change claims to do has actually been exercised (a migration applied and queried back, a screen loaded, a test run). Mediums and lows may ship with a note saying why they were deferred.
 
 A review finding is not fixed because the diff changed — it is fixed when the fix is verified the same way the defect was found. Grants were the lesson: `revoke ... from public` looked correct and left `anon` holding EXECUTE until the live ACL was queried.
+
+Three later cases sharpened the same rule, each one a thing that reading the code could not have caught:
+
+**A green status line can mean "nothing happened".** A first attempt at the offer sweep called `COMMIT` inside a procedure driven by `pg_cron`. That is illegal — pg_cron wraps each job in an explicit transaction — but a tick with no expired offers returns before reaching the COMMIT and logs `succeeded | CALL`. Two green runs in `cron.job_run_details` meant only that there had been no work:
+
+```
+05:30  succeeded | CALL                                  <- no work; proves nothing
+05:35  succeeded | CALL                                  <- no work; proves nothing
+05:40  failed | invalid transaction termination … COMMIT <- real work arrived
+05:50  succeeded | 1 row                                 <- after the fix
+```
+
+It was found by planting stale offers and waiting for a real scheduled tick. **A scheduled job is only verified by a run that had something to do.**
+
+**A view's grants are the whole gate.** `authenticated=arwdDxtm` on a table is unremarkable — RLS is what refuses. The identical string on a view means the opposite, because there is no RLS behind it: `member_public_v` was auto-updatable, DEFINER-mode, exposed `role`, and let any approved member PATCH themselves to `master_admin` (closed in `0019`). Three grant audits printed that string and read it as ordinary. When auditing, **split views from tables and read them under different rules.**
+
+**`npx tsc --noEmit` does not report the truth on this machine.** A wrapper rewrites its output to "TypeScript compilation completed" and swallows real errors; twelve of them sat behind that for hours while `npm run build` was failing. Run `./node_modules/.bin/tsc --noEmit` and check the exit code. The same caution applies to any tool whose output looks suspiciously tidy.
+
+**A staff session reads more rows than a member's, and `.single()` turns that into a lockout.** `getMyMember()` selected from `members` with no filter and `.maybeSingle()`. `members_read` is `auth_user_id = auth.uid() OR is_staff()`, so a member got one row and an admin got the whole roster — PostgREST answered `PGRST116, "Cannot coerce the result to a single JSON object"`, react-query parked it in `query.error` that nothing read, and `RequireAuth` sat on its spinner forever. **The console was completely clean.** Every admin, including the president, was locked out of the entire app.
+
+Reproducing it needs a staff session **and** two or more members at once, which is why 381 unit tests never saw it and why it took a browser. Two rules fall out. Any query whose result count depends on the caller's role must filter by identity explicitly — `.eq('auth_user_id', …)`, not "the policy will handle it"; `schedule/api.ts` already said this in a comment and `auth/api.ts` was the one place that forgot. And **a swallowed query error looks exactly like a slow network**: if a screen can render a spinner forever, something is discarding an error.
+
+**And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
+
+That makes "typecheck passes" narrower than it sounds, and it is the kind of claim that gets repeated because it was true about the part somebody happened to be looking at. **Say which tree you checked, not just that the check was green.**
+
+`npm run typecheck:functions` (`app/tsconfig.functions.json`) now covers that second tree, and it is worth knowing exactly how far it reaches. It catches everything about **our** code — wrong property names, wrong argument counts, a value of the wrong type moving between `index.ts`, `send.ts`, `payload.ts` and `endpoint.ts`. It does **not** catch us being wrong about Deno or about `web-push`: neither is installed here, so both are hand-declared in `supabase/functions/_shims/`, and a wrong declaration is a check that agrees with the mistake. `supabase-js` is the exception — it maps to the real installed package, so those types are genuine. Deno is not installed, so `deno check` remains the thing this stands in for rather than replaces, and the function's runtime behaviour still rests on the Docker edge-runtime harness under `tmp/pushverify/`, which is a test, not a typecheck.
+
+**Both typecheck commands have to be run; neither implies the other.** `npm run typecheck` reads `src`, `npm run typecheck:functions` reads `supabase/functions`, and a green one says nothing about the other tree.
 
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
@@ -200,7 +238,9 @@ Two things to know before implementing it. His client sends `created_by` from th
 
 Our schema cannot hold them. `attendance.member_id` is a FK to `members` (`0001:104`), so a past participant who never had an account cannot be stored at all, and `attendance_for_activity_v1` (`0001:258-269`) builds its roster solely from `activity_applications` participant rows, so a past training with no applications shows an empty list. Supporting this needs a decision on whether an attendance row may exist without a member row — not just an import script.
 
-**He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. Our RLS is owner-or-staff (`0004:233`, `0004:247`, storage `0009:159`/`0009:171`) and `media/api.ts` documents that as deliberate. The staff bypass is ours, not his — so matching him means that comment goes too.
+**He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. **Closed in `0021`** — `media_folders_update`, `media_files_update` and `media_files_delete` are owner-only, `media_folders` has no DELETE policy at all (deletion goes through `delete_media_folder_v1`, which checks ownership), and the screens no longer offer staff a control the database would refuse. The cost is real and is his to revisit: no admin can take down another member's folder or file from inside the app any more.
+
+`0021` settled the other half of the same question too. **Creation in 미디어 and 자료실 is open to every approved member**, because his app is: `createFolder` (`upstream:2939`), `uploadToFolder` (`upstream:2946`) and `uploadResourceFiles` (`upstream:2960`) carry no role check, their buttons are always rendered (`upstream:1185-1187`), and `applyRole` (`upstream:1984-1994`) never touches a media control. Our screens had hidden all three behind `isStaff()` while RLS admitted anyone — the legacy flaw rebuilt — so the screens moved, not the policy. What `0021` did add is ours: an object may only be written at `<own member id>/(media|resources)/<name>`, and only where a `media_files` row already claims that exact path, so the bucket can no longer hold bytes nothing points at. `team_files_delete` keeps its staff arm on purpose — a folder owner cannot sweep another member's object, so somebody has to be able to.
 
 ## External integrations
 

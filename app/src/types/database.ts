@@ -7,6 +7,31 @@ export type Json =
   | Json[]
 
 export type Database = {
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       activities: {
@@ -556,6 +581,66 @@ export type Database = {
           },
         ]
       }
+      push_endpoint_rejections: {
+        Row: {
+          attempts: number
+          first_seen_at: string
+          host: string
+          last_seen_at: string
+          last_user_agent: string | null
+        }
+        Insert: {
+          attempts?: number
+          first_seen_at?: string
+          host: string
+          last_seen_at?: string
+          last_user_agent?: string | null
+        }
+        Update: {
+          attempts?: number
+          first_seen_at?: string
+          host?: string
+          last_seen_at?: string
+          last_user_agent?: string | null
+        }
+        Relationships: []
+      }
+      push_self_test_quota: {
+        Row: {
+          last_sent_at: string | null
+          member_id: string
+          sent_in_window: number
+          window_started_at: string
+        }
+        Insert: {
+          last_sent_at?: string | null
+          member_id: string
+          sent_in_window?: number
+          window_started_at?: string
+        }
+        Update: {
+          last_sent_at?: string | null
+          member_id?: string
+          sent_in_window?: number
+          window_started_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_self_test_quota_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: true
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "push_self_test_quota_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: true
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       push_subscriptions: {
         Row: {
           auth: string
@@ -760,12 +845,34 @@ export type Database = {
         }
         Relationships: []
       }
+      signup_attempt_quota: {
+        Row: {
+          attempts_in_window: number
+          client_key: string
+          last_attempt_at: string | null
+          window_started_at: string
+        }
+        Insert: {
+          attempts_in_window?: number
+          client_key: string
+          last_attempt_at?: string | null
+          window_started_at?: string
+        }
+        Update: {
+          attempts_in_window?: number
+          client_key?: string
+          last_attempt_at?: string | null
+          window_started_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       activity_seats_v: {
         Row: {
           activity_id: string | null
           participant_count: number | null
+          reserved_count: number | null
           waitlist_count: number | null
         }
         Relationships: [
@@ -895,11 +1002,39 @@ export type Database = {
       }
       can_manage_records: { Args: never; Returns: boolean }
       current_member_id: { Args: never; Returns: string }
+      delete_media_folder_v1: {
+        Args: { p_folder_id: string }
+        Returns: string[]
+      }
       expire_stale_offers: { Args: never; Returns: number }
+      expire_stale_offers_for_activity: {
+        Args: { p_activity_id: string; p_skip_locked?: boolean }
+        Returns: number
+      }
       is_master_admin: { Args: never; Returns: boolean }
+      is_my_avatar_object_path: { Args: { p_path: string }; Returns: boolean }
+      is_my_media_object_path: { Args: { p_path: string }; Returns: boolean }
+      is_push_endpoint: { Args: { p_endpoint: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      media_object_is_claimed: { Args: { p_path: string }; Returns: boolean }
+      member_is_staff: { Args: { p_member: string }; Returns: boolean }
       offer_seat_to_next_waitlister: {
         Args: { p_activity_id: string }
+        Returns: string
+      }
+      push_endpoint_host: { Args: { p_endpoint: string }; Returns: string }
+      push_notify_context_v1: {
+        Args: { p_event: string; p_id: string }
+        Returns: Json
+      }
+      push_self_test_allow_v1: { Args: { p_member: string }; Returns: Json }
+      push_subscription_register_v1: {
+        Args: {
+          p_auth: string
+          p_endpoint: string
+          p_p256dh: string
+          p_user_agent?: string
+        }
         Returns: string
       }
       race_my_history_v1: {
@@ -910,6 +1045,18 @@ export type Database = {
           status: string
           title: string
         }[]
+      }
+      record_unsupported_push_endpoint_v1: {
+        Args: { p_endpoint: string; p_user_agent?: string }
+        Returns: undefined
+      }
+      register_member_v1: {
+        Args: { p_nickname: string; p_password: string }
+        Returns: Json
+      }
+      request_push_notify: {
+        Args: { p_event: string; p_id: string }
+        Returns: undefined
       }
       respond_waitlist_offer: {
         Args: { p_accept: boolean; p_activity_id: string }
@@ -1089,6 +1236,73 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      set_my_avatar_path_v1: {
+        Args: { p_avatar_path: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_my_real_name_v1: {
+        Args: { p_real_name: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      signup_client_key: { Args: never; Returns: string }
       team_event_rankings_v1: { Args: never; Returns: Json }
       upsert_record: {
         Args: {
@@ -1258,6 +1472,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },

@@ -226,6 +226,26 @@ export async function getScheduleEntry(activityId: string): Promise<ScheduleEntr
   }
 }
 
+/**
+ * Seats an activity has already committed: confirmed participants plus offers
+ * that have not lapsed. The same number 0020's activities_capacity_floor trigger
+ * refuses to let capacity fall below.
+ *
+ * Read by the edit screen so it can say what is in the way before staff press
+ * 저장. The refusal itself stays the database's — this only spares them a bare
+ * 저장 실패 with no reason attached.
+ */
+export async function getReservedSeats(activityId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from('activity_seats_v')
+    .select('reserved_count')
+    .eq('activity_id', activityId)
+    .maybeSingle()
+  if (error) throw error
+  // An activity nobody has applied to is absent from the view, not zero-valued.
+  return data?.reserved_count ?? 0
+}
+
 export async function getActivity(activityId: string): Promise<Activity> {
   const { data, error } = await supabase
     .from('activities')
@@ -234,6 +254,115 @@ export async function getActivity(activityId: string): Promise<Activity> {
     .single()
   if (error) throw error
   return toActivity(data)
+}
+
+// ------------------------------------------------- 활동 취합본 (staff view)
+
+/** One applicant, as the summary needs them: a name and which list they are on. */
+export type ApplicantName = {
+  memberId: string
+  nickname: string
+  applicationType: ApplicationType
+  wait_order: number | null
+}
+
+export type ApplicationSummary = {
+  activity: Activity
+  participants: ApplicantName[]
+  waitlist: ApplicantName[]
+  /** Its date has passed — his card's 종료 tag. */
+  finished: boolean
+}
+
+/**
+ * Every activity with the people who applied to it.
+ *
+ * Deliberately not `attendance_for_activity_v1`, which is the only other
+ * applicant-shaped read in the app: that RPC filters to
+ * `application_type = 'participant'` (0001:262), so the waitlist — half of what
+ * this screen exists to show — is invisible through it.
+ *
+ * Names come from `members` rather than `member_public_v` because the view is
+ * confined to approved rows (0001:158-161). Somebody who applied and was later
+ * blocked is precisely the row a staffer needs to see on a roster they are about
+ * to act on, and through the view they would silently disappear from it.
+ *
+ * `applications_read` (0001:188-190) is the real gate here — it says
+ * `member_id = current_member_id() or is_staff()`, so a non-staff caller gets
+ * their own applications and nothing else. The screen asks the server whether
+ * the caller is staff and prints a refusal rather than rendering that as a
+ * suspiciously short roster.
+ */
+export async function listApplicationSummaries(
+  kind?: ActivityKind,
+): Promise<ApplicationSummary[]> {
+  const today = todayKey()
+
+  let query = supabase
+    .from('activities')
+    .select(ACTIVITY_COLUMNS)
+    .order('activity_date', { ascending: false })
+    .order('start_time', { ascending: false, nullsFirst: false })
+    .limit(200)
+  if (kind) query = query.eq('kind', kind)
+
+  const { data, error } = await query
+  if (error) throw error
+
+  const activities = (data ?? []).map(toActivity)
+  if (activities.length === 0) return []
+
+  const applications = await supabase
+    .from('activity_applications')
+    .select('activity_id, member_id, application_type, wait_order')
+    .in(
+      'activity_id',
+      activities.map((a) => a.id),
+    )
+  if (applications.error) throw applications.error
+
+  const rows = applications.data ?? []
+  const nicknames = await getNicknames(rows.map((row) => row.member_id))
+
+  const byActivity = new Map<string, { participants: ApplicantName[]; waitlist: ApplicantName[] }>()
+  for (const row of rows) {
+    const bucket = byActivity.get(row.activity_id) ?? { participants: [], waitlist: [] }
+    const applicant: ApplicantName = {
+      memberId: row.member_id,
+      // A member the roster query did not return is shown as an unnamed member
+      // rather than dropped: the count on the card has to stay truthful.
+      nickname: nicknames.get(row.member_id) ?? '이름 없는 회원',
+      applicationType: toApplicationType(row.application_type),
+      wait_order: row.wait_order,
+    }
+    if (applicant.applicationType === 'participant') bucket.participants.push(applicant)
+    else bucket.waitlist.push(applicant)
+    byActivity.set(row.activity_id, bucket)
+  }
+
+  return activities.map((activity) => {
+    const bucket = byActivity.get(activity.id) ?? { participants: [], waitlist: [] }
+    return {
+      activity,
+      participants: [...bucket.participants].sort((a, b) => a.nickname.localeCompare(b.nickname)),
+      // The queue order is the information here, so this one is not alphabetised.
+      waitlist: [...bucket.waitlist].sort((a, b) => (a.wait_order ?? 0) - (b.wait_order ?? 0)),
+      finished: activity.activity_date < today,
+    }
+  })
+}
+
+/** id → nickname for a batch of applicants. Empty for a caller RLS refuses. */
+async function getNicknames(memberIds: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(memberIds)]
+  const names = new Map<string, string>()
+  if (unique.length === 0) return names
+
+  const { data, error } = await supabase.from('members').select('id, nickname').in('id', unique)
+  if (error) throw error
+
+  for (const row of data ?? []) names.set(row.id, row.nickname)
+  return names
 }
 
 // ------------------------------------------------------------------ writes

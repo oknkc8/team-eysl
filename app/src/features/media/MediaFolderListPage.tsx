@@ -3,8 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { SaveState } from '../../components/ui/SaveState'
-import { useCurrentUser } from '../auth/useCurrentUser'
-import { isStaff } from '../auth/schema'
 import { createFolder, listFolders, type MediaFolder } from './api'
 
 const CARD = {
@@ -30,7 +28,6 @@ const LABEL = { display: 'block', fontSize: 12, color: '#6b7178', marginBottom: 
 const formatCreated = (iso: string) => new Date(iso).toLocaleDateString('ko-KR')
 
 export function MediaFolderListPage() {
-  const { user } = useCurrentUser()
   const query = useQuery({ queryKey: ['media-folders'], queryFn: listFolders })
 
   return (
@@ -44,10 +41,11 @@ export function MediaFolderListPage() {
         에 있습니다.
       </p>
 
-      {/* Presentation only, and worth being precise about: media_folders_insert
-          (0004) accepts any approved member, so hiding this form is a tidiness
-          decision rather than a restriction the database enforces. */}
-      {isStaff(user) && <NewFolderForm />}
+      {/* Any member may start a folder, which is what his createFolder()
+          (upstream:2939) and its always-rendered button (upstream:1185) do.
+          media_folders_insert (0021) admits exactly the same people, and only
+          in their own name. */}
+      <NewFolderForm />
 
       <div style={{ marginTop: 16 }}>
         <AsyncSection

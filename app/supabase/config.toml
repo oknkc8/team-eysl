@@ -1,0 +1,21 @@
+# Supabase CLI configuration for this project's Edge Functions.
+#
+# Only what the CLI needs to deploy from here. Everything about the database
+# itself lives in supabase/migrations/ and is applied with `npm run db:migrate`,
+# which talks to the project directly rather than through this file.
+
+[functions.push-notify]
+# JWT verification is OFF, and this is a decision rather than a convenience.
+#
+# The platform's built-in check accepts any valid Supabase JWT for this project,
+# which is not the question this function needs answered. Two very different
+# callers reach it: the database, proving itself with a shared secret in
+# x-eysl-push-secret, and a signed-in member, proving themselves with their own
+# session. The database has no JWT to present, and a member holding a perfectly
+# valid one must still be refused everything except self_test.
+#
+# So both checks are made in the function, explicitly, in authorize()
+# (functions/push-notify/index.ts). Turning the platform check on would not add a
+# third layer — it would only block the database's call, leaving the club with a
+# sender that nothing can trigger.
+verify_jwt = false

@@ -17,7 +17,7 @@ export type MediaFolder = {
   name: string
   created_at: string
   file_count: number
-  /** Who may rename or delete it — media_folders_update/delete is owner-or-staff. */
+  /** Who may rename or delete it — media_folders_update is owner-only (0021). */
   created_by: string
 }
 
@@ -159,6 +159,17 @@ export type UploadOutcome = {
  * A null folderId is not a missing value, it is the 자료실 (0004:109-110). It
  * also picks the object prefix, so the two libraries stay distinguishable in a
  * bucket listing even though their rows differ only by that null.
+ *
+ * **Row first, object second**, and that order is now enforced rather than
+ * chosen: team_files_insert (0021) admits an object only where a media_files row
+ * already claims that exact path. It used to be the other way round, which left
+ * a window where the bytes were in the bucket and no row pointed at them —
+ * nothing in this app lists a bucket, so such an object was invisible, and an
+ * invisible object still costs the quota somebody pays for.
+ *
+ * The remaining failure is the mirror image and a better one: a row whose object
+ * never arrived. That shows up as a broken tile the uploader can see and delete,
+ * and the cleanup below removes it anyway.
  */
 export async function uploadMediaFiles(input: {
   folderId: string | null
@@ -175,18 +186,6 @@ export async function uploadMediaFiles(input: {
         : mediaObjectPath({ memberId, fileName: file.name })
     const mimeType = file.type || 'application/octet-stream'
 
-    const upload = await supabase.storage.from(MEDIA_BUCKET).upload(storagePath, file, {
-      // Never overwrite. mediaObjectPath() already makes a collision unlikely,
-      // and on the off chance of one, failing is the right answer — the other
-      // person's file is not ours to replace.
-      upsert: false,
-      contentType: mimeType,
-    })
-    if (upload.error) {
-      failed.push(file)
-      continue
-    }
-
     const row = await supabase
       .from('media_files')
       .insert({
@@ -200,11 +199,24 @@ export async function uploadMediaFiles(input: {
       .single()
 
     if (row.error) {
-      // The object is in the bucket but no row points at it, and nothing in this
-      // app lists a bucket directly — an orphan here would be invisible and
-      // unreachable. The cleanup is best effort: if it also fails, the upload is
-      // still reported as failed, which is the honest outcome either way.
-      await supabase.storage.from(MEDIA_BUCKET).remove([storagePath])
+      failed.push(file)
+      continue
+    }
+
+    const upload = await supabase.storage.from(MEDIA_BUCKET).upload(storagePath, file, {
+      // Never overwrite. mediaObjectPath() already makes a collision unlikely,
+      // and on the off chance of one, failing is the right answer — the other
+      // person's file is not ours to replace.
+      upsert: false,
+      contentType: mimeType,
+    })
+
+    if (upload.error) {
+      // Take the claim back so the path is free and no tile points at nothing.
+      // Best effort: if this also fails the file is still reported as failed,
+      // which is the honest outcome either way, and the row is the uploader's
+      // own so they can remove it from the screen.
+      await supabase.from('media_files').delete().eq('id', row.data.id)
       failed.push(file)
       continue
     }
@@ -216,11 +228,14 @@ export async function uploadMediaFiles(input: {
 }
 
 // -------------------------------------------------------- rename and delete
-// Both are owner-or-staff, and RLS is where that holds: media_folders_update /
-// _delete and media_files_update / _delete (0004:232-252) each read
-// `created_by = current_member_id() or is_staff()`. The screens hide the
-// controls for anybody else, which is tidiness — a member who called these
-// directly would match zero rows.
+// Owner only — not owner-or-staff. That is the president's rule, not ours:
+// canManageMediaOwner (upstream:2930) reads `ownerId === currentUser.memberId`,
+// where the frozen legacy copy still reads `isAdminUser() || ownerId === ...`
+// (index.html:2731). He took the admin bypass out; we followed in 0021, and
+// media_folders_update / media_files_update / _delete now read
+// `= current_member_id()` with no second arm. The screens hide the controls for
+// anybody else, which is tidiness — a member who called these directly would
+// match zero rows.
 //
 // Every mutation below therefore checks what came back rather than only the
 // error. PostgREST answers a policy-refused UPDATE or DELETE with 200 and an
@@ -291,27 +306,29 @@ export async function deleteMediaFile(input: {
 /**
  * Delete a folder, and with it every file inside.
  *
- * media_files.folder_id cascades (0004:110), so the rows go whether or not this
- * caller could have deleted them one by one — a referential action runs as the
- * table owner and RLS does not apply to it. The objects are a different matter:
- * team_files_delete (0009:171-176) is owner-or-staff per object, so a folder
- * owner who is not staff can cascade away somebody else's row and still be
- * refused their object. Hence the paths are collected first and the count of
- * what survived is returned rather than assumed to be zero.
+ * One RPC rather than the three requests this used to be — list the paths,
+ * delete the folder row and let the cascade take the file rows, delete the
+ * listed objects. A file uploaded between the first and the third lost its row
+ * to the cascade and kept its object, and the count reported back was still 0
+ * because the caller had never seen it. delete_media_folder_v1 (0021) holds the
+ * folder row with FOR UPDATE, which conflicts with the FOR KEY SHARE an
+ * inserting file takes, so no file can appear in that window; the paths it
+ * returns are all of them.
+ *
+ * The objects still have to be swept from here, and some of them may refuse:
+ * team_files_delete is per object by path prefix, so a folder owner who is not
+ * staff can cascade away somebody else's row and still be told no about their
+ * object. That is what the returned count measures.
  */
 export async function deleteFolder(folderId: string): Promise<DeleteOutcome> {
-  // Read before the delete: after the cascade there is nothing left to ask.
-  const files = await listFolderFiles(folderId)
+  const { data, error } = await supabase.rpc('delete_media_folder_v1', {
+    p_folder_id: folderId,
+  })
+  // The RPC raises rather than matching zero rows, so unlike the mutations above
+  // there is nothing to inspect afterwards — 42501 arrives here as an error.
+  if (error) throw new Error('폴더를 삭제할 권한이 없습니다')
 
-  const { data, error } = await supabase
-    .from('media_folders')
-    .delete()
-    .eq('id', folderId)
-    .select('id')
-  if (error) throw error
-  if ((data ?? []).length === 0) throw new Error('폴더를 삭제할 권한이 없습니다')
-
-  return { orphanedObjects: await removeObjects(files.map((file) => file.storage_path)) }
+  return { orphanedObjects: await removeObjects(data ?? []) }
 }
 
 /**
