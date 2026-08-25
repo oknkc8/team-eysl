@@ -48,11 +48,27 @@ jobs:
           # rbghqyhzvczavtjwiocc is the club president's LIVE project, holding real
           # member data we have no authority over. It legitimately appears in the
           # frozen legacy index.html; anywhere else means new code could write to it.
+          # Two kinds of appearance are legitimate and everything else is not:
+          #   index.html          — the frozen legacy app, which genuinely connects there
+          #   app/src/lib/env.ts  — the runtime blocklist that REFUSES that ref, plus its test
+          # A ref inside a blocklist is the opposite of a leak, so allow exactly
+          # those paths rather than weakening the check everywhere.
           PROD_REF=rbghqyhzvczavtjwiocc
-          HITS=$(git grep -lF "$PROD_REF" -- . ':!index.html' ':!.github/workflows/guard.yml' || true)
+          HITS=$(git grep -lF "$PROD_REF" -- . \
+                   ':!index.html' \
+                   ':!app/src/lib/env.ts' \
+                   ':!app/src/lib/env.test.ts' \
+                   ':!.github/workflows/guard.yml' || true)
           if [ -n "$HITS" ]; then
-            echo "::error::Production project ref found outside the legacy file:"
+            echo "::error::Production project ref found outside the legacy file and the runtime blocklist:"
             echo "$HITS"
             exit 1
           fi
-          echo "ok: production ref confined to index.html"
+
+          # And prove the blocklist is still a blocklist, not a config value that
+          # someone quietly turned into a connection target.
+          if ! grep -q 'FORBIDDEN_PROJECT_REF' app/src/lib/env.ts; then
+            echo "::error::env.ts no longer declares FORBIDDEN_PROJECT_REF — the runtime guard is gone."
+            exit 1
+          fi
+          echo "ok: production ref confined to the legacy file and the runtime blocklist"
