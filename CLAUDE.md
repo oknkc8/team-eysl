@@ -137,10 +137,12 @@ Non-trivial feature work runs through a standing team of subagents, spawned in p
 | UX | `oh-my-claudecode:designer` | IA, routes, component composition, states and save feedback |
 | Reviewer | codex `gpt-5.6-sol` via CLI | adversarial second opinion; see `<codex_delegation>` |
 
-Two things that cost real time when skipped:
+Four things that cost real time when skipped:
 
 - **A teammate's idle notification is not a report.** Their final message does not reach the lead automatically — ask for the full deliverable via `SendMessage` (bare name, no `@session` suffix) or it is lost.
 - **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
+- **Hand out migration numbers up front; do not let agents pick.** Checking `ls` and the ledger immediately before writing narrows the race, it does not close it — `0020` and `0024` were each claimed twice on 2026-08-25, the second collision forty-eight seconds apart, by parties who had both just checked. Resolving it afterwards means renaming a file, deleting a ledger row and re-applying, with a window where the ledger and the directory disagree. Assign `0031` to one agent and `0032` to the next in their briefs, or give only one of them the task.
+- **Never reconstruct a function body from a report.** `CREATE OR REPLACE` on an existing function is the same trap as porting the result parser: writing 0024 from a teammate's description silently dropped `p_user_agent` and changed the conflict target from `(member_id, endpoint)` to `(endpoint)` — the first would have broken the client's call, the second the device cap, and both would have applied cleanly. Read the current definition out of the migration that owns it and change only the line you came to change.
 
 ## PR review loop
 
@@ -170,6 +172,10 @@ It was found by planting stale offers and waiting for a real scheduled tick. **A
 **A view's grants are the whole gate.** `authenticated=arwdDxtm` on a table is unremarkable — RLS is what refuses. The identical string on a view means the opposite, because there is no RLS behind it: `member_public_v` was auto-updatable, DEFINER-mode, exposed `role`, and let any approved member PATCH themselves to `master_admin` (closed in `0019`). Three grant audits printed that string and read it as ordinary. When auditing, **split views from tables and read them under different rules.**
 
 **`npx tsc --noEmit` does not report the truth on this machine.** A wrapper rewrites its output to "TypeScript compilation completed" and swallows real errors; twelve of them sat behind that for hours while `npm run build` was failing. Run `./node_modules/.bin/tsc --noEmit` and check the exit code. The same caution applies to any tool whose output looks suspiciously tidy.
+
+**A staff session reads more rows than a member's, and `.single()` turns that into a lockout.** `getMyMember()` selected from `members` with no filter and `.maybeSingle()`. `members_read` is `auth_user_id = auth.uid() OR is_staff()`, so a member got one row and an admin got the whole roster — PostgREST answered `PGRST116, "Cannot coerce the result to a single JSON object"`, react-query parked it in `query.error` that nothing read, and `RequireAuth` sat on its spinner forever. **The console was completely clean.** Every admin, including the president, was locked out of the entire app.
+
+Reproducing it needs a staff session **and** two or more members at once, which is why 381 unit tests never saw it and why it took a browser. Two rules fall out. Any query whose result count depends on the caller's role must filter by identity explicitly — `.eq('auth_user_id', …)`, not "the policy will handle it"; `schedule/api.ts` already said this in a comment and `auth/api.ts` was the one place that forgot. And **a swallowed query error looks exactly like a slow network**: if a screen can render a spinner forever, something is discarding an error.
 
 **And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
 

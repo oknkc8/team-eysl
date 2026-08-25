@@ -991,6 +991,7 @@ export type Database = {
         Returns: number
       }
       is_master_admin: { Args: never; Returns: boolean }
+      is_my_avatar_object_path: { Args: { p_path: string }; Returns: boolean }
       is_my_media_object_path: { Args: { p_path: string }; Returns: boolean }
       is_push_endpoint: { Args: { p_endpoint: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
@@ -1179,6 +1180,72 @@ export type Database = {
       }
       set_member_team_role_v1: {
         Args: { p_member_id: string; p_team_role: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_my_avatar_path_v1: {
+        Args: { p_avatar_path: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_my_real_name_v1: {
+        Args: { p_real_name: string }
         Returns: {
           auth_user_id: string | null
           avatar_path: string | null

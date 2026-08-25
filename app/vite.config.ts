@@ -42,5 +42,11 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
+    // Vitest's default `include` is **/*.{test,spec}.?(c|m)[jt]s?(x), which
+    // sweeps up e2e/*.spec.ts. Those import @playwright/test, whose `test.use`
+    // and fixtures mean nothing to vitest, so it collects them and fails two
+    // files before running a line. They belong to `npm run test:e2e`; this suite
+    // stays fast and offline, and never opens a browser or the dev database.
+    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
   },
 })

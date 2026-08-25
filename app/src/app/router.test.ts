@@ -34,6 +34,78 @@ function guardsFor(pathname: string) {
   })
 }
 
+describe('signup is reachable without a session', () => {
+  // The one route in this tree that must NOT be guarded. A person signing up has
+  // no session and no members row, so RequireAuth would send them to /login —
+  // the screen they cannot use, because they are not a member yet. Putting a
+  // guard here turns the only way into the club into a redirect loop, which is
+  // exactly the state the app was in before this route existed.
+  it('puts /signup outside RequireAuth entirely', () => {
+    expect(guardsFor('/signup')).toEqual(['/signup'])
+  })
+
+  it('never sends /signup through any guard', () => {
+    const guards = guardsFor('/signup')
+    expect(guards).not.toContain('auth')
+    expect(guards).not.toContain('staff')
+    expect(guards).not.toContain('master')
+  })
+
+  // Its two neighbours for people the app cannot yet identify. All three have to
+  // stay reachable without a session or none of them can do their job.
+  it('keeps /login and /pending unguarded beside it', () => {
+    expect(guardsFor('/login')).toEqual(['/login'])
+    expect(guardsFor('/pending')).toEqual(['/pending'])
+  })
+
+  it('does not fall through to the catch-all', () => {
+    expect(guardsFor('/signup')).not.toContain('*')
+  })
+})
+
+describe('마이페이지 is guarded by tree position', () => {
+  // RequireAuth and nothing more. getMyProfile filters on the session's auth id
+  // and both write RPCs (set_my_real_name_v1, set_my_avatar_path_v1) derive the
+  // target from the session rather than accepting a member id, so there is no
+  // URL that reaches somebody else's profile for a guard to protect.
+  it('puts /mypage on RequireAuth only', () => {
+    expect(guardsFor('/mypage')).toEqual(['auth', '/mypage'])
+  })
+
+  it('does not put a member’s own profile behind a staff guard', () => {
+    expect(guardsFor('/mypage')).not.toContain('staff')
+    expect(guardsFor('/mypage')).not.toContain('master')
+  })
+
+  // /members/:memberId is the other profile-shaped route. If it ever answered
+  // for this one, 마이페이지 would open a member detail page for an id that
+  // reads "mypage".
+  it('is not swallowed by the member detail route', () => {
+    expect(guardsFor('/mypage')).not.toContain('/members/:memberId')
+  })
+})
+
+describe('활동 취합본 is guarded by tree position', () => {
+  it('puts /admin/applications behind RequireStaff', () => {
+    expect(guardsFor('/admin/applications')).toEqual(['auth', 'staff', '/admin/applications'])
+  })
+
+  // Staff, not master admin: reading who applied is what every 운영진 does to
+  // run a session, and applications_read (0001:188-190) draws the same line with
+  // is_staff(). The screen asks the server the same question before it claims
+  // the list is the club's.
+  it('does not require master admin to read an application list', () => {
+    expect(guardsFor('/admin/applications')).not.toContain('master')
+  })
+
+  // A sibling of the attendance pair, not a child of it — the two answer
+  // different questions about the same activity.
+  it('is not swallowed by the attendance routes', () => {
+    expect(guardsFor('/admin/applications')).not.toContain('/admin/attendance')
+    expect(guardsFor('/admin/applications')).not.toContain('/admin/attendance/:activityId')
+  })
+})
+
 describe('notice routes are guarded by tree position', () => {
   // /notices/new and /notices/:noticeId are siblings under different guards, so
   // which one wins is decided by ranked matching rather than by declaration

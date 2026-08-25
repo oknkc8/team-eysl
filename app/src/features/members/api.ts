@@ -6,7 +6,10 @@ import type { AssignableTeamRole } from './teamRole'
 // Avatars live in their own bucket, separate from team-files: an avatar is
 // readable by every approved member, while a media file's object path also
 // decides who may replace it.
-const AVATAR_BUCKET = 'profile-images'
+// Exported so 마이페이지 writes to the same bucket this module reads from. Two
+// spellings of a bucket name is the kind of drift that fails only at runtime,
+// and only for the person whose photo went to the wrong place.
+export const AVATAR_BUCKET = 'profile-images'
 
 // Long enough that a roster of forty faces finishes painting on a slow phone,
 // short enough that a URL copied out of the page stops working. Notices sign

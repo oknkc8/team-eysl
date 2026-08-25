@@ -17,8 +17,12 @@ export function HomePage() {
         <Tile to="/records" title="기록" desc="개인 최고 기록과 변화" />
         <Tile to="/events" title="이벤트" desc="출석왕·지각왕·단축왕 랭킹" />
         <Tile to="/chat" title="채팅" desc="단체 대화와 1:1 메시지" />
+        <Tile to="/mypage" title="마이페이지" desc="프로필 사진과 실명, 내 메뉴" />
         <Tile to="/settings/notifications" title="알림 설정" desc="이 기기로 알림 받기" />
         {isStaff(user) && <Tile to="/admin/attendance" title="출석 관리" desc="일정별 출석 체크" />}
+        {isStaff(user) && (
+          <Tile to="/admin/applications" title="활동 취합본" desc="일정별 신청자와 대기자" />
+        )}
         {isStaff(user) && <Tile to="/admin/records/new" title="기록 등록" desc="회원별 대회 기록 입력" />}
         {isStaff(user) && (
           <Tile to="/admin/records/upload" title="결과지 업로드" desc="엑셀 결과지에서 기록 읽기" />

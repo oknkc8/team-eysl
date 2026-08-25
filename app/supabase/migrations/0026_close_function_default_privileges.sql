@@ -1,0 +1,73 @@
+-- 0026 — close the function default privileges, the last copy of a hole this
+-- schema has now closed three times for tables.
+--
+-- 0002 and 0014 fixed the table defaults and revoked function defaults from
+-- `anon` only. The live catalog still reads:
+--
+--   pg_default_acl, owner=postgres, objtype=f:
+--     postgres=X/postgres | authenticated=X/postgres | service_role=X/postgres
+--
+-- So **every function this project creates is executable by `authenticated` the
+-- moment it exists**, and stays that way unless the migration that created it
+-- remembers a REVOKE. Every function added since 0002 does remember — that was
+-- checked, and no server-only function is currently reachable — but "correct
+-- because everyone remembered" is not a property, it is a streak.
+--
+-- The cost of the streak ending is not small. The functions that must never be
+-- called from a browser are the ones that decide things on the caller's behalf:
+-- push_notify_context_v1 hands back the club's subscription endpoints,
+-- request_push_notify triggers a send, member_is_staff answers about somebody
+-- else. A missing REVOKE on any of those is a data leak, not a lint failure.
+--
+-- After this, a new function is unreachable until somebody grants it on
+-- purpose. That is the right default for a schema where the RPCs are the
+-- authority: reaching one should be a decision, and the decision should be
+-- visible in the migration that made it.
+--
+-- Only the `postgres` role's defaults are altered — migrations run as postgres,
+-- so these are the ones our functions inherit. The `supabase_admin` defaults
+-- belong to Supabase's own objects and are left alone; changing them would be
+-- editing somebody else's schema.
+--
+-- TWO STATEMENTS, AND THE SCHEMA CLAUSE IS THE WHOLE REASON.
+--
+-- The first draft of this migration was one statement — `... IN SCHEMA public
+-- REVOKE EXECUTE ON FUNCTIONS FROM public, anon, authenticated` — and it looked
+-- like it worked. pg_default_acl came back with no PUBLIC entry in it. Creating
+-- a function proved otherwise: it still arrived as
+--
+--   =X/postgres | postgres=X/postgres | service_role=X/postgres
+--
+-- and that leading `=X/` is PUBLIC. authenticated could execute it.
+--
+-- PostgreSQL's built-in `EXECUTE TO PUBLIC` for functions is **global**, not
+-- per-schema. A schema-scoped default ACL is applied *in addition to* that
+-- baseline, so no amount of `IN SCHEMA public REVOKE ... FROM public` can reach
+-- it. Driving it settled which form works, three that do not and one that does:
+--
+--   IN SCHEMA public REVOKE EXECUTE ... FROM public   -> still PUBLIC
+--   IN SCHEMA public REVOKE ALL     ... FROM public   -> still PUBLIC
+--   (no schema clause) REVOKE EXECUTE ... FROM public -> PUBLIC gone
+--
+-- So the global revoke removes PUBLIC, and the schema-scoped one removes anon
+-- and authenticated, which do live in the schema entry. Both, or neither is
+-- closed — the same shape as the 0002 finding, where `revoke ... from public`
+-- looked complete and left anon holding EXECUTE.
+--
+-- The global statement applies to every schema, for functions created by
+-- postgres. That is intended: PUBLIC execute is not a default this project
+-- wants anywhere. Supabase's own functions are created by supabase_admin and
+-- carry a different defaclrole, so they are untouched; the `storage` schema
+-- keeps its explicit anon/authenticated grants, which is why revoking the
+-- PUBLIC baseline does not break it.
+
+alter default privileges for role postgres
+  revoke execute on functions from public;
+
+alter default privileges for role postgres in schema public
+  revoke execute on functions from anon, authenticated;
+
+-- Existing functions are unaffected by a default-privilege change — defaults
+-- apply at creation time only. They were audited separately: every function in
+-- this schema either carries its own REVOKE or is deliberately granted to
+-- authenticated. This migration is about the next one.

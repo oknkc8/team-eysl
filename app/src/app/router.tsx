@@ -1,6 +1,9 @@
 import { createBrowserRouter } from 'react-router'
 import { RequireAuth, RequireMasterAdmin, RequireStaff } from './guards'
 import { LoginPage, PendingPage } from '../features/auth/LoginPage'
+import { SignupPage } from '../features/auth/SignupPage'
+import { MyPage } from '../features/profile/MyPage'
+import { ApplicationAdminPage } from '../features/schedule/ApplicationAdminPage'
 import { HomePage } from '../features/home/HomePage'
 import { MyAttendancePage } from '../features/attendance/MyAttendancePage'
 import { AdminActivityListPage } from '../features/attendance/AdminActivityListPage'
@@ -33,11 +36,24 @@ import { NotificationSettingsPage } from '../features/push/NotificationSettingsP
 // Access is decided by position in this tree, not by a check inside each screen.
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
+  // Outside RequireAuth, and that is the whole point: somebody signing up has no
+  // session yet and no members row, so any guard above this route would turn the
+  // only way into the club into a redirect back to the login screen they cannot
+  // use. It sits beside /login rather than under it for the same reason /pending
+  // does — all three are the screens for people the app cannot yet identify.
+  { path: '/signup', element: <SignupPage /> },
   { path: '/pending', element: <PendingPage /> },
   {
     element: <RequireAuth />,
     children: [
       { path: '/', element: <HomePage /> },
+      // 마이페이지. Every approved member has one and it only ever shows their
+      // own row: getMyProfile filters on the session's auth id, and the two
+      // write RPCs (set_my_real_name_v1, set_my_avatar_path_v1, both 0027)
+      // derive the target from the session rather than taking a member id — so
+      // there is no URL that reaches somebody else's profile, and RequireAuth is
+      // the whole gate this route needs.
+      { path: '/mypage', element: <MyPage /> },
       { path: '/attendance', element: <MyAttendancePage /> },
       { path: '/notices', element: <NoticeListPage /> },
       { path: '/notices/:noticeId', element: <NoticeDetailPage /> },
@@ -113,6 +129,15 @@ export const router = createBrowserRouter([
         children: [
           { path: '/admin/attendance', element: <AdminActivityListPage /> },
           { path: '/admin/attendance/:activityId', element: <AdminCheckInPage /> },
+          // 활동 취합본. Beside the attendance pair rather than under it: the two
+          // answer different questions about the same activity — who applied,
+          // and who turned up — and neither is a step in the other.
+          //
+          // RequireStaff is presentation here as everywhere. applications_read
+          // (0001:188-190) hands a non-staff caller only their own rows, so the
+          // screen asks is_staff() itself and prints a Korean refusal rather
+          // than rendering one member's history as if it were the club's.
+          { path: '/admin/applications', element: <ApplicationAdminPage /> },
           // Under /admin so it shares no segment shape with /records: a member
           // typing the URL meets RequireStaff rather than a sibling member route
           // that ranked matching might award them instead. Filing a result stays
