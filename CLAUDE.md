@@ -81,7 +81,13 @@ Two traps in reading his diffs. A whole-file re-upload makes reformatting look l
 
 ## Workflow rules
 
-**Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`. `main` exists only to track the president's upstream — don't develop on it.
+**Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`.
+
+**`main` is our release line** (changed 2026-08-25; it previously mirrored the president's upstream). `dev` merges into it through a `chore/release-vX.Y.Z` PR, and the merge commit gets a matching `vX.Y.Z` tag. Nothing else lands on `main`.
+
+Mirroring upstream on a local branch turned out to buy nothing: `git fetch upstream` gives `upstream/main` as a remote-tracking ref, and every comparison we actually run — `git diff origin/main..upstream/main`, `git show upstream/main:index.html` — works off that ref directly. So `main` was free to become what it is normally for.
+
+Versioning is semver, and the version lives in `app/package.json`. Below 1.0 while the rebuild has gaps a user would notice: dues is deferred, no production Supabase project exists, and push registers but cannot send. A tag says "this state was reviewed and verified", so **do not cut one while a critical or high review finding is open** — the tag is the claim, and an unfixed escalation makes it a false one.
 
 **Commit subjects and PR titles both carry a Conventional Commits prefix**, drawn from the same set as the branch prefix:
 
