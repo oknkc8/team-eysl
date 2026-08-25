@@ -159,6 +159,37 @@ describe('member routes are guarded by tree position', () => {
     expect(guardsFor('/members/roles')).not.toContain('/members/:memberId')
     expect(guardsFor('/members/blocked')).not.toContain('/members/:memberId')
   })
+
+  // The two drill-downs deliberately do NOT sit behind RequireStaff, and the
+  // reason is that neither entitlement is expressible in this tree.
+  // records_read (0004:222-224) admits the member themselves or
+  // can_manage_records(), which includes a member whose team_role is '코치' —
+  // and CurrentUser carries no team_role at all. A staff guard here would
+  // refuse a coach the database would have answered, and refuse a member their
+  // own rows. Both screens ask the server instead and print the refusal.
+  //
+  // If somebody "tightens" these to RequireStaff later, this test is the note
+  // explaining why that is a regression rather than a fix.
+  it('keeps the record drill-down on RequireAuth, matching records_read', () => {
+    expect(guardsFor(`/members/${MEMBER_ID}/records`)).toEqual([
+      'auth',
+      '/members/:memberId/records',
+    ])
+  })
+
+  it('keeps the activity drill-down on RequireAuth, matching applications_read', () => {
+    expect(guardsFor(`/members/${MEMBER_ID}/activities/training`)).toEqual([
+      'auth',
+      '/members/:memberId/activities/:kind',
+    ])
+  })
+
+  // Deeper literal siblings of /members/:memberId. If the detail route ever
+  // swallowed them, "상세 기록 ›" would reopen the page it was pressed on.
+  it('does not let the member detail route swallow either drill-down', () => {
+    expect(guardsFor(`/members/${MEMBER_ID}/records`)).not.toContain('/members/:memberId')
+    expect(guardsFor(`/members/${MEMBER_ID}/activities/race`)).not.toContain('/members/:memberId')
+  })
 })
 
 describe('chat routes are guarded by tree position', () => {

@@ -241,24 +241,83 @@ function Seated({ mine, activityId }: { mine: MyApplication; activityId: string 
 }
 
 function Waitlisted({ mine, activityId }: { mine: MyApplication; activityId: string }) {
+  // An offer that was declined or allowed to lapse is a dead end: the server only
+  // ever offers a row sitting at offer_status 'none', so nothing will reach this
+  // member again. Re-applying is the documented way back (0020), and the two
+  // sentences below say so — which they may only do because this button exists.
+  const spent = mine.offer_status === 'expired' || mine.offer_status === 'declined'
+
   return (
     <div style={{ ...CARD, borderColor: '#925900', background: '#fff0d6' }}>
       <b style={{ fontSize: 14, color: '#925900' }}>
         {mine.wait_order === null ? '대기 중' : `대기 ${mine.wait_order}번째`}
       </b>
-      {/* States what became of a past offer and stops there. The legacy screen
-          promised "자동으로 다음 대기자에게 기회가 넘어갑니다" while nothing
-          implemented it; this screen does not speak for the server's queue. */}
+      {/* The legacy screen promised "자동으로 다음 대기자에게 기회가 넘어갑니다"
+          while nothing implemented it, so this screen used to say nothing about
+          the queue at all. Since 0020 the promise is true: every path that frees
+          a reserved seat — a participant cancelling, an offer holder cancelling,
+          an offer lapsing, capacity going up — offers it to the next 순번 under
+          the activity lock. So the screen may say it now, and only now. */}
+      {mine.offer_status === 'none' && (
+        <p style={{ ...META, color: '#925900' }}>
+          참가자가 취소하거나 앞 순번이 기한을 넘기면 대기 순서대로 자리 안내가 갑니다.
+        </p>
+      )}
+      {/* A spent offer is a dead end: nothing ever offers the same row twice.
+          Saying so, and saying what to do about it, beats leaving them to wonder
+          why their turn never comes back. */}
       {mine.offer_status === 'expired' && (
-        <p style={{ ...META, color: '#925900' }}>이전에 받은 자리 안내는 기한이 지났습니다.</p>
+        <p style={{ ...META, color: '#925900' }}>
+          이전에 받은 자리 안내는 기한이 지났습니다. 다시 신청하면 대기 명단 맨 뒤에 등록됩니다.
+        </p>
       )}
       {mine.offer_status === 'declined' && (
-        <p style={{ ...META, color: '#925900' }}>이전에 받은 자리 안내를 거절했습니다.</p>
+        <p style={{ ...META, color: '#925900' }}>
+          이전에 받은 자리 안내를 거절했습니다. 다시 신청하면 대기 명단 맨 뒤에 등록됩니다.
+        </p>
       )}
       <div style={{ marginTop: 14 }}>
+        {spent && <ReapplyButton activityId={activityId} />}
         <CancelButton applicationId={mine.id} activityId={activityId} />
       </div>
     </div>
+  )
+}
+
+/**
+ * Rejoin the queue after a spent offer. Deliberately the same RPC as 신청하기 —
+ * apply_to_activity() is what decides where they land, and since 0020 that is the
+ * back of the waitlist, or a seat if one is genuinely free. This screen states
+ * nothing about the outcome; the refetch does.
+ */
+function ReapplyButton({ activityId }: { activityId: string }) {
+  const qc = useQueryClient()
+  const [state, setState] = useState<SaveStatus>('idle')
+
+  const reapply = useMutation({
+    mutationFn: () => applyToActivity(activityId),
+    onMutate: () => setState('saving'),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['schedule-entry', activityId] })
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
+      setState('saved')
+    },
+    onError: () => setState('error'),
+  })
+
+  return (
+    <>
+      <button
+        onClick={() => reapply.mutate()}
+        disabled={state === 'saving'}
+        style={PRIMARY_BUTTON}
+      >
+        다시 신청
+      </button>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '10px 0' }}>
+        <SaveState state={state} onRetry={() => reapply.mutate()} />
+      </div>
+    </>
   )
 }
 
@@ -325,8 +384,9 @@ function OfferCard({ mine, activityId }: { mine: MyApplication; activityId: stri
   const expired = label === null
 
   // The countdown running out changes nothing by itself. expire_stale_offers(),
-  // scheduled every five minutes, is what actually releases the seat — so all
-  // this screen may do is ask the server again and report what comes back.
+  // which pg_cron runs every five minutes, is what actually lapses the offer and
+  // hands the seat to the next 순번 — so all this screen may do is ask the server
+  // again and report what comes back.
   useEffect(() => {
     if (!expired) return
     void qc.invalidateQueries({ queryKey: ['schedule-entry', activityId] })
@@ -369,7 +429,7 @@ function OfferCard({ mine, activityId }: { mine: MyApplication; activityId: stri
 
       {!expired && (
         <p style={{ ...META, color: '#925900' }}>
-          기한이 지나면 이 자리는 더 이상 보장되지 않습니다.
+          기한이 지나면 이 자리는 다음 순번에게 넘어갑니다.
         </p>
       )}
 

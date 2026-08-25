@@ -26,15 +26,21 @@ describe('dedupeRaceHistory', () => {
       row({ source: 'application', status: '종료' }),
     ])
     expect(rows).toHaveLength(1)
-    expect(rows[0].source).toBe('application')
-    expect(rows[0].status).toBe('종료')
+    expect(rows[0]!.source).toBe('application')
+    expect(rows[0]!.status).toBe('종료')
   })
 
   it('applies that precedence regardless of the order the server sent them in', () => {
     const application = row({ source: 'application' })
     const history = row({ source: 'history' })
-    expect(dedupeRaceHistory([application, history])[0].source).toBe('application')
-    expect(dedupeRaceHistory([history, application])[0].source).toBe('application')
+
+    const applicationFirst = dedupeRaceHistory([application, history])
+    expect(applicationFirst).toHaveLength(1)
+    expect(applicationFirst[0]!.source).toBe('application')
+
+    const historyFirst = dedupeRaceHistory([history, application])
+    expect(historyFirst).toHaveLength(1)
+    expect(historyFirst[0]!.source).toBe('application')
   })
 
   // Two meets can share a name across years — a club runs 봄 대회 every spring —
@@ -60,7 +66,7 @@ describe('dedupeRaceHistory', () => {
 
     const both = dedupeRaceHistory([row({ source: 'somethingelse' }), row({ source: 'history' })])
     expect(both).toHaveLength(1)
-    expect(both[0].source).toBe('history')
+    expect(both[0]!.source).toBe('history')
   })
 
   it('handles an empty history', () => {

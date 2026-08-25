@@ -12,7 +12,8 @@ TEAM EYSL — a Korean swimming club's member/training-management PWA ("TEAM EYS
 - `sw.js` — service worker (network-first fetch, web push handling).
 - `manifest.webmanifest`, `icon-*.png` — PWA manifest/icons.
 - The legacy app has no build step of its own: no bundler, no framework, no tests. Every commit on `upstream` is "Add files via upload" — the president maintains it by uploading edited files through the GitHub web UI. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
-- The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest, ESLint), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
+- The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
+- **There is no linter.** `app/package.json` has no eslint dependency and no `lint` script — `npx eslint` silently resolves to an unrelated global v6.4.0 and fails on the config. The only gates that exist are `./node_modules/.bin/tsc --noEmit` and `./node_modules/.bin/vitest run`. Do not claim a lint pass; three separate agents reported running one before this was checked.
 
 ## Commands
 
@@ -153,6 +154,23 @@ Every PR follows the same cycle, and it repeats without asking for approval betw
 
 A review finding is not fixed because the diff changed — it is fixed when the fix is verified the same way the defect was found. Grants were the lesson: `revoke ... from public` looked correct and left `anon` holding EXECUTE until the live ACL was queried.
 
+Three later cases sharpened the same rule, each one a thing that reading the code could not have caught:
+
+**A green status line can mean "nothing happened".** A first attempt at the offer sweep called `COMMIT` inside a procedure driven by `pg_cron`. That is illegal — pg_cron wraps each job in an explicit transaction — but a tick with no expired offers returns before reaching the COMMIT and logs `succeeded | CALL`. Two green runs in `cron.job_run_details` meant only that there had been no work:
+
+```
+05:30  succeeded | CALL                                  <- no work; proves nothing
+05:35  succeeded | CALL                                  <- no work; proves nothing
+05:40  failed | invalid transaction termination … COMMIT <- real work arrived
+05:50  succeeded | 1 row                                 <- after the fix
+```
+
+It was found by planting stale offers and waiting for a real scheduled tick. **A scheduled job is only verified by a run that had something to do.**
+
+**A view's grants are the whole gate.** `authenticated=arwdDxtm` on a table is unremarkable — RLS is what refuses. The identical string on a view means the opposite, because there is no RLS behind it: `member_public_v` was auto-updatable, DEFINER-mode, exposed `role`, and let any approved member PATCH themselves to `master_admin` (closed in `0019`). Three grant audits printed that string and read it as ordinary. When auditing, **split views from tables and read them under different rules.**
+
+**`npx tsc --noEmit` does not report the truth on this machine.** A wrapper rewrites its output to "TypeScript compilation completed" and swallows real errors; twelve of them sat behind that for hours while `npm run build` was failing. Run `./node_modules/.bin/tsc --noEmit` and check the exit code. The same caution applies to any tool whose output looks suspiciously tidy.
+
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
 ## Environments
@@ -206,7 +224,9 @@ Two things to know before implementing it. His client sends `created_by` from th
 
 Our schema cannot hold them. `attendance.member_id` is a FK to `members` (`0001:104`), so a past participant who never had an account cannot be stored at all, and `attendance_for_activity_v1` (`0001:258-269`) builds its roster solely from `activity_applications` participant rows, so a past training with no applications shows an empty list. Supporting this needs a decision on whether an attendance row may exist without a member row — not just an import script.
 
-**He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. Our RLS is owner-or-staff (`0004:233`, `0004:247`, storage `0009:159`/`0009:171`) and `media/api.ts` documents that as deliberate. The staff bypass is ours, not his — so matching him means that comment goes too.
+**He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. **Closed in `0021`** — `media_folders_update`, `media_files_update` and `media_files_delete` are owner-only, `media_folders` has no DELETE policy at all (deletion goes through `delete_media_folder_v1`, which checks ownership), and the screens no longer offer staff a control the database would refuse. The cost is real and is his to revisit: no admin can take down another member's folder or file from inside the app any more.
+
+`0021` settled the other half of the same question too. **Creation in 미디어 and 자료실 is open to every approved member**, because his app is: `createFolder` (`upstream:2939`), `uploadToFolder` (`upstream:2946`) and `uploadResourceFiles` (`upstream:2960`) carry no role check, their buttons are always rendered (`upstream:1185-1187`), and `applyRole` (`upstream:1984-1994`) never touches a media control. Our screens had hidden all three behind `isStaff()` while RLS admitted anyone — the legacy flaw rebuilt — so the screens moved, not the policy. What `0021` did add is ours: an object may only be written at `<own member id>/(media|resources)/<name>`, and only where a `media_files` row already claims that exact path, so the bucket can no longer hold bytes nothing points at. `team_files_delete` keeps its staff arm on purpose — a folder owner cannot sweep another member's object, so somebody has to be able to.
 
 ## External integrations
 

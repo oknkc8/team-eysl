@@ -9,6 +9,7 @@ import {
   createActivity,
   deleteActivity,
   getActivity,
+  getReservedSeats,
   KIND_LABEL,
   updateActivity,
   type Activity,
@@ -88,12 +89,25 @@ function EditExisting({ activityId }: { activityId: string }) {
     queryFn: () => getActivity(activityId),
   })
 
+  // Kept as its own query rather than folded into the activity, because it is
+  // advisory. 0020's activities_capacity_floor trigger is what actually refuses a
+  // capacity below the seats already committed; this only lets the form say so
+  // first. A form that could not read the count must stay submittable.
+  const reserved = useQuery({
+    queryKey: ['activity-reserved', activityId],
+    queryFn: () => getReservedSeats(activityId),
+  })
+
   return (
     <Page title="일정 수정">
       <AsyncSection query={query} loading={<Shimmer rows={3} />} error="일정을 불러오지 못했습니다">
         {(activity) =>
           canEditActivity(user, activity) ? (
-            <ActivityForm activity={activity} kinds={creatableKinds(user)} />
+            <ActivityForm
+              activity={activity}
+              kinds={creatableKinds(user)}
+              reservedSeats={reserved.data ?? null}
+            />
           ) : (
             // Not merely a hidden button. Somebody who types this URL gets a
             // sentence rather than a form whose every save the database would
@@ -148,7 +162,16 @@ const trimToNull = (value: string) => {
   return trimmed === '' ? null : trimmed
 }
 
-function ActivityForm({ activity, kinds }: { activity?: Activity; kinds: readonly ActivityKind[] }) {
+function ActivityForm({
+  activity,
+  kinds,
+  reservedSeats = null,
+}: {
+  activity?: Activity
+  kinds: readonly ActivityKind[]
+  /** Seats already committed, or null while unknown. Absent when creating. */
+  reservedSeats?: number | null
+}) {
   const navigate = useNavigate()
   const qc = useQueryClient()
 
@@ -182,6 +205,9 @@ function ActivityForm({ activity, kinds }: { activity?: Activity; kinds: readonl
       await qc.invalidateQueries({ queryKey: ['schedule'] })
       await qc.invalidateQueries({ queryKey: ['schedule-entry', saved.id] })
       await qc.invalidateQueries({ queryKey: ['activity', saved.id] })
+      // Raising capacity hands offers to whoever was queued (0020), so the seats
+      // already committed are not what they were before this save.
+      await qc.invalidateQueries({ queryKey: ['activity-reserved', saved.id] })
       // The attendance admin keeps its own list of activities.
       await qc.invalidateQueries({ queryKey: ['activities'] })
       void navigate(`/schedule/${saved.id}`, { replace: true })
@@ -204,12 +230,23 @@ function ActivityForm({ activity, kinds }: { activity?: Activity; kinds: readonl
   const capacityValue = capacity.trim() === '' ? null : Number(capacity)
   const capacityValid =
     capacityValue === null || (Number.isInteger(capacityValue) && capacityValue > 0)
+  // Mirrors 0020's activities_capacity_floor. Lowering capacity under the seats
+  // already given out would leave offer holders unable to accept inside their own
+  // deadline through no fault of theirs, so the database refuses it — this is
+  // only the form saying which number is in the way.
+  const belowReserved =
+    reservedSeats !== null && capacityValue !== null && capacityValue < reservedSeats
   // An end before a start is the one cross-field rule worth catching here; the
   // database has no constraint for it.
   const timesOrdered = startTime === '' || endTime === '' || startTime <= endTime
 
   const canSubmit =
-    trimmedTitle.length > 0 && date !== '' && capacityValid && timesOrdered && state !== 'saving'
+    trimmedTitle.length > 0 &&
+    date !== '' &&
+    capacityValid &&
+    !belowReserved &&
+    timesOrdered &&
+    state !== 'saving'
 
   function submit() {
     if (!canSubmit) return
@@ -379,11 +416,17 @@ function ActivityForm({ activity, kinds }: { activity?: Activity; kinds: readonl
           style={FIELD}
         />
         <p style={NOTE}>
-          정원을 비워 두면 신청한 사람이 모두 참가자로 등록되고 대기 명단은 생기지 않습니다.
+          정원을 비워 두면 신청한 사람이 모두 참가자로 등록됩니다. 이미 대기 중인 회원이 있으면
+          모두에게 자리 안내가 갑니다.
         </p>
         {!capacityValid && (
           <p role="alert" style={{ fontSize: 12, color: '#a33', margin: '8px 0 0' }}>
             정원은 1 이상의 정수여야 합니다.
+          </p>
+        )}
+        {capacityValid && belowReserved && (
+          <p role="alert" style={{ fontSize: 12, color: '#a33', margin: '8px 0 0' }}>
+            이미 {reservedSeats}명이 자리를 확보했습니다. 정원을 그보다 적게 줄일 수 없습니다.
           </p>
         )}
       </div>

@@ -12,9 +12,11 @@ import { ScheduleListPage } from '../features/schedule/ScheduleListPage'
 import { ActivityDetailPage } from '../features/schedule/ActivityDetailPage'
 import { ActivityEditPage } from '../features/schedule/ActivityEditPage'
 import { MyRecordsPage } from '../features/records/MyRecordsPage'
+import { MemberRecordsPage } from '../features/records/MemberRecordsPage'
 import { AdminRecordEditPage } from '../features/records/AdminRecordEditPage'
 import { MemberListPage } from '../features/members/MemberListPage'
 import { MemberDetailPage } from '../features/members/MemberDetailPage'
+import { MemberActivityPage } from '../features/members/MemberActivityPage'
 import { MemberApprovalPage } from '../features/members/MemberApprovalPage'
 import { MemberRolesPage } from '../features/members/MemberRolesPage'
 import { MemberAccessPage } from '../features/members/MemberAccessPage'
@@ -71,13 +73,30 @@ export const router = createBrowserRouter([
       { path: '/records', element: <MyRecordsPage /> },
       { path: '/members', element: <MemberListPage /> },
       { path: '/members/:memberId', element: <MemberDetailPage /> },
+      // 상세 기록 and 활동 현황, the two drill-downs off 회원 상세.
+      //
+      // On RequireAuth rather than RequireStaff, and the reason is that neither
+      // set is expressible here. records_read (0004:222-224) admits the member
+      // themselves or can_manage_records(), which includes any member whose
+      // team_role is '코치' — and CurrentUser carries no team_role, so no guard
+      // and no client-side predicate can name that set. RequireStaff would turn
+      // a coach away from a screen the database answers for them, and would bar
+      // a member from their own rows; both would be the guard contradicting the
+      // database rather than agreeing with it.
+      //
+      // So the tree grants the screens to any approved member, each asks the
+      // server the same question its policy asks (can_manage_records / is_staff,
+      // both granted to authenticated), and a refusal is printed as a sentence.
+      // That is the pattern /schedule/:activityId/edit already follows above.
+      { path: '/members/:memberId/records', element: <MemberRecordsPage /> },
+      { path: '/members/:memberId/activities/:kind', element: <MemberActivityPage /> },
       { path: '/media', element: <MediaFolderListPage /> },
       { path: '/media/:folderId', element: <MediaFolderPage /> },
       // 자료실. A sibling of /media rather than a child, because its rows are
       // the ones with no folder — /media/:folderId could only reach them
-      // through an id that does not exist. Uploading here is staff-only in the
-      // UI but not in RLS (media_files_insert takes any approved member), so
-      // there is no staff-only resource route to guard.
+      // through an id that does not exist. Every approved member may upload
+      // here (media_files_insert, 0021, matching upstream:2960), so there is no
+      // staff-only resource route to guard.
       { path: '/files', element: <ResourceListPage /> },
       { path: '/chat', element: <ChatPage /> },
       // A child of /chat rather than a sibling of it, because there is no

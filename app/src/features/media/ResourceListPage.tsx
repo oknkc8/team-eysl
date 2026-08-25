@@ -2,7 +2,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { useCurrentUser } from '../auth/useCurrentUser'
-import { isStaff } from '../auth/schema'
 import { mediaKind } from './kind'
 import { MediaItemActions } from './MediaItemActions'
 import { UploadPanel } from './UploadPanel'
@@ -60,17 +59,16 @@ export function ResourceListPage() {
         에 있습니다.
       </p>
 
-      {/* Presentation only, and worth being exact about: media_files_insert
-          (0004:244-245) accepts any approved member, so this hides the control
-          rather than withholding the ability. */}
-      {isStaff(user) && (
-        <UploadPanel
-          folderId={null}
-          inputId="resource-upload"
-          label="자료 올리기"
-          onUploaded={refresh}
-        />
-      )}
+      {/* Open to every member, as it is in his app: uploadResourceFiles
+          (upstream:2960) has no role check and neither does the button that
+          calls it (upstream:1187). media_files_insert (0021) says the same, so
+          the screen offers exactly what the database will accept. */}
+      <UploadPanel
+        folderId={null}
+        inputId="resource-upload"
+        label="자료 올리기"
+        onUploaded={refresh}
+      />
 
       <div style={{ marginTop: 16 }}>
         <AsyncSection
@@ -86,10 +84,11 @@ export function ResourceListPage() {
                 <li key={file.id} style={CARD}>
                   <ResourceRow
                     file={file}
-                    // Mirrors media_files_update / _delete (0004:246-252). RLS
-                    // is what enforces it; a member who called the API anyway
-                    // would match zero rows.
-                    canManage={file.uploader_id === user?.id || isStaff(user)}
+                    // The uploader alone, mirroring media_files_update /
+                    // _delete (0021) and canManageMediaOwner (upstream:2930).
+                    // RLS is what enforces it; a member who called the API
+                    // anyway would match zero rows.
+                    canManage={file.uploader_id === user?.id}
                     onDone={refresh}
                   />
                 </li>

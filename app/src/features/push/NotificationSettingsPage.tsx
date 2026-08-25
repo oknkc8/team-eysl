@@ -4,7 +4,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { SaveState } from '../../components/ui/SaveState'
 import { useCurrentUser } from '../auth/useCurrentUser'
-import { disablePush, enablePush, forgetDevice, readPushStatus, type PushDevice } from './api'
+import {
+  disablePush,
+  enablePush,
+  forgetDevice,
+  readPushStatus,
+  sendTestPush,
+  type PushDevice,
+  type TestPushResult,
+} from './api'
 import { describeDevice, type PushState } from './support'
 
 const CARD = {
@@ -33,7 +41,11 @@ const STATE_COPY: Record<
 > = {
   on: {
     title: '이 기기에서 알림 받는 중',
-    detail: '공지·일정·채팅 알림이 이 기기로 전송됩니다.',
+    // Names what actually sends, which is now a finite list: the three triggers
+    // in migration 0022. 채팅 used to be in this sentence and never sent
+    // anything — a settings screen that promises more than the server does is
+    // the same lie as one that promises less.
+    detail: '새 공지, 새 일정, 대기 자리 알림이 이 기기로 전송됩니다.',
     tone: 'on',
     action: 'disable',
   },
@@ -92,6 +104,7 @@ export function NotificationSettingsPage() {
   // stopped, but the browser still holds an endpoint, and a member who later
   // wonders why 알림 끄기 left something behind deserves to have been told.
   const [endpointLingers, setEndpointLingers] = useState(false)
+  const [testResult, setTestResult] = useState<TestPushResult | null>(null)
 
   const memberId = user?.id ?? ''
   const query = useQuery({
@@ -115,6 +128,8 @@ export function NotificationSettingsPage() {
       setState('saving')
       setProblem(null)
       setEndpointLingers(false)
+      // A result from the previous registration says nothing about this one.
+      setTestResult(null)
     },
     onSuccess: async (outcome) => {
       setEndpointLingers(!outcome.browserUnsubscribed)
@@ -124,6 +139,32 @@ export function NotificationSettingsPage() {
     onError: (error: Error) => {
       setProblem(error.message)
       setState('error')
+    },
+  })
+
+  /**
+   * Send one notification to this member's own devices.
+   *
+   * Deliberately not folded into `state`: 저장됨 is the wrong word for a
+   * notification, and a member watching for a banner needs to be told how many
+   * devices it went to, not that something was saved. A send that prunes this
+   * very browser's endpoint refetches, so the card drops to 알림 등록이
+   * 만료됐습니다 with a 다시 등록 button rather than continuing to claim 알림
+   * 받는 중 for a registration the push service has just disowned.
+   */
+  const test = useMutation({
+    mutationFn: sendTestPush,
+    onMutate: () => {
+      setProblem(null)
+      setTestResult(null)
+    },
+    onSuccess: async (result) => {
+      setTestResult(result)
+      if (result.pruned > 0) await refresh()
+    },
+    onError: (error: Error) => {
+      setProblem(error.message)
+      setTestResult(null)
     },
   })
 
@@ -208,6 +249,28 @@ export function NotificationSettingsPage() {
                             ? '다시 등록'
                             : '알림 켜기'}
                       </button>
+
+                      {/* Only when this browser is genuinely registered. Offered
+                          in any other state it would send to nothing and report
+                          success, which is the exact confusion this button is
+                          here to end. */}
+                      {status.state === 'on' && (
+                        <button
+                          onClick={() => test.mutate()}
+                          disabled={state === 'saving' || test.isPending}
+                          style={{
+                            minHeight: 44,
+                            padding: '0 16px',
+                            borderRadius: 13,
+                            border: '1px solid #e1e5ea',
+                            background: '#fff',
+                            color: '#111317',
+                            fontSize: 13,
+                          }}
+                        >
+                          {test.isPending ? '보내는 중…' : '테스트 알림 보내기'}
+                        </button>
+                      )}
                       <SaveState state={state} />
                     </div>
                   )}
@@ -228,6 +291,21 @@ export function NotificationSettingsPage() {
                       직접 해제해주세요.
                     </p>
                   )}
+                  {/* What the server actually did, in the server's numbers. "보냈습니다"
+                      alone would be the same unverifiable claim as before — a
+                      member who sees 1개 기기 and no banner now knows the send
+                      succeeded and the delivery did not, which is a different
+                      problem with a different fix. */}
+                  {testResult && (
+                    <p style={{ fontSize: 12, color: '#11805b', margin: '11px 0 0', lineHeight: 1.6 }}>
+                      {testResult.sent > 0
+                        ? `${testResult.sent}개 기기로 보냈습니다. 잠시 뒤에도 알림이 오지 않으면 기기의 알림 설정을 확인해주세요.`
+                        : '보낼 수 있는 기기가 없습니다.'}
+                      {testResult.pruned > 0 &&
+                        ` 만료된 등록 ${testResult.pruned}개는 삭제했습니다. 다시 등록해주세요.`}
+                      {testResult.failed > 0 && ` ${testResult.failed}개는 전송에 실패했습니다.`}
+                    </p>
+                  )}
                 </section>
 
                 <DeviceList
@@ -245,11 +323,16 @@ export function NotificationSettingsPage() {
         </AsyncSection>
       </div>
 
-      {/* Said on the page, not only in a commit message. A member who turns
-          notifications on and then receives none should learn why here. */}
+      {/* Said on the page, not only in a commit message. This used to read
+          "지금은 알림을 보내는 서버가 아직 준비되지 않았습니다", which was true
+          and is not any more — there is a sender now (supabase/functions/
+          push-notify). What replaces it is the same kind of sentence: what will
+          arrive, and what will not, so nobody waits for a notification this app
+          never sends. */}
       <p style={{ fontSize: 11, color: '#6b7178', lineHeight: 1.7, margin: '18px 2px 0' }}>
-        지금은 알림을 보내는 서버가 아직 준비되지 않았습니다. 이 화면에서 등록해두면 서버가
-        준비되는 대로 이 기기로 알림이 도착합니다.
+        새 공지가 올라오거나 새 일정이 등록되면 알림이 갑니다. 대기 중이던 자리가 나면 그
+        회원에게만 따로 알림이 가고, 수락 기한이 함께 표시됩니다. 채팅 메시지는 아직 알림을 보내지
+        않습니다.
       </p>
     </div>
   )

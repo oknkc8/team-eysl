@@ -1,5 +1,12 @@
 import { supabase } from '../../lib/supabase'
-import { personalBests, relayRecords, withDeltas, type WithDelta } from './derive'
+import {
+  personalBests,
+  raceEvents,
+  relayRecords,
+  withDeltas,
+  type RaceEvent,
+  type WithDelta,
+} from './derive'
 import type { Json } from '../../types/database'
 import type { RosterEntry } from './parser'
 
@@ -155,6 +162,67 @@ export async function getMyRecords(): Promise<MyRecords> {
     relays: relayRecords(all),
     history: withDeltas(all),
   }
+}
+
+/**
+ * One member's records, and whether this viewer was entitled to them.
+ *
+ * The flag is the point. `records_read` (0004:222-224) is
+ * `member_id = current_member_id() or can_manage_records()`, and a viewer it
+ * refuses gets an empty result rather than an error — which renders as "이
+ * 회원은 기록이 없습니다" and is a lie. Separating the two lets the screen say
+ * 권한이 없습니다 when that is what happened.
+ */
+export type MemberRecordsView = {
+  allowed: boolean
+  /** Always empty when `allowed` is false — never a partial list shown as whole. */
+  records: SwimRecord[]
+}
+
+/**
+ * Ask the database the same question its policy asks, rather than guessing from
+ * the session.
+ *
+ * `can_manage_records()` (0004:159-169) admits an admin, a master admin **and**
+ * any approved member whose `team_role` is '코치'. `CurrentUser`
+ * (auth/schema.ts) carries no team_role at all, so no client-side mirror of that
+ * predicate can be written — a coach would be told they lack a right the server
+ * would have granted them. One extra round trip buys an answer that agrees with
+ * RLS by construction; both helpers are granted to `authenticated` (0002:37,
+ * 0004:388).
+ *
+ * The self case is checked here too, because the policy checks it: a member
+ * opening their own detail page must see their own records whatever their role.
+ */
+export async function getMemberRecords(memberId: string): Promise<MemberRecordsView> {
+  const [mine, manages] = await Promise.all([
+    supabase.rpc('current_member_id'),
+    supabase.rpc('can_manage_records'),
+  ])
+  if (mine.error) throw mine.error
+  if (manages.error) throw manages.error
+
+  const allowed = manages.data === true || (mine.data !== null && mine.data === memberId)
+  if (!allowed) return { allowed: false, records: [] }
+
+  return { allowed: true, records: await listRecords(memberId) }
+}
+
+/**
+ * 대회 참가 현황 — the meets this member swam at.
+ *
+ * Carries the same `allowed` flag as `getMemberRecords`, for the same reason:
+ * an entitled viewer looking at somebody who has never raced and an unentitled
+ * viewer must not read the same screen. The grouping itself is `raceEvents`
+ * in derive.ts, where it can be tested without a database.
+ */
+export async function getMemberRaceEvents(memberId: string): Promise<{
+  allowed: boolean
+  events: RaceEvent[]
+}> {
+  const view = await getMemberRecords(memberId)
+  if (!view.allowed) return { allowed: false, events: [] }
+  return { allowed: true, events: raceEvents(view.records) }
 }
 
 export type MemberOption = { id: string; nickname: string; short_name: string | null }

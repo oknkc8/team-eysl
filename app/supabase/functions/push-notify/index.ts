@@ -1,0 +1,281 @@
+/**
+ * push-notify — the half of web push that did not exist.
+ *
+ * Everything before this registered browsers and stored their subscriptions;
+ * nothing ever wrote to them (src/features/push/api.ts said so in its header).
+ * This is the sender.
+ *
+ * ---------------------------------------------------------------- what triggers
+ *
+ * The database does, through pg_net, from AFTER-INSERT and AFTER-UPDATE triggers
+ * (migration 0022). Not the client, and the reason is not taste.
+ *
+ * For 대기자 알림 there is no client to call anything. `offer_status` is only ever
+ * set to 'offered' by offer_seat_to_next_waitlister() (0020:101), and that is
+ * reached from exactly three places: the pg_cron sweep every five minutes, an
+ * AFTER DELETE trigger when somebody cancels, and an AFTER UPDATE trigger when
+ * staff raise a capacity. The sweep runs at four in the morning with no browser
+ * anywhere; the other two run inside the transaction of a *different* member —
+ * the one who cancelled — who is not the person being offered the seat. A
+ * client-side send would deliver a waitlist offer only when one member happened
+ * to cancel while another member's app was open. That is not a rule, it is a
+ * coincidence, and the offer expires in twelve hours.
+ *
+ * So the waitlist notification has to come from the database. And once one of the
+ * three comes from the database, all three should: one mechanism, one place to
+ * look, and — the property a client-side send cannot have — a notice inserted by
+ * any path at all still notifies. Typed into the app, pasted into the SQL editor,
+ * written by a future import script: the trigger is on the table, so all three
+ * behave the same. The legacy app put this in the browser (index.html:2185 calls
+ * sendPush right after the insert resolves), which is the pattern this project
+ * keeps finding bugs in — a rule that holds only while the browser cooperates.
+ *
+ * The cost, stated plainly: a backfill that inserts old notices would notify the
+ * whole club about years-old news. `set local eysl.suppress_push = 'on'` inside
+ * that transaction turns the triggers off, and 0022 documents it where whoever
+ * writes the backfill will be looking.
+ *
+ * ------------------------------------------------------------- who receives it
+ *
+ * This function decides, never the caller. A trigger passes an event name and one
+ * row id; push_notify_context_v1() reads the row and returns both the facts and
+ * the exact subscriptions to write to. There is no request shape that names a
+ * recipient, so there is nothing for a client to abuse — and the notification
+ * text is read from the row rather than accepted from the request, so nobody can
+ * put a sentence of their own in front of the club under the club's name.
+ *
+ * --------------------------------------------------------------- who may call
+ *
+ * verify_jwt is off for this function (supabase/config.toml) because the two
+ * callers authenticate differently, so both checks are made here, explicitly:
+ *
+ *   - the database, proving itself with PUSH_TRIGGER_SECRET, may raise any of
+ *     the three real events;
+ *   - a signed-in member, proving themselves with their own Supabase session,
+ *     may raise `self_test` and nothing else — and its audience is their own
+ *     devices, derived from their session rather than from what they sent.
+ *
+ * Anything else is refused. This endpoint is reachable by the whole internet;
+ * that is exactly why nothing here trusts the request body.
+ */
+
+import { createClient } from 'npm:@supabase/supabase-js@2.112.4'
+import { buildPayload, type PushEvent } from './payload.ts'
+import { sendToAll, type Recipient, type VapidDetails } from './send.ts'
+
+/** The three the president asked for. `self_test` is not among them on purpose. */
+const TRIGGER_EVENTS: readonly PushEvent[] = [
+  'notice_created',
+  'activity_created',
+  'waitlist_offered',
+]
+
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  })
+}
+
+/**
+ * The VAPID pair, or a sentence naming what is missing.
+ *
+ * Read per request rather than at module load so a missing secret is a 500 with
+ * a reason in it, not a function that fails to boot and reports nothing. The
+ * private half exists only here, in Supabase's function secrets — never in the
+ * repository, never in a VITE_ variable, which ships to every visitor.
+ */
+function readVapid(): VapidDetails | string {
+  const publicKey = Deno.env.get('VAPID_PUBLIC_KEY')?.trim()
+  const privateKey = Deno.env.get('VAPID_PRIVATE_KEY')?.trim()
+  // RFC 8292 wants a contact the push service can reach if our sending misbehaves.
+  const subject = Deno.env.get('VAPID_SUBJECT')?.trim()
+
+  if (!publicKey || !privateKey || !subject) {
+    const missing = [
+      publicKey ? null : 'VAPID_PUBLIC_KEY',
+      privateKey ? null : 'VAPID_PRIVATE_KEY',
+      subject ? null : 'VAPID_SUBJECT',
+    ].filter((name): name is string => name !== null)
+    return `push is not configured: ${missing.join(', ')} not set`
+  }
+  return { subject, publicKey, privateKey }
+}
+
+/**
+ * Timing-safe comparison of the shared secret.
+ *
+ * `===` on a secret leaks its prefix through how long the comparison takes.
+ * Cheap to avoid, and this one guards the ability to notify the entire club.
+ */
+function secretMatches(given: string | null, expected: string): boolean {
+  if (given === null) return false
+  const encoder = new TextEncoder()
+  const a = encoder.encode(given)
+  const b = encoder.encode(expected)
+  // Length is not secret — it is visible in the header the caller sent — so an
+  // early return here gives away nothing the request did not already carry.
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i += 1) diff |= (a[i] ?? 0) ^ (b[i] ?? 0)
+  return diff === 0
+}
+
+/**
+ * Who is asking, and what they are allowed to ask for.
+ *
+ * Returns the event and the row id to look up, or a refusal. The member branch
+ * never reads an id from the request: current_member_id() answers from the
+ * session, so a member can only ever test their own devices.
+ */
+async function authorize(
+  request: Request,
+  body: Record<string, unknown>,
+): Promise<{ event: PushEvent; id: string } | Response> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
+  const triggerSecret = Deno.env.get('PUSH_TRIGGER_SECRET')?.trim() ?? ''
+  const event = typeof body.event === 'string' ? body.event : ''
+
+  // ------------------------------------------------------------- the database
+  // The empty check is load-bearing: an unset secret must not turn into a header
+  // anyone can match by also sending nothing.
+  if (
+    triggerSecret !== '' &&
+    secretMatches(request.headers.get('x-eysl-push-secret'), triggerSecret)
+  ) {
+    if (!TRIGGER_EVENTS.includes(event as PushEvent)) {
+      return json({ ok: false, error: `unknown event: ${event}` }, 400)
+    }
+    const id = typeof body.id === 'string' ? body.id : ''
+    if (id === '') return json({ ok: false, error: 'id is required' }, 400)
+    return { event: event as PushEvent, id }
+  }
+
+  // ----------------------------------------------------------------- a member
+  const authorization = request.headers.get('Authorization') ?? ''
+  if (!authorization.startsWith('Bearer ')) {
+    return json({ ok: false, error: 'unauthorized' }, 401)
+  }
+  if (event !== 'self_test') {
+    // Deliberately the same refusal a bad token gets. A member probing for which
+    // events exist learns nothing from the difference between the two.
+    return json({ ok: false, error: 'unauthorized' }, 401)
+  }
+
+  // The publishable key plus the member's own header: this client is bound by
+  // RLS exactly as their browser is, which is what makes the answer trustworthy.
+  const asMember = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '', {
+    global: { headers: { Authorization: authorization } },
+    auth: { persistSession: false },
+  })
+
+  const { data, error } = await asMember.rpc('current_member_id')
+  if (error) return json({ ok: false, error: 'unauthorized' }, 401)
+  // null means signed in but not an approved member — pending, rejected or
+  // blocked. current_member_id() is the same gate every other screen sits behind.
+  if (typeof data !== 'string' || data === '') {
+    return json({ ok: false, error: 'not an approved member' }, 403)
+  }
+
+  return { event: 'self_test', id: data }
+}
+
+Deno.serve(async (request: Request): Promise<Response> => {
+  if (request.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
+  if (request.method !== 'POST') return json({ ok: false, error: 'method not allowed' }, 405)
+
+  let body: Record<string, unknown>
+  try {
+    body = (await request.json()) as Record<string, unknown>
+  } catch {
+    return json({ ok: false, error: 'body must be JSON' }, 400)
+  }
+
+  const authorized = await authorize(request, body)
+  if (authorized instanceof Response) return authorized
+
+  const vapid = readVapid()
+  if (typeof vapid === 'string') return json({ ok: false, error: vapid }, 500)
+
+  // Service role, and only from here down: reading another member's devices is
+  // the whole job, and no RLS policy could allow it without allowing everyone.
+  // Nothing member-supplied reaches this client except an id the branch above
+  // either read from a trigger or took from the caller's own session.
+  const db = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    { auth: { persistSession: false } },
+  )
+
+  const { data: context, error } = await db.rpc('push_notify_context_v1', {
+    p_event: authorized.event,
+    p_id: authorized.id,
+  })
+  if (error) {
+    console.error('push-notify: context lookup failed', error.message)
+    return json({ ok: false, error: 'could not read the event' }, 500)
+  }
+
+  const facts = (context ?? {}) as {
+    fact?: unknown
+    recipients?: Recipient[]
+    member_count?: number
+  }
+  const recipients = facts.recipients ?? []
+
+  // Not an error, and not a silence worth hiding: a notice posted while nobody in
+  // the club has notifications on is a successful send to zero devices, and the
+  // log should be able to say exactly that.
+  if (recipients.length === 0) {
+    console.log(`push-notify ${authorized.event}: no registered devices in the audience`)
+    return json({
+      ok: true,
+      event: authorized.event,
+      sent: 0,
+      pruned: 0,
+      failed: 0,
+      subscription_count: 0,
+      member_count: facts.member_count ?? 0,
+      errors: [],
+    })
+  }
+
+  const report = await sendToAll({
+    recipients,
+    payload: buildPayload(authorized.event, facts.fact),
+    vapid,
+    onGone: async (subscriptionId) => {
+      const { error: deleteError } = await db
+        .from('push_subscriptions')
+        .delete()
+        .eq('id', subscriptionId)
+      if (deleteError) throw new Error(deleteError.message)
+    },
+  })
+
+  // Logged as well as returned. A trigger's pg_net call throws the response away —
+  // net._http_response keeps it, but nobody reads that — so the function log is
+  // where the club's actual delivery record lives.
+  console.log(
+    `push-notify ${authorized.event}: sent=${report.sent} pruned=${report.pruned} ` +
+      `failed=${report.failed} of ${recipients.length}`,
+  )
+  if (report.errors.length > 0) console.warn('push-notify errors:', report.errors.join('; '))
+
+  return json({
+    ok: true,
+    event: authorized.event,
+    sent: report.sent,
+    pruned: report.pruned,
+    failed: report.failed,
+    subscription_count: recipients.length,
+    member_count: facts.member_count ?? 0,
+    errors: report.errors,
+  })
+})

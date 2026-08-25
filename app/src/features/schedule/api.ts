@@ -226,6 +226,26 @@ export async function getScheduleEntry(activityId: string): Promise<ScheduleEntr
   }
 }
 
+/**
+ * Seats an activity has already committed: confirmed participants plus offers
+ * that have not lapsed. The same number 0020's activities_capacity_floor trigger
+ * refuses to let capacity fall below.
+ *
+ * Read by the edit screen so it can say what is in the way before staff press
+ * 저장. The refusal itself stays the database's — this only spares them a bare
+ * 저장 실패 with no reason attached.
+ */
+export async function getReservedSeats(activityId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from('activity_seats_v')
+    .select('reserved_count')
+    .eq('activity_id', activityId)
+    .maybeSingle()
+  if (error) throw error
+  // An activity nobody has applied to is absent from the view, not zero-valued.
+  return data?.reserved_count ?? 0
+}
+
 export async function getActivity(activityId: string): Promise<Activity> {
   const { data, error } = await supabase
     .from('activities')

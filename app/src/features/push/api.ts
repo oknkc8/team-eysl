@@ -13,9 +13,16 @@ import {
  * Registering this browser to receive notifications, and saying honestly
  * whether it is registered.
  *
- * Nothing here sends a notification. Sending needs the VAPID private key and a
- * server to hold it, and we have neither — see the 알림 설정 screen, which says
- * so on the page rather than leaving a member to wonder why nothing arrives.
+ * Sending is not done from here and never will be: it needs the VAPID private
+ * key, which exists only in the push-notify Edge Function's secrets, because a
+ * key in this file would ship to every visitor. What the club is actually
+ * notified about — 공지 등록, 일정 등록, 대기자 알림 — is triggered by database
+ * triggers rather than by any browser (supabase/migrations/0022, and the header
+ * of supabase/functions/push-notify/index.ts for why).
+ *
+ * The one thing this file does reach the sender for is sendTestPush(), whose
+ * audience is the caller's own devices. Registered and receiving are different
+ * facts, and until a notification actually arrives nobody can tell them apart.
  */
 
 /** One row of push_subscriptions, as the settings screen shows it. */
@@ -220,6 +227,71 @@ export async function forgetDevice(deviceId: string): Promise<void> {
   // the error alone would report a silent no-op as success — the same check
   // every mutation in the media module makes.
   if ((data ?? []).length === 0) throw new Error('기기를 삭제하지 못했습니다')
+}
+
+/** What the sender reports back about one send. */
+export type TestPushResult = {
+  /** Devices the push service accepted the message for. */
+  sent: number
+  /** Registrations deleted mid-send because their endpoint is gone. */
+  pruned: number
+  failed: number
+}
+
+/**
+ * Ask the sender to notify this member's own devices, and nothing else.
+ *
+ * This is the only call in the app that reaches push-notify, and the request
+ * carries no recipient: the function reads the member from the session token
+ * sent with it (current_member_id(), the same gate every screen sits behind) and
+ * refuses every event except self_test. There is nothing to aim.
+ *
+ * It exists because 알림 등록됨 and 알림이 도착함 are different facts, and this
+ * whole feature spent its life as the first one — every subscription in the
+ * table had been stored and never written to. A member who presses this and sees
+ * nothing has learned something the settings screen could not otherwise tell
+ * them, and so has whoever they report it to.
+ */
+export async function sendTestPush(): Promise<TestPushResult> {
+  const { data, error } = await supabase.auth.getSession()
+  if (error) throw error
+  const token = data.session?.access_token
+  // supabase-js refreshes an expiring session on its own, so a missing token
+  // here means signed out rather than stale.
+  if (!token) throw new Error('로그인이 만료됐습니다. 다시 로그인해주세요.')
+
+  let response: Response
+  try {
+    response = await fetch(`${env.SUPABASE_URL}/functions/v1/push-notify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: env.SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ event: 'self_test' }),
+    })
+  } catch {
+    // A function that was never deployed looks exactly like being offline from
+    // here, so the sentence has to cover both without guessing between them.
+    throw new Error('알림 서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.')
+  }
+
+  const body: unknown = await response.json().catch(() => ({}))
+  const payload = (body ?? {}) as { ok?: boolean; error?: string; sent?: number; pruned?: number; failed?: number }
+
+  if (!response.ok || payload.ok !== true) {
+    // The function's own words when it has any — "push is not configured:
+    // VAPID_PRIVATE_KEY not set" is worth showing an admin verbatim, and is a
+    // different problem from a refused request.
+    throw new Error(payload.error ?? `알림 전송에 실패했습니다 (HTTP ${response.status})`)
+  }
+
+  return {
+    sent: Number(payload.sent ?? 0),
+    pruned: Number(payload.pruned ?? 0),
+    failed: Number(payload.failed ?? 0),
+  }
 }
 
 // --------------------------------------------------------------- internals

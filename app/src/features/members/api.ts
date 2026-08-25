@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import type { Role } from '../auth/schema'
+import { getMemberRaceEvents } from '../records/api'
 import type { AssignableTeamRole } from './teamRole'
 
 // Avatars live in their own bucket, separate from team-files: an avatar is
@@ -350,6 +351,169 @@ export async function getMemberAccessLists(): Promise<MemberAccessLists> {
     else if (entry.status === 'blocked') blocked.push(entry)
   }
   return { active, blocked }
+}
+
+// ------------------------------------------------- one member's activities
+// The 활동 현황 drill-downs behind 회원 상세: 훈련, 대회, 기타.
+
+/** The three buttons his rebuilt detail screen offers (index.html:3986-3988). */
+export type MemberActivityKind = 'training' | 'race' | 'event'
+
+export const ACTIVITY_KINDS: readonly MemberActivityKind[] = ['training', 'race', 'event']
+
+/**
+ * What each drill-down can honestly claim, which is not the same for all three.
+ *
+ * 훈련 is the odd one. His screen calls it 훈련 출석 현황 and fills it from
+ * `member_history_v4(p_member_id)` — an RPC that takes an arbitrary member id
+ * from the browser, which is exactly what 0001 refused to reproduce:
+ * `attendance_my_history_v1` deliberately takes no id, and the `attendance`
+ * table is deny-all with its grants revoked (0001:196-204). So there is no
+ * server path to another member's attendance at all, and the title has to say
+ * what the rows are — applications — rather than what his says they are.
+ */
+export const ACTIVITY_KIND_TITLE: Record<MemberActivityKind, string> = {
+  training: '훈련 신청 내역',
+  race: '대회 참가 현황',
+  event: '기타 참여 현황',
+}
+
+export type MemberActivityRow = {
+  id: string
+  title: string
+  /** 'YYYY-MM-DD'. Formatted at render time, never parsed into a Date. */
+  date: string
+  /** 참가 / 대기 / 5개 종목 — what this particular row attests to. */
+  note: string
+}
+
+export type MemberActivityView = {
+  /** False when RLS would answer with nothing; see `getMemberRecords`. */
+  allowed: boolean
+  rows: MemberActivityRow[]
+  /**
+   * Said on screen when the rows answer a narrower question than the heading
+   * implies. Null when they answer it exactly.
+   */
+  caveat: string | null
+}
+
+const APPLICATION_NOTE: Record<string, string> = {
+  participant: '신청',
+  waitlist: '대기',
+}
+
+const NOT_ALLOWED: MemberActivityView = { allowed: false, rows: [], caveat: null }
+
+/**
+ * Training and 기타: what this member signed up for.
+ *
+ * Straight off `activity_applications` rather than through an RPC, because
+ * `applications_read` (0001:188-190) already says
+ * `member_id = current_member_id() or is_staff()` — a viewer it refuses gets
+ * nothing back, so the entitlement is checked first and reported rather than
+ * rendering as an empty history.
+ *
+ * Two queries rather than one `activities!inner(...)` embed, deliberately.
+ * PostgREST returns an embedded to-one relationship as an object or as an array
+ * depending on how it infers the relationship, and the generated types do not
+ * pin it down — so a join here would need a hand-written cast that nothing in
+ * this repo exercises, and if the guess were wrong every row would silently
+ * render as 제목 없는 일정 rather than failing. Both halves below are shapes the
+ * generated types already describe. A member's applications number in the
+ * dozens, so the second round trip is not worth a cast nobody can check.
+ */
+async function getApplications(
+  memberId: string,
+  kind: 'training' | 'event',
+): Promise<MemberActivityRow[]> {
+  const applications = await supabase
+    .from('activity_applications')
+    .select('activity_id, application_type')
+    .eq('member_id', memberId)
+  if (applications.error) throw applications.error
+
+  const rows = applications.data ?? []
+  if (rows.length === 0) return []
+
+  // The kind filter lands here rather than on the applications query, which
+  // carries no kind of its own.
+  const activities = await supabase
+    .from('activities')
+    .select('id, title, activity_date')
+    .in(
+      'id',
+      rows.map((row) => row.activity_id),
+    )
+    .eq('kind', kind)
+  if (activities.error) throw activities.error
+
+  const byId = new Map((activities.data ?? []).map((activity) => [activity.id, activity]))
+
+  const out: MemberActivityRow[] = []
+  for (const row of rows) {
+    const activity = byId.get(row.activity_id)
+    // Absent means the activity is of another kind, which is the filter doing
+    // its job — not a row to render with a placeholder title.
+    if (!activity) continue
+    out.push({
+      id: row.activity_id,
+      title: activity.title,
+      date: activity.activity_date,
+      // An unrecognised application_type is shown as itself rather than dropped
+      // or renamed — the same reasoning as teamRoleChoice's `unknown` branch.
+      note: APPLICATION_NOTE[row.application_type] ?? row.application_type,
+    })
+  }
+
+  return out.sort((a, b) => b.date.localeCompare(a.date))
+}
+
+/**
+ * One member's 활동 현황 for one kind.
+ *
+ * The three kinds read three different sources, and each carries its own
+ * entitlement because the database gates them differently: races come out of
+ * `records` (can_manage_records), applications out of `activity_applications`
+ * (is_staff). A viewer may hold one and not the other — a 코치 who is not an
+ * admin is exactly that person — so the answer is per-kind rather than one
+ * blanket "운영진" check that would be wrong in both directions.
+ */
+export async function getMemberActivities(
+  memberId: string,
+  kind: MemberActivityKind,
+): Promise<MemberActivityView> {
+  if (kind === 'race') {
+    const { allowed, events } = await getMemberRaceEvents(memberId)
+    if (!allowed) return NOT_ALLOWED
+    return {
+      allowed: true,
+      rows: events.map((event) => ({
+        id: event.id,
+        title: event.title,
+        date: event.date,
+        note: `${event.swimCount}개 종목`,
+      })),
+      caveat: null,
+    }
+  }
+
+  const [mine, staff] = await Promise.all([
+    supabase.rpc('current_member_id'),
+    supabase.rpc('is_staff'),
+  ])
+  if (mine.error) throw mine.error
+  if (staff.error) throw staff.error
+  if (staff.data !== true && mine.data !== memberId) return NOT_ALLOWED
+
+  return {
+    allowed: true,
+    rows: await getApplications(memberId, kind),
+    caveat:
+      kind === 'training'
+        ? '출석 체크 결과는 본인만 조회할 수 있어, 이 화면에는 신청 내역만 표시됩니다.'
+        : null,
+  }
 }
 
 // ------------------------------------------------------------------ writes

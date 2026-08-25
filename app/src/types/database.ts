@@ -766,6 +766,7 @@ export type Database = {
         Row: {
           activity_id: string | null
           participant_count: number | null
+          reserved_count: number | null
           waitlist_count: number | null
         }
         Relationships: [
@@ -895,9 +896,12 @@ export type Database = {
       }
       can_manage_records: { Args: never; Returns: boolean }
       current_member_id: { Args: never; Returns: string }
+      delete_media_folder_v1: { Args: { p_folder_id: string }; Returns: string[] }
       expire_stale_offers: { Args: never; Returns: number }
       is_master_admin: { Args: never; Returns: boolean }
+      is_my_media_object_path: { Args: { p_path: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      media_object_is_claimed: { Args: { p_path: string }; Returns: boolean }
       offer_seat_to_next_waitlister: {
         Args: { p_activity_id: string }
         Returns: string
