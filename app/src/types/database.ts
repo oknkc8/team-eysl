@@ -898,6 +898,10 @@ export type Database = {
       expire_stale_offers: { Args: never; Returns: number }
       is_master_admin: { Args: never; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      offer_seat_to_next_waitlister: {
+        Args: { p_activity_id: string }
+        Returns: string
+      }
       respond_waitlist_offer: {
         Args: { p_accept: boolean; p_activity_id: string }
         Returns: {

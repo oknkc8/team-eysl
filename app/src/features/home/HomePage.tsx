@@ -11,6 +11,7 @@ export function HomePage() {
       <h1 style={{ fontSize: 26, letterSpacing: -1.2 }}>안녕하세요, {user?.nickname}님</h1>
       <nav style={{ display: 'grid', gap: 9, marginTop: 20 }}>
         <Tile to="/notices" title="공지사항" desc="새 소식과 댓글" />
+        <Tile to="/schedule" title="일정" desc="훈련·대회 신청과 대기" />
         <Tile to="/attendance" title="내 출석" desc="출석·지각 기록 보기" />
         {isStaff(user) && <Tile to="/admin/attendance" title="출석 관리" desc="일정별 출석 체크" />}
       </nav>

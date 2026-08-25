@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { shiftDays, sortUpcomingFirst, todayKey } from './order'
+import {
+  formatDateLabel,
+  formatTimeRange,
+  shiftDays,
+  sortUpcomingFirst,
+  todayKey,
+} from './order'
 
 const row = (activity_date: string, start_time: string | null = null) => ({
   activity_date,
@@ -29,6 +35,36 @@ describe('shiftDays', () => {
 
   it('returns the input unchanged when it is not a date key', () => {
     expect(shiftDays('not-a-date', -30)).toBe('not-a-date')
+  })
+})
+
+describe('formatDateLabel', () => {
+  it('names the weekday of the local date, not of the UTC instant', () => {
+    // 2026-09-02 is a Wednesday. Parsing the key as UTC would name Tuesday for
+    // any reader west of Greenwich.
+    expect(formatDateLabel('2026-09-02')).toBe('2026.09.02 (수)')
+  })
+
+  it('pads a single-digit month and day', () => {
+    expect(formatDateLabel('2026-01-05')).toBe('2026.01.05 (월)')
+  })
+
+  it('passes an unrecognisable key straight through', () => {
+    expect(formatDateLabel('nope')).toBe('nope')
+  })
+})
+
+describe('formatTimeRange', () => {
+  it('drops the seconds and joins both ends', () => {
+    expect(formatTimeRange('19:30:00', '21:00:00')).toBe('19:30–21:00')
+  })
+
+  it('shows only the start when there is no end', () => {
+    expect(formatTimeRange('06:00:00', null)).toBe('06:00')
+  })
+
+  it('shows nothing at all when there is no start', () => {
+    expect(formatTimeRange(null, '21:00:00')).toBe('')
   })
 })
 

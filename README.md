@@ -59,6 +59,7 @@ npm run dev
 |---|---|
 | `npm run dev` | 개발 서버 |
 | `npm run build` | 타입 검사 후 빌드 |
+| `npm run typecheck` | 타입 검사만 |
 | `npm test` | Vitest |
 | `npm run db:migrate` | 아직 적용되지 않은 마이그레이션만 실행 |
 | `npm run db:psql -- -c "select 1"` | dev DB에 일회성 쿼리 |

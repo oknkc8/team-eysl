@@ -18,6 +18,7 @@ beforeAll(async () => {
 afterAll(() => vi.unstubAllEnvs())
 
 const NOTICE_ID = '00000000-0000-4000-8000-000000000001'
+const ACTIVITY_ID = '00000000-0000-4000-8000-000000000002'
 
 function guardsFor(pathname: string) {
   const matches = matchRoutes(router.routes as RouteObject[], pathname) ?? []
@@ -52,5 +53,33 @@ describe('notice routes are guarded by tree position', () => {
 
   it('puts the list behind RequireAuth', () => {
     expect(guardsFor('/notices')).toEqual(['auth', '/notices'])
+  })
+})
+
+describe('schedule routes are guarded by tree position', () => {
+  it('lets any approved member reach the list and one activity', () => {
+    expect(guardsFor('/schedule')).toEqual(['auth', '/schedule'])
+    expect(guardsFor(`/schedule/${ACTIVITY_ID}`)).toEqual(['auth', '/schedule/:activityId'])
+  })
+
+  // The editor lives under /admin so it shares no path segment shape with the
+  // member detail route: there is no pair for ranked matching to choose between,
+  // which is what made /notices/new worth a test of its own.
+  it('puts creating an activity behind RequireStaff', () => {
+    expect(guardsFor('/admin/schedule/new')).toEqual(['auth', 'staff', '/admin/schedule/new'])
+  })
+
+  it('puts editing an activity behind RequireStaff', () => {
+    expect(guardsFor(`/admin/schedule/${ACTIVITY_ID}/edit`)).toEqual([
+      'auth',
+      'staff',
+      '/admin/schedule/:activityId/edit',
+    ])
+  })
+
+  // A member typing the staff URL must not be handed the member detail screen
+  // by a stray match — it has to land on the guard and be redirected.
+  it('does not let the member detail route swallow an admin path', () => {
+    expect(guardsFor(`/admin/schedule/${ACTIVITY_ID}/edit`)).not.toContain('/schedule/:activityId')
   })
 })
