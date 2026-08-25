@@ -5,6 +5,9 @@ import { HomePage } from '../features/home/HomePage'
 import { MyAttendancePage } from '../features/attendance/MyAttendancePage'
 import { AdminActivityListPage } from '../features/attendance/AdminActivityListPage'
 import { AdminCheckInPage } from '../features/attendance/AdminCheckInPage'
+import { NoticeListPage } from '../features/notices/NoticeListPage'
+import { NoticeDetailPage } from '../features/notices/NoticeDetailPage'
+import { NoticeEditPage } from '../features/notices/NoticeEditPage'
 
 // Access is decided by position in this tree, not by a check inside each screen.
 export const router = createBrowserRouter([
@@ -15,11 +18,18 @@ export const router = createBrowserRouter([
     children: [
       { path: '/', element: <HomePage /> },
       { path: '/attendance', element: <MyAttendancePage /> },
+      { path: '/notices', element: <NoticeListPage /> },
+      { path: '/notices/:noticeId', element: <NoticeDetailPage /> },
       {
         element: <RequireStaff />,
         children: [
           { path: '/admin/attendance', element: <AdminActivityListPage /> },
           { path: '/admin/attendance/:activityId', element: <AdminCheckInPage /> },
+          // Ranked matching puts the literal /notices/new ahead of the sibling
+          // /notices/:noticeId above, so the staff branch wins despite being
+          // declared later — a member who types the URL lands on RequireStaff.
+          { path: '/notices/new', element: <NoticeEditPage /> },
+          { path: '/notices/:noticeId/edit', element: <NoticeEditPage /> },
         ],
       },
     ],

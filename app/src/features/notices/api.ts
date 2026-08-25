@@ -1,0 +1,172 @@
+import { supabase } from '../../lib/supabase'
+
+// Attachment rows store a path inside this bucket, never a URL, so the bucket
+// can be renamed or made private without rewriting rows.
+const ATTACHMENT_BUCKET = 'team-files'
+
+export type NoticeSummary = {
+  id: string
+  title: string
+  created_at: string
+  comment_count: number
+  attachment_count: number
+}
+
+export type Notice = {
+  id: string
+  title: string
+  body: string
+  created_at: string
+  updated_at: string
+  created_by: string | null
+}
+
+export type NoticeAttachment = {
+  id: string
+  file_name: string
+  mime_type: string
+  storage_path: string
+  sort_order: number
+}
+
+export type NoticeComment = {
+  id: string
+  body: string
+  created_at: string
+  member_id: string
+  nickname: string
+}
+
+const NOTICE_COLUMNS = 'id, title, body, created_at, updated_at, created_by'
+
+// Counts come back as embedded aggregates rather than one query per notice.
+export async function listNotices(): Promise<NoticeSummary[]> {
+  const { data, error } = await supabase
+    .from('notices')
+    .select('id, title, created_at, notice_comments(count), notice_attachments(count)')
+    .order('created_at', { ascending: false })
+    .limit(100)
+  if (error) throw error
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    title: row.title,
+    created_at: row.created_at,
+    comment_count: row.notice_comments[0]?.count ?? 0,
+    attachment_count: row.notice_attachments[0]?.count ?? 0,
+  }))
+}
+
+export async function getNotice(noticeId: string): Promise<Notice> {
+  const { data, error } = await supabase
+    .from('notices')
+    .select(NOTICE_COLUMNS)
+    .eq('id', noticeId)
+    .single()
+  if (error) throw error
+  return data
+}
+
+// Staff-only, enforced by the notices_write RLS policy — this module does not
+// re-check the role, because a check here would only decide what to render.
+export async function createNotice(input: { title: string; body: string }): Promise<Notice> {
+  // Asked of the server rather than threaded down from the session, so no caller
+  // can pass the wrong id by accident. RLS does not constrain created_by, so
+  // this is authorship bookkeeping, not enforcement.
+  const { data: memberId, error: memberError } = await supabase.rpc('current_member_id')
+  if (memberError) throw memberError
+
+  const { data, error } = await supabase
+    .from('notices')
+    .insert({ title: input.title.trim(), body: input.body, created_by: memberId })
+    .select(NOTICE_COLUMNS)
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function updateNotice(input: {
+  noticeId: string
+  title: string
+  body: string
+}): Promise<Notice> {
+  const { data, error } = await supabase
+    .from('notices')
+    .update({
+      title: input.title.trim(),
+      body: input.body,
+      // Set explicitly: the column defaults to now() on insert but no trigger
+      // touches it on update, so it would otherwise freeze at creation time.
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', input.noticeId)
+    .select(NOTICE_COLUMNS)
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function deleteNotice(noticeId: string): Promise<void> {
+  const { error } = await supabase.from('notices').delete().eq('id', noticeId)
+  if (error) throw error
+}
+
+export async function listAttachments(noticeId: string): Promise<NoticeAttachment[]> {
+  const { data, error } = await supabase
+    .from('notice_attachments')
+    .select('id, file_name, mime_type, storage_path, sort_order')
+    .eq('notice_id', noticeId)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data ?? []
+}
+
+// Signed on demand and short-lived, so a link copied out of the page stops
+// working quickly.
+export async function getAttachmentUrl(storagePath: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from(ATTACHMENT_BUCKET)
+    .createSignedUrl(storagePath, 60)
+  if (error) throw error
+  return data.signedUrl
+}
+
+// The nickname is read through member_public_v, not members: the members_read
+// policy only lets someone see their own row, so embedding members directly
+// would blank out every other author's name for a non-staff reader.
+export async function listComments(noticeId: string): Promise<NoticeComment[]> {
+  const { data, error } = await supabase
+    .from('notice_comments')
+    .select('id, body, created_at, member_id, member_public_v(nickname)')
+    .eq('notice_id', noticeId)
+    .order('created_at', { ascending: true })
+    // Tiebreak so two comments written in the same second keep a stable order
+    // instead of swapping places between refetches.
+    .order('id', { ascending: true })
+  if (error) throw error
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    body: row.body,
+    created_at: row.created_at,
+    member_id: row.member_id,
+    nickname: row.member_public_v?.nickname ?? '알 수 없는 회원',
+  }))
+}
+
+// Goes through the RPC, never a direct insert into notice_comments: the function
+// derives the author from the session, so a client cannot post as someone else,
+// and each comment is its own row rather than an element rewritten into a shared
+// jsonb array. There is no INSERT policy on the table, so a direct insert fails.
+//
+// Returns nothing on purpose. The caller refetches for the canonical list rather
+// than appending the new row to a local copy — that local append is how the
+// legacy screen lost comments written at the same time by someone else.
+export async function appendComment(input: { noticeId: string; body: string }): Promise<void> {
+  const { error } = await supabase.rpc('append_notice_comment', {
+    p_notice_id: input.noticeId,
+    p_body: input.body,
+  })
+  if (error) throw error
+}

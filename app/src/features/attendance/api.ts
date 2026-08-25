@@ -72,10 +72,9 @@ export async function markAttendance(input: {
 
 // Takes no member id — the server derives it from the session.
 export async function getMyHistory(): Promise<HistoryRow[]> {
-  const { data, error } = await supabase.rpc('attendance_my_history_v1', {
-    p_from: null,
-    p_to: null,
-  })
+  // Both bounds default to null server-side, so omitting them asks for the full
+  // history — passing an explicit null is what the generated types reject.
+  const { data, error } = await supabase.rpc('attendance_my_history_v1', {})
   if (error) throw error
   return (data ?? []) as HistoryRow[]
 }

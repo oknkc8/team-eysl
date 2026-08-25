@@ -1,4 +1,6 @@
-import { defineConfig } from 'vite'
+// vitest/config re-exports Vite's defineConfig with the `test` key typed; the
+// plain vite import rejects it.
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
