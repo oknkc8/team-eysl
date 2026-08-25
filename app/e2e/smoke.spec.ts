@@ -19,6 +19,14 @@ type Route = {
   path: string
   /** Text the screen renders only if it got as far as its own render. */
   expect: string | RegExp
+  /**
+   * Narrow `expect` to one kind of element.
+   *
+   * Only needed where two different controls legitimately carry the same words —
+   * see /signup below. Left unset, the assertion is on text alone, which is what
+   * most routes want.
+   */
+  role?: 'button' | 'heading' | 'link'
   /** Why this route sits in this group, when the path does not say it. */
   note?: string
 }
@@ -36,13 +44,18 @@ test.describe('로그인 없이', () => {
     // 가입 신청. The login screen links here, so a person who is not a member
     // yet has exactly one way in and this is it.
     //
-    // Anchored, because the bare string matched two elements — the intro
-    // sentence ("처음이라면 가입 신청을…") as well as the submit button — and
-    // Playwright's strict mode fails rather than guessing. The screen was fine;
-    // the assertion was ambiguous. `^…$` tests the element's whole text, so only
-    // the button qualifies, and the button is the thing worth asserting anyway:
-    // it is what a new member has to be able to press.
-    { path: '/signup', expect: /^가입 신청$/ },
+    // Anchored, because the bare string matched the intro sentence ("처음이라면
+    // 가입 신청을…") as well as the submit button, and Playwright's strict mode
+    // fails rather than guessing. Then the segmented 가입 신청 / 로그인 tabs
+    // arrived and `^…$` stopped being enough on its own: the tab link's whole
+    // text is 가입 신청 too, so an anchored match found two elements again.
+    //
+    // Both times the screen was fine and the assertion was ambiguous, and both
+    // times the answer is the same one this file already reached for — the
+    // button is the thing worth asserting, because it is what a new member has
+    // to be able to press. Naming its role says that outright instead of relying
+    // on it being the only thing that reads this way.
+    { path: '/signup', expect: /^가입 신청$/, role: 'button' },
     // The catch-all. Named something no future route will claim.
     { path: '/no-such-route-exists', expect: '페이지를 찾을 수 없습니다' },
   ]
@@ -50,7 +63,10 @@ test.describe('로그인 없이', () => {
   for (const route of routes) {
     test(`${route.path} 이 렌더된다`, async ({ page, consoleWatcher }) => {
       await page.goto(route.path)
-      await expect(page.getByText(route.expect)).toBeVisible()
+      const target = route.role
+        ? page.getByRole(route.role, { name: route.expect })
+        : page.getByText(route.expect)
+      await expect(target).toBeVisible()
       expect(consoleWatcher.errors, `console on ${route.path}`).toEqual([])
     })
   }

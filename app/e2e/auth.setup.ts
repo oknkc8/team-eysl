@@ -23,6 +23,11 @@ setup('authenticate as 일반회원', async ({ page }) => {
   await page.context().storageState({ path: STATE.member })
 })
 
+setup('authenticate as 두 번째 일반회원', async ({ page }) => {
+  await signIn(page, 'pwtestmember2')
+  await page.context().storageState({ path: STATE.member2 })
+})
+
 setup('authenticate as 승인 대기 회원', async ({ page }) => {
   await signIn(page, 'pwtestpending')
   await page.context().storageState({ path: STATE.pending })

@@ -39,8 +39,64 @@ export function validateSignup(input: SignupInput): string | null {
   return null
 }
 
+/** Why a signup was turned down, in a form the screen can show as-is. */
+export type SignupRefusal = {
+  /** Machine-readable: `nickname_taken`, `password_short`, `rate_limited`, … */
+  reason: string
+  /** The Korean sentence to display. Always non-empty. */
+  message: string
+  /** Only set for `rate_limited`. */
+  retryAfterSeconds: number | null
+}
+
 /**
- * A Korean sentence for whatever Supabase Auth answered with.
+ * Read what register_member_v1 (0028) answered.
+ *
+ * Returns null when the account was created, and the refusal otherwise. The RPC
+ * deliberately answers an expected refusal with a 200 and `ok:false` rather than
+ * raising: a RAISE would abort the transaction PostgREST opened and roll back
+ * the rate-limit counter along with it, so the refusals arrive here as data.
+ *
+ * The Korean sentence comes from the server rather than being re-derived here.
+ * There is one rule about a refusal and it now lives in one place — the function
+ * that made the decision — instead of being restated in a client that could
+ * drift out of step with it.
+ *
+ * Throws on a shape this version does not understand. That is deliberately not
+ * treated as a refusal: answering "거절되었습니다" to something we cannot read
+ * would be asserting the account was not created, which we do not know.
+ */
+export function readSignupResult(value: unknown): SignupRefusal | null {
+  if (typeof value !== 'object' || value === null)
+    throw new Error('register_member_v1 returned something that is not an object')
+
+  const row = value as Record<string, unknown>
+  if (row.ok === true) return null
+  if (row.ok !== false)
+    throw new Error('register_member_v1 returned no usable `ok` field')
+
+  return {
+    reason: typeof row.reason === 'string' && row.reason !== '' ? row.reason : 'unknown',
+    // A refusal with no sentence would render as an empty red line, which reads
+    // as a broken screen rather than as an answer.
+    message:
+      typeof row.message === 'string' && row.message.trim() !== ''
+        ? row.message
+        : '가입 신청에 실패했습니다. 잠시 후 다시 시도해주세요.',
+    retryAfterSeconds:
+      typeof row.retry_after_seconds === 'number' ? row.retry_after_seconds : null,
+  }
+}
+
+/**
+ * A Korean sentence for whatever the signup call *threw*.
+ *
+ * Since 0028 the refusals a person can act on no longer come through here — they
+ * arrive as data and readSignupResult() carries the server's own sentence. What
+ * is left for this function is the transport: a dropped connection, a PostgREST
+ * error, an answer nobody could parse. The GoTrue branches below are kept
+ * because auth.signUp is still what a stale cached bundle would call, and an
+ * English message reaching a member is worse than a branch that rarely fires.
  *
  * Never the raw message: GoTrue replies in English, and two of its replies are
  * about our own configuration rather than anything the applicant did wrong.

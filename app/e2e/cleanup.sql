@@ -19,11 +19,26 @@ delete from public.notices where created_by in (select id from pwtest_member_ids
 delete from public.messages
 where sender_id in (select id from pwtest_member_ids)
    or recipient_id in (select id from pwtest_member_ids);
-delete from public.records where created_by in (select id from pwtest_member_ids);
+-- Both columns, not just created_by. A record is filed *against* a member by
+-- somebody else — that is the whole shape of 기록 추가 — so a row whose author is
+-- outside the prefix can still be a pwtest member's record, and deleting the
+-- member without it raises 23503 on records_member_id_fkey.
+delete from public.records
+where created_by in (select id from pwtest_member_ids)
+   or member_id in (select id from pwtest_member_ids);
 delete from public.record_uploads where uploaded_by in (select id from pwtest_member_ids);
 delete from public.media_files where uploader_id in (select id from pwtest_member_ids);
 delete from public.media_folders where created_by in (select id from pwtest_member_ids);
-delete from public.attendance where marked_by in (select id from pwtest_member_ids);
+-- Same reasoning: marked_by is the staffer who tapped, member_id is who was
+-- marked, and the write suite creates rows where only the second is ours.
+delete from public.attendance
+where marked_by in (select id from pwtest_member_ids)
+   or member_id in (select id from pwtest_member_ids);
+-- Applications onto activities we did not create. The suite only applies to its
+-- own fixtures, where the activity delete below cascades — this is the belt to
+-- that braces, so a test that ever points at a club activity cannot strand a row
+-- and wedge every later cleanup.
+delete from public.activity_applications where member_id in (select id from pwtest_member_ids);
 delete from public.activities where created_by in (select id from pwtest_member_ids);
 
 -- members before auth.users: members_auth_user_id_fkey is ON DELETE SET NULL, so

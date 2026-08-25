@@ -1,0 +1,169 @@
+/*
+ * Design tokens, read off the president's index.html.
+ *
+ * His stylesheet declares six custom properties and then hard-codes several
+ * hundred more literals across 953 hand-maintained lines — nine different greys
+ * for secondary text, sixteen border radii, font sizes from 8px to 28px. The
+ * values here are his; the grouping is the part that is new. Where a token
+ * departs from a literal of his, the comment says so and why.
+ *
+ * Nothing outside this file may invent a colour, radius or size.
+ */
+
+:root {
+  /* ---------------------------------------------------------------- colour */
+
+  /* His :root, verbatim (upstream index.html <style>:1). */
+  --bg: #f5f6f8;
+  --surface: #fff;
+  --ink: #111317;
+  --line: #e1e5ea;
+  --green: #16865f;
+  --amber: #a86706;
+
+  /* body sits a shade darker than .app so the 430px column reads as a phone
+     frame on a desktop screen. */
+  --shell: #e9ebee;
+  --ink-inverse: #fff;
+
+  /* Secondary text.
+   *
+   * DEVIATION. His --muted is #858b94, which is 3.4:1 on white, and he also
+   * writes #999 (2.8:1) and #888 (3.5:1) for the same job at 9-11px. All three
+   * fail WCAG AA for body text. --muted is his hue darkened to 4.6:1 and is
+   * what every informational grey resolves to here.
+   *
+   * --muted-soft keeps his exact #858b94 for decorative text that carries no
+   * information — the letter-spaced TRAINING CLUB wordmark under the brand,
+   * where the colour is the brand rather than a sentence to be read. */
+  --muted: #6f757e;
+  --muted-soft: #858b94;
+
+  /* Dark surfaces. He uses three near-blacks, and they are genuinely three
+     rather than one rounded badly: #111 for buttons and the avatar, #11161d for
+     the home hero, #15191e for the profile card. */
+  --ink-fill: #111;
+  --hero: #11161d;
+  --profile: #15191e;
+  --hero-ink: #c9ced4;
+  --hero-label: #aab1ba;
+
+  /* Fills for anything that is neither a card nor a button: icon tiles,
+     ghost buttons, waitlist chips, avatar fallbacks. */
+  --fill: #eef0f2;
+  --fill-soft: #f4f5f7;
+
+  /* Status. Each pair is a background and the text that sits on it. */
+  --ok-bg: #edf7f2;
+  --ok-fg: #11805b;
+  --warn-bg: #fff0d6;
+  --warn-fg: #8a5100; /* his #9d5c00, darkened to clear 4.5:1 on --warn-bg */
+  --info-bg: #eef4ff;
+  --info-fg: #3469c8;
+  --idle-bg: #eceff2;
+  --idle-fg: #666c73; /* his #74787d / #777, darkened to clear AA */
+  --danger-bg: #fff0f0;
+  --danger-fg: #a33;
+
+  /* Interactive blue. The inactive auth tab is the only place he uses it as a
+     text colour; #2f80ed is his link blue elsewhere. */
+  --accent: #2f8cff;
+  --link: #2f80ed;
+
+  /* Amber button — his one non-destructive warning action (사진 삭제). */
+  --amber-bg: #fff0d7;
+  --amber-fg: #7d4c00; /* his #925900, darkened to clear AA on --amber-bg */
+
+  /* ------------------------------------------------------------ typography */
+
+  /* The single most visible thing missing from the rewrite: with no family set
+     at all, every screen rendered in the browser's default serif. His stack,
+     unchanged — Apple's Korean face first, Noto Sans KR for Android. */
+  --font:
+    -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic',
+    sans-serif;
+
+  /* His sizes, collapsed to a scale. He writes 8, 9, 10, 11, 12, 13, 14, 15,
+     17, 18, 19, 21, 22, 23, 24, 26, 27 and 28; the ones below cover every use
+     that survives into this app. --text-2xs is his 9px, kept only for the
+     wordmark's tracked capitals, never for a sentence. */
+  --text-2xs: 9px;
+  --text-xs: 11px; /* his 10px floor, raised — see --muted */
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 17px;
+  --text-xl: 21px;
+  --text-2xl: 24px;
+  --text-3xl: 27px;
+  --text-4xl: 28px;
+
+  /* He writes 800, 850, 900 and 950. Only two of those are real steps in any
+     font that ships on a phone. */
+  --weight-bold: 700;
+  --weight-heavy: 800;
+  --weight-black: 900;
+
+  /* Negative tracking on display type, wide tracking on the wordmark — both
+     his (.title letter-spacing:-1.3px, .brand span letter-spacing:2.6px). */
+  --track-tight: -1.3px;
+  --track-wide: 2.4px;
+
+  --leading-tight: 1.3;
+  --leading-normal: 1.5;
+  --leading-loose: 1.7;
+
+  /* ---------------------------------------------------------------- radius */
+
+  /* Sixteen distinct radii in his file, clustered around four intentions:
+     a chip, a control, a card, and a hero. */
+  --r-xs: 10px;
+  --r-sm: 13px; /* .btn */
+  --r-md: 16px; /* input */
+  --r-lg: 18px; /* .card, .row, .notice, .panel */
+  --r-xl: 22px; /* .hero, .profile */
+  --r-2xl: 26px; /* .authbox */
+  --r-pill: 999px;
+
+  /* ------------------------------------------------------------ dimensions */
+
+  /* His app column, and the 390px auth card inside it. */
+  --app-width: 430px;
+  --auth-width: 390px;
+
+  /* The bottom nav, and the room a page has to leave for it.
+   *
+   * 82px is where his cascade actually lands: .nav is redeclared with !important
+   * seven times across the file (76 → 62 → 54 → 68 → 72 → 78 → 82) as he tuned
+   * it against real phones, and the last one wins. The safe-area inset is inside
+   * that height rather than added to it — the comment on his second-to-last
+   * declaration says so explicitly, after a round where it was added twice. */
+  --nav-h: 82px;
+  --nav-clearance: 98px; /* his .page padding-bottom:98px */
+
+  /* DEVIATION. His .btn is padding:11px 13px at font-size:12px — about 40px
+     tall, and his .attChoice about 28px. Every control here clears 44px. */
+  --tap: 44px;
+
+  /* --------------------------------------------------------------- spacing */
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 10px;
+  --space-4: 14px;
+  --space-5: 18px;
+  --space-6: 22px;
+  --space-7: 28px;
+
+  /* .list gap:9px, .page padding:8px 18px 28px, .card padding:16px */
+  --gap-list: 9px;
+  --pad-page: 18px;
+  --pad-card: 16px;
+
+  /* ---------------------------------------------------------------- depth */
+
+  /* His design is flat: hairline borders, no card shadow anywhere. The only
+     two shadows in 953 lines are on the emoji popover, and that is the one
+     thing that needs to read as lifted off the page. */
+  --shadow-pop: 0 10px 30px rgb(0 0 0 / 10%);
+}

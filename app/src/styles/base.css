@@ -1,0 +1,122 @@
+/*
+ * Reset, the phone frame, and the typographic defaults every screen inherits.
+ *
+ * His equivalent is three lines near the top of index.html's <style> block.
+ * The frame is the part worth reading twice: his .app is a 430px column with
+ * min-height:100vh, centred on a slightly darker body, so the app looks like a
+ * phone on a desktop screen and fills the viewport on an actual phone. Here it
+ * lives on #root instead of a wrapper element, which means every route gets it
+ * without a layout component and without touching the router.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Never let a wide table or a long unbroken string widen the whole page —
+     his @media(max-width:760px) block spends four `overflow-x:hidden !important`
+     declarations fighting this after the fact. */
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--shell);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  width: min(var(--app-width), 100%);
+  min-height: 100dvh;
+  margin-inline: auto;
+  background: var(--bg);
+  position: relative;
+  overflow-x: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  /* Stops the 300ms tap delay and the grey flash on iOS. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+img,
+video {
+  max-width: 100%;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  /* His headings carry no font-weight at all — every one of them renders at the
+     browser's default `bold`. Matching that keeps the wordmark the weight the
+     club recognises; the handful of places he genuinely wanted heavier (nav
+     label, .brand b, metric figures) say 900 themselves and still do here. */
+  font-weight: var(--weight-bold);
+  /* 1.2 rather than --leading-tight, because his headings inherit nothing and
+     render at the UA's `normal`. Measured on his running app the wordmark boxes
+     at 31px against our 35px at 1.3 — small, but it is the one line of type the
+     club looks at most and there is no reason to be 4px off it. */
+  line-height: 1.2;
+}
+
+p {
+  margin: 0;
+}
+
+/* Focus. His app has no focus styling at all — an outline the browser draws in
+   its own colour over a rounded control, or nothing where a reset removed it.
+   One visible ring, matched to the shape it sits on. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --------------------------------------------------------------- utilities */
+
+/* Announced but not shown. Clip-rect rather than display:none, because a screen
+   reader skips the latter. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

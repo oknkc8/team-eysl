@@ -15,31 +15,14 @@ import {
   type MyProfile,
 } from './api'
 
-const CARD = {
-  padding: 14,
-  border: '1px solid #e1e5ea',
-  borderRadius: 18,
-  background: '#fff',
-} as const
-
-const BUTTON = {
-  minHeight: 44,
-  padding: '0 14px',
-  borderRadius: 13,
-  fontSize: 13,
-  border: '1px solid #e1e5ea',
-  background: '#fff',
-  color: '#111317',
-} as const
-
 type SaveKind = 'idle' | 'saving' | 'saved' | 'error'
 
 export function MyPage() {
   const query = useQuery({ queryKey: ['my-profile'], queryFn: getMyProfile })
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
-      <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: '0 0 16px' }}>마이페이지</h1>
+    <div className="page">
+      <h1 className="title">마이페이지</h1>
 
       <AsyncSection
         query={query}
@@ -58,27 +41,24 @@ function Profile({ profile }: { profile: MyProfile }) {
       <PhotoCard profile={profile} />
       <RealNameCard profile={profile} />
 
-      <h2 style={{ fontSize: 13, color: '#6b7178', fontWeight: 400, margin: '24px 0 9px' }}>
-        내 메뉴
-      </h2>
-      <nav style={{ display: 'grid', gap: 9 }}>
+      <h2 className="listDivider">내 메뉴</h2>
+      <nav className="list">
         <Tile to="/records" title="나의 기록" desc="개인 최고 기록과 변화" />
         <Tile to="/schedule/mine" title="나의 대회 신청 내역" desc="신청한 대회와 지난 참가 기록" />
         <Tile to="/attendance" title="출석 현황" desc="출석·지각 기록 보기" />
         <Tile to="/events" title="이벤트" desc="출석왕·지각왕·기록 단축왕" />
       </nav>
 
-      <h2 style={{ fontSize: 13, color: '#6b7178', fontWeight: 400, margin: '24px 0 9px' }}>설정</h2>
-      <nav style={{ display: 'grid', gap: 9 }}>
+      <h2 className="listDivider">설정</h2>
+      <nav className="list">
         <Tile to="/settings/notifications" title="푸시 알림" desc="이 기기로 알림 받기" />
       </nav>
 
-      <button
-        onClick={() => void supabase.auth.signOut()}
-        style={{ ...BUTTON, width: '100%', marginTop: 18 }}
-      >
-        로그아웃
-      </button>
+      <div className="actions">
+        <button onClick={() => void supabase.auth.signOut()} className="btn outline">
+          로그아웃
+        </button>
+      </div>
     </>
   )
 }
@@ -153,23 +133,21 @@ function PhotoCard({ profile }: { profile: MyProfile }) {
   const busy = state === 'saving'
 
   return (
-    <section style={{ ...CARD, display: 'grid', gap: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+    <section>
+      <div className="profile">
         <MemberAvatar
           member={{ nickname: profile.nickname, short_name: null, avatar_url: profile.avatar_url }}
           size={56}
         />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <b style={{ fontSize: 16 }}>{profile.nickname}</b>
-          <p style={{ fontSize: 11, color: '#6b7178', margin: '3px 0 0' }}>
-            {ROLE_LABEL[profile.role]}
-          </p>
+        <div className="grow">
+          <b>{profile.nickname}</b>
+          <p>{ROLE_LABEL[profile.role]}</p>
         </div>
         <SaveState state={state} />
       </div>
 
-      <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
-        <button onClick={() => inputRef.current?.click()} disabled={busy} style={BUTTON}>
+      <div className="actions">
+        <button onClick={() => inputRef.current?.click()} disabled={busy} className="btn outline">
           프로필 사진 변경
         </button>
         {profile.avatar_path && (
@@ -178,7 +156,7 @@ function PhotoCard({ profile }: { profile: MyProfile }) {
               if (window.confirm('프로필 사진을 삭제할까요?')) remove.mutate()
             }}
             disabled={busy}
-            style={{ ...BUTTON, borderColor: '#925900', color: '#925900', background: '#fff0d6' }}
+            className="btn amber"
           >
             사진 삭제
           </button>
@@ -193,7 +171,7 @@ function PhotoCard({ profile }: { profile: MyProfile }) {
       </div>
 
       {error && (
-        <p role="alert" style={{ color: '#a33', fontSize: 12, margin: 0 }}>
+        <p role="alert" className="authMsg error">
           {error}
         </p>
       )}
@@ -239,74 +217,36 @@ function RealNameCard({ profile }: { profile: MyProfile }) {
   const disabled = state === 'saving' || unchanged
 
   return (
-    <section style={{ ...CARD, marginTop: 12 }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 9,
-          marginBottom: 10,
-        }}
-      >
-        <h2 style={{ fontSize: 14, margin: 0 }}>기록 연동</h2>
+    <section className="card realNameCard">
+      <div className="cardHead">
+        <h2>기록 연동</h2>
         <SaveState state={state} onRetry={() => save.mutate()} />
       </div>
 
-      <div style={{ display: 'flex', gap: 7 }}>
+      <div className="realNameRow">
         <input
+          className="field"
           aria-label="본인 실명"
           placeholder="본인 실명"
           maxLength={30}
           autoComplete="name"
           value={realName}
           onChange={(e) => setRealName(e.target.value)}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 44,
-            padding: 12,
-            borderRadius: 13,
-            border: '1px solid #e1e5ea',
-            fontSize: 14,
-          }}
         />
-        <button
-          onClick={() => save.mutate()}
-          disabled={disabled}
-          style={{
-            ...BUTTON,
-            border: 0,
-            background: disabled ? '#e1e5ea' : '#11805b',
-            color: disabled ? '#6b7178' : '#fff',
-          }}
-        >
+        <button onClick={() => save.mutate()} disabled={disabled} className="btn primary">
           저장
         </button>
       </div>
 
-      <p style={{ fontSize: 12, color: '#6b7178', margin: '10px 0 0', lineHeight: 1.6 }}>
+      <p className="fieldNote">
         대회 결과지는 실명으로 기록을 찾습니다. 실명을 넣지 않으면 본인 기록이 자동으로 연결되지
         않아요.
       </p>
 
-      {!profile.real_name && (
-        <p
-          style={{
-            fontSize: 12,
-            margin: '10px 0 0',
-            padding: '8px 10px',
-            borderRadius: 12,
-            background: '#fff0d6',
-            color: '#925900',
-          }}
-        >
-          아직 실명을 등록하지 않으셨어요.
-        </p>
-      )}
+      {!profile.real_name && <p className="authMsg warn">아직 실명을 등록하지 않으셨어요.</p>}
 
       {error && (
-        <p role="alert" style={{ color: '#a33', fontSize: 12, margin: '10px 0 0' }}>
+        <p role="alert" className="authMsg error">
           {error}
         </p>
       )}
@@ -316,21 +256,11 @@ function RealNameCard({ profile }: { profile: MyProfile }) {
 
 function Tile({ to, title, desc }: { to: string; title: string; desc: string }) {
   return (
-    <Link
-      to={to}
-      style={{
-        display: 'block',
-        padding: 14,
-        minHeight: 44,
-        border: '1px solid #e1e5ea',
-        borderRadius: 18,
-        background: '#fff',
-        textDecoration: 'none',
-        color: '#111317',
-      }}
-    >
-      <b style={{ fontSize: 14 }}>{title}</b>
-      <p style={{ fontSize: 11, color: '#6b7178', margin: '4px 0 0' }}>{desc}</p>
+    <Link to={to} className="row">
+      <div className="grow">
+        <b>{title}</b>
+        <p>{desc}</p>
+      </div>
     </Link>
   )
 }

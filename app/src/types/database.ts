@@ -845,6 +845,27 @@ export type Database = {
         }
         Relationships: []
       }
+      signup_attempt_quota: {
+        Row: {
+          attempts_in_window: number
+          client_key: string
+          last_attempt_at: string | null
+          window_started_at: string
+        }
+        Insert: {
+          attempts_in_window?: number
+          client_key: string
+          last_attempt_at?: string | null
+          window_started_at?: string
+        }
+        Update: {
+          attempts_in_window?: number
+          client_key?: string
+          last_attempt_at?: string | null
+          window_started_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       activity_seats_v: {
@@ -1028,6 +1049,10 @@ export type Database = {
       record_unsupported_push_endpoint_v1: {
         Args: { p_endpoint: string; p_user_agent?: string }
         Returns: undefined
+      }
+      register_member_v1: {
+        Args: { p_nickname: string; p_password: string }
+        Returns: Json
       }
       request_push_notify: {
         Args: { p_event: string; p_id: string }
@@ -1277,6 +1302,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      signup_client_key: { Args: never; Returns: string }
       team_event_rankings_v1: { Args: never; Returns: Json }
       upsert_record: {
         Args: {

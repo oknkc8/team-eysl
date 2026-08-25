@@ -36,7 +36,16 @@ insert into pwtest_accounts (nickname, status, role, member_id) values
   ('pwtestmember',  'approved', 'member',       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
   -- Signed up, not yet admitted. The state a real first user meets, so it gets
   -- an account rather than being tested only as an absence.
-  ('pwtestpending', 'pending',  'member',       'cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+  ('pwtestpending', 'pending',  'member',       'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
+  -- A second ordinary member, which only the write suite needs.
+  --
+  -- Two of the legacy app's data-loss bugs are races between two people, and a
+  -- race needs two people who are both *ordinary*: pairing a member with the
+  -- 총관리자 would test a path where one side is staff, and staff take different
+  -- branches through apply_to_activity() and every RLS policy they touch. The
+  -- bug the president's members actually hit is two members, so the fixture is
+  -- two members.
+  ('pwtestmember2', 'approved', 'member',       'dddddddd-dddd-4ddd-8ddd-dddddddddddd');
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
@@ -144,6 +153,62 @@ insert into public.media_folders (id, name, created_by)
 select
   '33333333-3333-4333-8333-333333333333',
   'pwtest 폴더',
+  m.id
+from public.members m where m.nickname = 'pwtestadmin';
+
+-- ---------------------------------------------------------------------------
+-- Fixtures the write suite owns (writes.spec.ts).
+--
+-- One row per test rather than one shared row for all of them. The suite runs
+-- fullyParallel, so two tests writing to the same activity would interleave and
+-- the failure would read as a product bug rather than as a fixture collision.
+-- Every id below is used by exactly one test.
+-- ---------------------------------------------------------------------------
+
+-- 정원 1. The capacity race needs an activity where one seat exists and two
+-- people want it; anything larger cannot tell "the server arbitrated" from
+-- "there was room for both".
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  '44444444-4444-4444-8444-444444444444',
+  'training',
+  'pwtest 정원1 훈련',
+  current_date + 8,
+  '20:00',
+  'pwtest 수영장',
+  1,
+  m.id
+from public.members m where m.nickname = 'pwtestadmin';
+
+-- The attendance roster. attendance_for_activity_v1 lists only rows at
+-- application_type = 'participant', so an activity nobody applied to shows
+-- 신청자가 없습니다 and there is nothing to check anyone in against.
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  '55555555-5555-4555-8555-555555555555',
+  'training',
+  'pwtest 출석 훈련',
+  current_date + 9,
+  '21:00',
+  'pwtest 수영장',
+  10,
+  m.id
+from public.members m where m.nickname = 'pwtestadmin';
+
+insert into public.activity_applications (activity_id, member_id, application_type)
+select
+  '55555555-5555-4555-8555-555555555555',
+  m.id,
+  'participant'
+from public.members m where m.nickname = 'pwtestmember';
+
+-- Its own notice, so the concurrent-comment test counts the comments it wrote
+-- and not whatever else the run has left on the shared one.
+insert into public.notices (id, title, body, created_by)
+select
+  '66666666-6666-4666-8666-666666666666',
+  'pwtest 댓글 공지',
+  'pwtest 동시 댓글 시험용 공지입니다.',
   m.id
 from public.members m where m.nickname = 'pwtestadmin';
 

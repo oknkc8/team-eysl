@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { validateSignup, signupErrorMessage, PASSWORD_MAX_BYTES } from './signup'
+import {
+  validateSignup,
+  signupErrorMessage,
+  readSignupResult,
+  PASSWORD_MAX_BYTES,
+} from './signup'
 
 const ok = { nickname: '홍길동', password: 'swimclub2026' }
 
@@ -50,6 +55,56 @@ describe('validateSignup', () => {
     expect(validateSignup({ ...ok, password: '가'.repeat(25) })).toBe(
       '비밀번호가 너무 깁니다. 조금 짧게 설정해주세요.',
     )
+  })
+})
+
+// The payloads below are the ones register_member_v1 (0028) actually returned,
+// copied from a live drive against the dev project rather than invented — a
+// parser tested against a made-up shape proves nothing about the server.
+describe('readSignupResult', () => {
+  it('reads a created account as no refusal', () => {
+    expect(readSignupResult({ ok: true })).toBeNull()
+  })
+
+  it('carries the server’s own sentence for a taken nickname', () => {
+    expect(
+      readSignupResult({
+        ok: false,
+        reason: 'nickname_taken',
+        message: '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.',
+      }),
+    ).toEqual({
+      reason: 'nickname_taken',
+      message: '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.',
+      retryAfterSeconds: null,
+    })
+  })
+
+  it('keeps retry_after_seconds when the caller is rate limited', () => {
+    expect(
+      readSignupResult({
+        ok: false,
+        reason: 'rate_limited',
+        message: '가입 신청이 너무 많습니다. 60분 후에 다시 시도해주세요.',
+        retry_after_seconds: 3600,
+      }),
+    ).toMatchObject({ reason: 'rate_limited', retryAfterSeconds: 3600 })
+  })
+
+  // A refusal with no sentence would paint an empty red line, which reads as a
+  // broken screen rather than as an answer.
+  it('substitutes a sentence when a refusal arrives without one', () => {
+    const result = readSignupResult({ ok: false, reason: 'password_short' })
+    expect(result?.message).toBe('가입 신청에 실패했습니다. 잠시 후 다시 시도해주세요.')
+    expect(result?.reason).toBe('password_short')
+  })
+
+  // Deliberately a throw and not a refusal. "거절되었습니다" would assert the
+  // account was not created, and an answer we cannot read does not tell us that.
+  it('throws rather than inventing a refusal it cannot read', () => {
+    for (const answer of [null, undefined, 'ok', 42, {}, { ok: 'true' }, []]) {
+      expect(() => readSignupResult(answer)).toThrow()
+    }
   })
 })
 

@@ -1,6 +1,6 @@
 import { supabase } from '../../lib/supabase'
-import { memberSchema, emailForNickname, type CurrentUser } from './schema'
-import type { SignupInput } from './signup'
+import { memberSchema, type CurrentUser } from './schema'
+import { readSignupResult, type SignupInput, type SignupRefusal } from './signup'
 
 /**
  * The signed-in member's own row.
@@ -39,30 +39,42 @@ export async function getMyMember(authUserId: string): Promise<CurrentUser | nul
 }
 
 /**
- * 가입 신청. Creates the auth account; the members row follows from it.
+ * 가입 신청. Creates the auth account and the pending members row together.
+ *
+ * WHY NOT auth.signUp. It cannot work on this project and never could: GoTrue
+ * validates deliverability on signup and answers 400 email_address_invalid for
+ * `<nickname>@eysl.local`, because `.local` does not resolve. The same address is
+ * accepted by signInWithPassword, which is why this stayed invisible for so long
+ * — login worked against hand-seeded rows while account creation was dead. 0028
+ * moves the work into register_member_v1(), a SECURITY DEFINER function that
+ * writes the auth rows itself. The trade-off that buys is written out in full at
+ * the head of that migration; the short version is that we are in somebody
+ * else's schema until a service-role key exists for an Edge Function to hold.
  *
  * There is deliberately no second call here inserting into `members`. The
- * on_auth_user_created trigger (0027) does that inside GoTrue's own transaction,
- * so the account and the pending member row commit together — a two-step client
- * flow could be abandoned between the steps and leave an account that can sign
- * in forever with no member behind it, which RequireAuth renders as a permanent
- * loading screen and no admin screen can see.
+ * on_auth_user_created trigger (0027) does that inside the same transaction as
+ * the auth.users insert, so the account and the pending member row commit
+ * together — a two-step client flow could be abandoned between the steps and
+ * leave an account that can sign in forever with no member behind it, which
+ * RequireAuth renders as a permanent loading screen and no admin screen can see.
  *
- * `nickname` in `options.data` is the only thing the browser gets to decide.
- * status and role are not sent, cannot be sent, and would be ignored if they
- * were: the trigger never reads them out of the metadata, so the row lands
- * 'pending'/'member' whatever this object contains. Verified against the dev
- * database — a signup posting {"status":"approved","role":"master_admin"}
- * produced status=pending, role=member.
+ * The nickname and the password are the only things the browser gets to decide,
+ * and that is enforced by the shape of the call rather than by trust: the RPC
+ * takes exactly two named arguments, and PostgREST resolves a function by
+ * argument name, so a body carrying `status` or `role` does not get them
+ * ignored — it matches no function at all. Verified against the dev project: the
+ * same call with `"status":"approved","role":"master_admin"` added came back
+ * PGRST202, and the account created by the clean call landed pending/member.
  *
- * Throws the AuthError as-is; the screen turns it into a sentence with
+ * Returns null when the account was created, or the refusal to show. Only
+ * transport failures throw; the screen turns those into a sentence with
  * signupErrorMessage().
  */
-export async function registerMember(input: SignupInput): Promise<void> {
-  const { error } = await supabase.auth.signUp({
-    email: emailForNickname(input.nickname),
-    password: input.password,
-    options: { data: { nickname: input.nickname.trim() } },
+export async function registerMember(input: SignupInput): Promise<SignupRefusal | null> {
+  const { data, error } = await supabase.rpc('register_member_v1', {
+    p_nickname: input.nickname.trim(),
+    p_password: input.password,
   })
   if (error) throw error
+  return readSignupResult(data)
 }
