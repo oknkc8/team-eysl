@@ -564,34 +564,59 @@ test.describe('자유게시판 — 승인되지 않은 사람', () => {
         ],
         ['delete', { p_post_id: postId }],
       ] as const) {
+        const name = `${what}_board_post_v1`
         const response = await anonRequest(page, {
-          path: `/rest/v1/rpc/${what}_board_post_v1`,
+          path: `/rest/v1/rpc/${name}`,
           method: 'POST',
           body,
         })
-        expect(response.status, `anon ${what}`).toBeGreaterThanOrEqual(400)
-        expect(response.status, `anon ${what}`).toBeLessThan(500)
+        // THE REASON IS THE ASSERTION, not the status, and this test was wrong
+        // once for exactly that. It first checked only for "some 4xx", and
+        // passed with `grant execute ... to anon` deliberately in place —
+        // because the approval gate inside the function answered 403 before the
+        // missing grant could matter. A test that cannot tell those apart
+        // cannot notice the grant coming back, which is the whole thing it was
+        // written to watch.
+        //
+        //   ungranted           401  permission denied for function <name>
+        //   granted, unapproved 403  not an approved member
+        expect(response.status, `anon ${what}`).toBe(401)
+        expect(response.body, `anon ${what}`).toContain(`permission denied for function ${name}`)
+        // The line that fails if EXECUTE is ever handed back to anon.
+        expect(response.body, `anon ${what} reached the function body`).not.toContain(
+          'not an approved member',
+        )
       }
 
       // board_post_text is granted to nobody at all — not anon, not
       // authenticated. It is only ever called from inside the SECURITY DEFINER
       // functions, which run as its owner and need no grant.
-      for (const [who, send] of [
-        ['anon', anonRequest],
-        ['authenticated', directRequest],
+      // The status differs by who is asking — PostgREST answers 401 for the
+      // anonymous role and 403 for a role that is authenticated and simply not
+      // allowed — so the message is what both are pinned on. Both statuses are
+      // named rather than loosened to "4xx", because "some 4xx" is exactly what
+      // let the block above pass while anon held EXECUTE.
+      for (const [who, send, status] of [
+        ['anon', anonRequest, 401],
+        ['authenticated', directRequest, 403],
       ] as const) {
         const helper = await send(page, {
           path: '/rest/v1/rpc/board_post_text',
           method: 'POST',
           body: { p_value: '아무거나', p_field: 'title', p_max: 120 },
         })
-        expect(helper.status, `${who} board_post_text`).toBeGreaterThanOrEqual(400)
-        expect(helper.status, `${who} board_post_text`).toBeLessThan(500)
+        expect(helper.status, `${who} board_post_text`).toBe(status)
+        expect(helper.body, `${who} board_post_text`).toContain(
+          'permission denied for function board_post_text',
+        )
       }
 
-      // Reading the table without a session, too.
+      // Reading the table without a session, too. anon holds no SELECT on
+      // board_posts at all, so this is refused before RLS is consulted — an
+      // empty array would mean the grant exists and only the policy said no.
       const read = await anonRequest(page, { path: '/rest/v1/board_posts?select=id' })
-      expect(read.status).toBeGreaterThanOrEqual(400)
+      expect(read.status).toBe(401)
+      expect(read.body).toContain('permission denied for table board_posts')
 
       // Nothing anon sent changed anything.
       const stored = await directRequest(page, {
