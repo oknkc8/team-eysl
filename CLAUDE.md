@@ -246,6 +246,12 @@ The general form, of which the hash is the memorable instance: **anything that m
 
 `e3b0c442…` is worth memorising because it is that failure wearing a disguise — the sha256 of the empty string, produced when `git show` writes its error to stderr and `sha256sum` hashes nothing. It is a well-formed 64-character hash and it means "nothing was read". **Treat it as an automatic failure in any verification pipeline.**
 
+**That rule has a false-positive mode, and it is the mirror image of the hash.** `wc -c < file` returned **0** for a 49,714-byte file — but only when chained into the same call, behind the wrapped redirect that had just written it. `sha256sum` in that same call returned the correct hash, and run separately, python, `os.stat`, `ls -l` and `wc -c` all agreed on 49,714. The wrapper's redirect finishes asynchronously, so a size check chained behind it reads the file too early.
+
+The direction is the whole point. `e3b0c442…` is an empty result that means a real problem; this is an **empty result that means nothing is wrong** — so the rule above, applied literally, condemns a healthy file and sends somebody hunting a defect that does not exist.
+
+The rule stands, with one condition attached: **do not chain a size check into the same call as a wrapped redirect that produced the file.** Check it in a separate call. What made this diagnosable was `sha256sum` being right in the same breath that `wc -c` was wrong — one tool reading early, not a file that was empty. Two tools side by side found it; either one alone would have concluded the file was empty.
+
 **And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
 
 That makes "typecheck passes" narrower than it sounds, and it is the kind of claim that gets repeated because it was true about the part somebody happened to be looking at. **Say which tree you checked, not just that the check was green.**
@@ -279,6 +285,34 @@ This form is the one to use because it **refuses** when it is wrong. `git rev-pa
 
 The guard fired for real while this paragraph was being written, stopping a commit from landing in `feat/admin-claim`. Separately, the worktree directory itself came back on another agent's branch; what saved the work then was not the guard but **committing and pushing after every edit**. The guard protects where a commit lands, not whether the checkout is still yours.
 
+**But git itself is not lying — and an earlier version of this section said it was.** The claim that `git status` and `git log` report the wrong branch was investigated and disproved. `claim2` followed the `.git` pointer in 14 worktrees to read each `HEAD` file directly, then ran `branch --show-current`, `rev-parse --abbrev-ref HEAD` and `status --short --branch` in every one of them, bare and substituted: **70 readings, zero disagreements**, the multi-line `status` included. Every reading that looked wrong was true about a different directory.
+
+**Each git command is honest about wherever it is standing at that instant. The anchor is what moves.** Three sightings on 2026-08-26, each with somebody's work in reach:
+
+- The lead believed it was in `free-board` and was standing in `chore/e2e-parallel-isolation` — another agent's tree, holding 161 uncommitted lines. A `CLAUDE.md` edit sat beside them for five minutes.
+- `claim2`'s shell was anchored in `enrol`, also not its own, **holding one unpushed commit.** Nothing was lost only because there was nothing to commit.
+- `badges2` drifted through six trees in one session — `strokes`, `free-board`, `admin-claim`, `cinum`, `porting`, `enrol` — and one `git add` of three paths ran in the wrong one. Harmless only because those paths were unmodified there.
+
+Keeping the disproved version would have been worse than writing nothing. It teaches people to distrust `git status`, and **the accident still happens to someone who distrusts it**: `status` honestly reports a stranger's branch, and the reader has no way to tell the branch is a stranger's.
+
+**What the guard does not cover.** It compares against a branch name, so it protects a **change**. It cannot protect a path that **reads** while the anchor is wrong and then decides from what it read. That is the path that caught the lead, who was reading and editing rather than committing, so the guard had nowhere to fire.
+
+**`git -C <absolute path>` is not the escape hatch it looks like.** It is available in some sessions and refused in others, and where it is refused the refusal *follows* the drift rather than correcting it. Measured by `badges2` while the anchor was wrong:
+
+| command | result |
+|---|---|
+| `pwd` | `…/worktrees/free-board` — drifted; the assigned tree was `badges-medals` |
+| `git -C …/badges-medals rev-parse` | **refused**: "must target its own worktree" |
+| `git -C …/free-board rev-parse` | allowed → `chore/e2e-parallel-isolation` |
+
+The guard's notion of "its own worktree" **is** the drifting anchor, so `-C` was permitted only toward where the drift had already gone and refused toward the real tree. Where `-C` is available, prefer it: it looks at the right place rather than merely refusing the wrong one. Where it is refused, use `EnterWorktree` and then confirm the move happened with `pwd` + `branch` + `HEAD`, not with the tool's success line.
+
+**And settle a branch switch by SHA, never by its success message.** `git switch -C` once printed its success line while `HEAD` had not moved. That is consistent with the anchor explanation — it may well have switched a different tree — so the only claim worth writing down is the operational one: after switching, compare `git rev-parse HEAD` against the SHA you expected.
+
+**The read path is not a hypothetical, and the reading that drifts may be your verification.** Writing this very section, `badges2` patched `CLAUDE.md` in `lead-docs-pr`, confirmed in python that all 37 lines were additions and every original line survived, and then ran `git diff --numstat origin/dev -- CLAUDE.md` to confirm it. The answer was **`0 76` — nothing added, 76 lines deleted.** The anchor had moved to `admin-claim`/`feat/notice-attachments` between the write and the check, so git honestly described *that* tree's file. Re-entering the right worktree and asking again gave `37 0`.
+
+Two things make this the sharpest instance on the page. **`pwd` and `git rev-parse --show-toplevel` agreed with each other and were both wrong** — the whole-session move described above, which no comparison between them can catch. And the wrong answer was not merely wrong but **alarming**: "you deleted 76 lines" is exactly the reading that provokes a `checkout --` or a `reset --hard`, so believing it would have destroyed the work it was meant to protect. **Prove the location in the same call as the check** — `echo $(git branch --show-current)` beside the diff — for reads as well as for writes.
+
 **`ps` is the worst of these, and the reason is that its lie is the answer you wanted.** `git status` printing `ok` is obviously not git's output. `gh pr list` printing `[]` at least looks odd for a repo with open PRs. But `ps | grep <anything>` returning nothing looks exactly like *"that program is not running"* — so it **confirms rather than contradicts**, and an investigation stops. Every "I checked, nothing was running" in this project's history was produced this way.
 
 **Read `/proc` instead.** `ls -d /proc/[0-9]* | wc -l` for a count, `/proc/<pid>/comm` and `/proc/<pid>/cmdline` for what a process is. Nothing sits between those files and the truth. `rtk proxy ps` also works, but it puts a wrapper in the path and wrappers are the subject.
@@ -301,6 +335,12 @@ bare      wc -l   file         31        correct
 That has a cheap consequence worth using: **run it bare and substituted, and if they disagree, the bare one is wrong.** It also means a verification that happens to wrap everything in `$( )` will fail to reproduce a real bug and can talk you into telling a colleague their correct finding is mistaken. That nearly happened while this paragraph was being written.
 
 Two more from the same session. **`cat` fabricated a truncation count**: a 31-line file printed with `... (1065 lines truncated)` appended, and 31 + 1065 is 1096 against a real 1080 — **the invented number nearly reconciled the two figures being compared**, which is worse than an obvious lie because it manufactures exactly the reassurance that ends an investigation. And the standing rule about `pwtest` rows still holds — **a row count means nothing without a paired "is a runner active" check** — but `ps` cannot supply that second half, so pair it with `/proc`.
+
+**A wrapper can also forge line numbers while reporting the content correctly.** `grep -n` placed `<codex_delegation>` at line 454, and `sed -n '445,462p'` duly printed that very block — in a file where it actually lived at **line 371 of 384**. Content right, coordinates wrong, which makes it the only member of this family that survives a spot-check: you read what was printed, recognise it, and therefore believe the number that arrived with it.
+
+Harmless while reading; dangerous the moment you write. `sed -i '454s/…/…/'` edits a real line, the wrong one, and exits 0.
+
+**So do not address a file by line number.** Anchor an edit on unique surrounding text — which is what the Edit tool does — and where a line number is genuinely needed, take it from the Read tool or from python rather than from a wrapped `grep -n`.
 
 **`| tail -N` on a test summary is a false-green generator.** `vitest` prints the file tally and the test tally on adjacent lines, and `tail` keeps the wrong one:
 
@@ -452,6 +492,7 @@ Global `~/.claude/CLAUDE.md` already carries the full ruleset — do not duplica
 - Canonical call (the `-o` artifact is the source of truth, never stdout):
   `codex exec -m gpt-5.6-sol -c model_reasoning_effort="high" --json -o /path/verdict.txt "$PROMPT"`
 - 2026-08-24, this repo: the `codex:rescue` skill returned a contentless `"Complete."` twice in a row despite 51 real `tool_uses` and 10+ min runtime; a `SendMessage` resume produced the same. A *completed* status with an empty result means the delivery channel failed, not that the work is absent. One retry, then drop the codex track and verify load-bearing facts directly.
+- **A missing `-o` artifact is not a delivery failure.** The rule above turns on the word *completed*: until the run reports completion, an absent or short artifact is indistinguishable from work still in progress. Reading it as a failure nearly discarded eight minutes of a live #22 re-review on 2026-08-26. The cheapest discriminator is the log's mtime against the clock — **`stat -c '%n %s bytes  mtime %y' <log>`**, which works today. **`ls -l --time-style=…` does not**: it printed empty output for a file already known to exist, which reads exactly like "no such file". Where mtime is ambiguous, parse the `--json` log — a run still going ends on `item.started` / `command_execution` / `web_search` with only short `agent_message`s (139–206 chars), while the verdict is a single closing `agent_message` of several thousand.
 </codex_delegation>
 
 ### HTML rendering convention
