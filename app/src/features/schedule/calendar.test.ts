@@ -5,6 +5,7 @@ import {
   datesInRange,
   formatDateRange,
   isMultiDay,
+  lastDayOfMonth,
   monthGrid,
   monthPrefix,
   stepMonth,
@@ -38,6 +39,20 @@ describe('monthGrid', () => {
     expect(cells[0]).toMatchObject({ key: '2026-03-01' })
     expect(cells[8]).toMatchObject({ key: '2026-03-09' })
     expect(monthPrefix(2026, 3)).toBe('2026-03')
+  })
+})
+
+describe('lastDayOfMonth', () => {
+  it('knows how long each month is', () => {
+    expect(lastDayOfMonth(2026, 3)).toBe('2026-03-31')
+    expect(lastDayOfMonth(2026, 4)).toBe('2026-04-30')
+  })
+
+  // The month-window query uses this as its upper bound, so February in a leap
+  // year is the case that would silently drop the 29th off the calendar.
+  it('gets February right either way', () => {
+    expect(lastDayOfMonth(2024, 2)).toBe('2024-02-29')
+    expect(lastDayOfMonth(2026, 2)).toBe('2026-02-28')
   })
 })
 

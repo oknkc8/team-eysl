@@ -16,6 +16,17 @@ export function monthPrefix(year: number, month: number): string {
   return `${year}-${pad(month)}`
 }
 
+/**
+ * The last date key of a month, 'YYYY-MM-DD'.
+ *
+ * Day 0 of the next month is the last day of this one — the one piece of Date
+ * arithmetic here that string comparison cannot do, because February's length
+ * depends on the year.
+ */
+export function lastDayOfMonth(year: number, month: number): string {
+  return `${monthPrefix(year, month)}-${pad(new Date(year, month, 0).getDate())}`
+}
+
 /** '2026년 3월', the label between the two arrows. */
 export function formatMonthTitle(year: number, month: number): string {
   return `${year}년 ${month}월`

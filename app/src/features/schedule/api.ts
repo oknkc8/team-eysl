@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase'
+import { lastDayOfMonth, monthPrefix } from './calendar'
 import { shiftDays, sortUpcomingFirst, todayKey } from './order'
 import { toKind, type ActivityKind } from './kinds'
 import { dedupeRaceHistory, type RaceHistoryRow } from './raceHistory'
@@ -21,6 +22,21 @@ export type Activity = {
   kind: ActivityKind
   title: string
   activity_date: string
+  /**
+   * The last day of a multi-day activity, or null for the single-day majority.
+   *
+   * A real column rather than a `details` key, and the reasoning belongs next to
+   * the field. His app holds this in details.endDate and reads it in seven
+   * places while writing it in none — his 일정 등록 has no end-date input at all,
+   * and registerSchedule rebuilds details from scratch, so editing a multi-day
+   * race in his app silently collapses it to one day. That is the same shape as
+   * the backfilled-attendance loss CLAUDE.md already records.
+   *
+   * Ours cannot lose it the same way: this is part of ActivityInput, so an edit
+   * that failed to carry it would not compile. `end_date >= activity_date` is a
+   * CHECK, which a jsonb key could never have been given.
+   */
+  end_date: string | null
   start_time: string | null
   end_time: string | null
   place: string | null
@@ -53,7 +69,7 @@ export type ScheduleEntry = Seats & {
 }
 
 const ACTIVITY_COLUMNS =
-  'id, kind, title, activity_date, start_time, end_time, place, capacity, created_by'
+  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by'
 const APPLICATION_COLUMNS =
   'id, activity_id, application_type, wait_order, offer_status, offer_expires_at'
 
@@ -86,6 +102,7 @@ type ActivityRow = {
   kind: string
   title: string
   activity_date: string
+  end_date: string | null
   start_time: string | null
   end_time: string | null
   place: string | null
@@ -164,6 +181,27 @@ async function getMyApplications(
   return mine
 }
 
+/**
+ * Seat counts and the viewer's own application, attached to a page of rows.
+ *
+ * Shared by the list and the calendar so the two screens cannot drift into
+ * disagreeing about whether somebody holds a seat — which is exactly the split
+ * status.ts documents between his list and his home screen.
+ */
+async function withSeatsAndMine(
+  activities: Activity[],
+  memberId: string,
+): Promise<ScheduleEntry[]> {
+  if (activities.length === 0) return []
+  const ids = activities.map((a) => a.id)
+  const [seats, mine] = await Promise.all([getSeats(ids), getMyApplications(memberId, ids)])
+  return activities.map((activity) => ({
+    activity,
+    ...(seats.get(activity.id) ?? NO_SEATS),
+    mine: mine.get(activity.id) ?? null,
+  }))
+}
+
 /** Upcoming activities first, each with its seat counts and the viewer's own status. */
 export async function listSchedule(kind?: ActivityKind): Promise<ScheduleEntry[]> {
   const today = todayKey()
@@ -184,16 +222,51 @@ export async function listSchedule(kind?: ActivityKind): Promise<ScheduleEntry[]
   // The database orders by date so the limit takes the right rows; the final
   // upcoming-then-past arrangement is a display decision and stays in JS.
   const activities = sortUpcomingFirst((data ?? []).map(toActivity), today)
-  if (activities.length === 0) return []
+  return withSeatsAndMine(activities, memberId)
+}
 
-  const ids = activities.map((a) => a.id)
-  const [seats, mine] = await Promise.all([getSeats(ids), getMyApplications(memberId, ids)])
+/**
+ * Every activity that touches one calendar month.
+ *
+ * NOT listSchedule with a different filter: that one reaches back a fixed 30
+ * days from today and forward without limit, which is the right window for
+ * "무엇을 신청하지?" and the wrong one for a month a member has paged back to.
+ *
+ * The overlap test is the part worth reading twice. A multi-day race that STARTS
+ * in March and ENDS in April belongs on April's calendar too, so filtering on
+ * activity_date alone would drop it from a month it visibly occupies:
+ *
+ *   activity_date <= last day of the month     -- starts by the end of it
+ *   AND (activity_date >= first day            -- ... and either starts inside
+ *        OR end_date  >= first day)            -- ... or runs into it
+ *
+ * end_date is null on a single-day row and `end_date.gte` is false for null in
+ * PostgREST, so those rows are decided entirely by the first arm — which is what
+ * we want.
+ */
+export async function listActivitiesInMonth(
+  year: number,
+  month: number,
+  kind?: ActivityKind,
+): Promise<ScheduleEntry[]> {
+  const memberId = await getMyMemberId()
+  const first = `${monthPrefix(year, month)}-01`
+  const last = lastDayOfMonth(year, month)
 
-  return activities.map((activity) => ({
-    activity,
-    ...(seats.get(activity.id) ?? NO_SEATS),
-    mine: mine.get(activity.id) ?? null,
-  }))
+  let query = supabase
+    .from('activities')
+    .select(ACTIVITY_COLUMNS)
+    .lte('activity_date', last)
+    .or(`activity_date.gte.${first},end_date.gte.${first}`)
+    .order('activity_date', { ascending: true })
+    .order('start_time', { ascending: true, nullsFirst: true })
+    .limit(200)
+  if (kind) query = query.eq('kind', kind)
+
+  const { data, error } = await query
+  if (error) throw error
+
+  return withSeatsAndMine((data ?? []).map(toActivity), memberId)
 }
 
 /** One activity with its seat counts and the viewer's own application. */
@@ -426,6 +499,8 @@ export type ActivityInput = {
   kind: ActivityKind
   title: string
   activity_date: string
+  /** Null for a single-day activity. The CHECK refuses anything before the start. */
+  end_date: string | null
   start_time: string | null
   end_time: string | null
   place: string | null
