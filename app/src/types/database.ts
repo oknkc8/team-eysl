@@ -1215,6 +1215,16 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      save_notice_v1: {
+        Args: {
+          p_attachments: Json
+          p_body: string
+          p_expected_updated_at: string | null
+          p_notice_id: string | null
+          p_title: string
+        }
+        Returns: Json
+      }
       send_message_v1: {
         Args: {
           p_attachment_path?: string
