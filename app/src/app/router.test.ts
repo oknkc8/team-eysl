@@ -408,3 +408,24 @@ describe('board routes are guarded by tree position', () => {
     expect(guardsFor(`/board/${POST_ID}`)).not.toContain('*')
   })
 })
+
+describe('월간 활동 요약 is guarded by tree position', () => {
+  // RequireAuth and nothing more, for the same reason as /mypage above:
+  // my_monthly_activity_v1 (0034) takes no member id and derives the caller from
+  // the session, so there is no URL that reaches somebody else's month. A staff
+  // guard here would keep members off their own summary and protect nothing.
+  it('puts /activity on RequireAuth only', () => {
+    expect(guardsFor('/activity')).toEqual(['auth', '/activity'])
+  })
+
+  it('does not put a member’s own summary behind a staff guard', () => {
+    expect(guardsFor('/activity')).not.toContain('staff')
+    expect(guardsFor('/activity')).not.toContain('master')
+  })
+
+  // A literal sibling of /attendance rather than a parameterised route, so it
+  // must not be swallowed by the catch-all.
+  it('does not fall through to the catch-all', () => {
+    expect(guardsFor('/activity')).not.toContain('*')
+  })
+})
