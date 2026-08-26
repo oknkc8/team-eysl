@@ -78,6 +78,17 @@ final59-event-top5-yoy
 
 Walking `git show <sha>:sw.js | grep VERSION` across `origin/main..upstream/main` is the cheapest way to see what a batch of uploads was actually about — far faster than reading a whole-file diff, and it names his intent rather than yours.
 
+**But the walk tells you only what he meant to do — it is no evidence at all that the file ran.** Verified 2026-08-26: `sw.js` **failed to parse for 31 consecutive releases**, `final47` through `final83`. One character on line 3 — `e.waitUntil(` is closed and `self.addEventListener(` never is.
+
+```
+a2afc67  final78-swimming-team-board   node --check -> SyntaxError: missing ) after argument list
+265e14d  final85-push-true-reset       node --check -> ok   (first version that parses)
+```
+
+A service worker that throws SyntaxError never installs, so for all 31 there was no `pushManager`, no `push` event and no cache. The VERSION string kept getting a new name throughout. The releases he named `push-repair`, `push-autofix` and `push-clean-start` were **fixing push inside a file the browser refused to read.**
+
+So put one step between the walk and any conclusion drawn from it. Do not settle whether something parses by counting brackets by eye — ask `node --check`. A question about a parser is answerable by a parser and by nothing else, and running the real one sweeps every commit in the range for free.
+
 Two traps in reading his diffs. A whole-file re-upload makes reformatting look like change, so separate real behaviour from churn before concluding anything. And an upload can be **truncated**: `3d1be2b` cut `index.html` to 246 lines and `954d9a7` restored it two minutes later, so a per-commit diff across that pair shows enormous phantom changes. Diff cumulatively (`origin/main..upstream/main`) unless you specifically need one commit.
 
 ## Workflow rules
@@ -142,6 +153,14 @@ Four things that cost real time when skipped:
 - **A teammate's idle notification is not a report.** Their final message does not reach the lead automatically — ask for the full deliverable via `SendMessage` (bare name, no `@session` suffix) or it is lost.
 - **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
 - **Hand out migration numbers up front; do not let agents pick.** Checking `ls` and the ledger immediately before writing narrows the race, it does not close it — `0020` and `0024` were each claimed twice on 2026-08-25, the second collision forty-eight seconds apart, by parties who had both just checked. Resolving it afterwards means renaming a file, deleting a ledger row and re-applying, with a window where the ledger and the directory disagree. Assign `0031` to one agent and `0032` to the next in their briefs, or give only one of them the task.
+
+  **Where you look before handing a number out is the other half of the rule.** A local `ls` is not an answer — a worktree cannot see another worktree's unmerged files. That is exactly the 2026-08-26 failure: a directory listing was read in one worktree and the number judged free. There are two places to look.
+
+  - `public.schema_migrations` — everything already applied is here, and because the dev database is shared, every branch's work collects in it.
+  - `app/supabase/migrations/` on **every remote branch** — files not yet applied but whose names somebody has already claimed. **`git fetch` first**, or the refs you are reading are as stale as the listing you were trying to avoid.
+  - `git worktree list`, then that directory in each — a file written five minutes ago in a sibling worktree and not yet pushed appears in **neither** of the two places above.
+
+  **And a duplicated number raises no error anywhere today.** `schema_migrations` is keyed on the full filename rather than the number, so `0036_a.sql` and `0036_b.sql` sit down as two perfectly ordinary rows. Nothing complains on apply, in CI, or in review — which is a gap in CI rather than a law of nature, since a duplicate numeric prefix is trivially detectable by a machine that looks once. Until that check exists, reading the filenames side by side is what finds it. The number is still the lead's to assign; these are the places to look before assigning one.
 - **Never reconstruct a function body from a report.** `CREATE OR REPLACE` on an existing function is the same trap as porting the result parser: writing 0024 from a teammate's description silently dropped `p_user_agent` and changed the conflict target from `(member_id, endpoint)` to `(endpoint)` — the first would have broken the client's call, the second the device cap, and both would have applied cleanly. Read the current definition out of the migration that owns it and change only the line you came to change.
 
 ## PR review loop
@@ -153,6 +172,12 @@ Every PR follows the same cycle, and it repeats without asking for approval betw
 3. Post the verdict as a PR comment — findings and their severity, in Korean.
 4. Fix every critical and high finding, push to the same branch, and note the fix in the thread.
 5. Merge into `dev` only when **all three** hold: CI is green, no critical or high finding is left open, and anything the change claims to do has actually been exercised (a migration applied and queried back, a screen loaded, a test run). Mediums and lows may ship with a note saying why they were deferred.
+
+**One step in this loop cannot be performed at all here.** `/humanize-korean` is installed as a plugin skill (`~/.claude/plugins/cache/im-not-ai/humanize-korean/…`) and is **absent from the available-skills list**, which carries every other plugin's skills. Both the bare name and the qualified `humanize-korean:humanize-korean` answer `Unknown skill` — verified 2026-08-26 from a subagent and from the lead session alike.
+
+So there is nobody here to hand it to. Until that changes: **do the light pass by hand** — read the Korean prose once for the constructions the skill targets, fix what is stiff, and **leave the template's checkbox unticked with the reason written in it.** Do not tick it, and do not quietly skip it. The intent of the rule stands; the tool named in it does not currently exist for us, and a checklist ticked by convention has stopped being a check.
+
+Note the shape of how that was nearly recorded wrongly, **twice, in opposite directions**. First: three searches came back empty — `~/.claude/skills`, `~/.claude/commands`, the project `.claude` — and the conclusion drawn was *"not installed on this machine"* when the honest claim was much narrower, *not in the three directories checked, under the name tried.* A plugin skill lives in none of those three. Then, correcting that, the lead asserted the pass was **the lead's to run** — without trying it, and it fails there too. Both errors are the same move: a claim about the world inferred from a claim about one's own search. The rule two sections above catches both, in two halves — a check that finds nothing must first prove it was capable of finding something, and **an assertion that somebody else can do a thing is worth exactly as much as a check that they can.**
 
 A review finding is not fixed because the diff changed — it is fixed when the fix is verified the same way the defect was found. Grants were the lesson: `revoke ... from public` looked correct and left `anon` holding EXECUTE until the live ACL was queried.
 
@@ -185,6 +210,27 @@ This is the most dangerous tool failure on the list, because every other one ann
 
 `[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Prefix with `rtk proxy` to get the real output, or ask the GitHub API directly. Never let a wrapper's empty listing be the reason you skipped a step.
 
+**`gh pr create` invents a reason rather than failing.** Two measurements on 2026-08-26. It answered `No commits between dev and <branch>` for a branch that was genuinely one commit ahead — `gh api repos/oknkc8/team-eysl/compare/dev...<branch>` returned `{"status":"ahead","ahead_by":1}` at the same moment. And it answered `Head sha can't be blank, Base sha can't be blank, … Head ref must be a branch` for two refs that both existed on the remote.
+
+That is the dangerous half: not a failure but a plausible wrong answer. "No commits between" reads as *you forgot to commit*, and sends you to re-push a branch that was never the problem.
+
+So when PR creation claims there are no commits or no refs, **check with `gh api repos/<owner>/<repo>/compare/<base>...<head>` before believing it.** Two things get past it: adding `--repo oknkc8/team-eysl` explicitly, which is the cheaper thing to try first, and POSTing to `gh api repos/<owner>/<repo>/pulls` directly, which created PR #18 immediately after `pr create` had refused.
+
+**A check that finds nothing and then declares a pass is worse than no check.** The two entries above are instances of one failure, and this repository met it in six shapes on 2026-08-26 alone.
+
+- `grep` returned 11 of 12. In another case it returned 0 against files containing 19.
+- `gh pr list` printed `[]` for an open PR. `--state all` printed `[]` too.
+- `git show` piped into `sha256sum` produced `e3b0c442…` — **the hash of the empty string.** Nothing was compared; the file was never read.
+- A failed `cd` left a 0-byte file behind, and scanning that file read as "there are no Edge Functions".
+- A schema extractor matched a stub earlier in the file, printed `Tables: 0`, and then announced `UNION PRESERVED`.
+- A conflict-marker scan reported three `-- =========` comment banners as conflicts. That is the same failure running backwards — a check that finds what is not there burns an hour and can talk somebody into "resolving" a healthy file.
+
+What they share is that **the result is indistinguishable from "there was nothing to find"**. So the rule is one line: when a check returns zero, **first establish that the check was capable of finding something.** That the input was not empty, that the pattern hits a known positive, that the tool actually ran.
+
+The general form, of which the hash is the memorable instance: **anything that must not be empty gets its size or row count checked before its content is trusted.** `wc -c` on the file, `len()` on the list, a `count(*)` on the query, an `assert` on the extracted block. A comparison of two empty things succeeds.
+
+`e3b0c442…` is worth memorising because it is that failure wearing a disguise — the sha256 of the empty string, produced when `git show` writes its error to stderr and `sha256sum` hashes nothing. It is a well-formed 64-character hash and it means "nothing was read". **Treat it as an automatic failure in any verification pipeline.**
+
 **And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
 
 That makes "typecheck passes" narrower than it sounds, and it is the kind of claim that gets repeated because it was true about the part somebody happened to be looking at. **Say which tree you checked, not just that the check was green.**
@@ -192,6 +238,31 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 `npm run typecheck:functions` (`app/tsconfig.functions.json`) now covers that second tree, and it is worth knowing exactly how far it reaches. It catches everything about **our** code — wrong property names, wrong argument counts, a value of the wrong type moving between `index.ts`, `send.ts`, `payload.ts` and `endpoint.ts`. It does **not** catch us being wrong about Deno or about `web-push`: neither is installed here, so both are hand-declared in `supabase/functions/_shims/`, and a wrong declaration is a check that agrees with the mistake. `supabase-js` is the exception — it maps to the real installed package, so those types are genuine. Deno is not installed, so `deno check` remains the thing this stands in for rather than replaces, and the function's runtime behaviour still rests on the Docker edge-runtime harness under `tmp/pushverify/`, which is a test, not a typecheck.
 
 **Both typecheck commands have to be run; neither implies the other.** `npm run typecheck` reads `src`, `npm run typecheck:functions` reads `supabase/functions`, and a green one says nothing about the other tree.
+
+**`member_link_summary_v1` is left out of `src/types/database.ts` on purpose, and `npm run db:types` silently puts it back.** It is granted EXECUTE to **no client role** — the live ACL on 2026-08-26 is `{postgres=X/postgres,service_role=X/postgres}`, with no `authenticated` and no `anon`. The browser therefore cannot call it, and keeping it out of the types means calling it by mistake **breaks the compile instead of throwing at runtime in front of a 총관리자.**
+
+`db:types` overwrites the whole file, so that decision leaves no trace inside it: after regenerating, check whether this function came back and take it out again.
+
+**This is one deliberate exception, not a policy.** Do not generalise it into "strip every ungranted function" — `gen-types.sh` is supposed to describe the whole schema, and a rule that quietly narrows it would make the generated file lie about the database. If another function ever earns the same treatment, it earns its own line here.
+
+**The worktree anchor moves to a different worktree mid-session.** Seen twice on 2026-08-26. Once, `git add … && git commit` ran in **`feat/admin-claim`** instead of `fix/media-delete-orphans`; the other time, `claim2`'s `git mv` succeeded in `admin-claim` and the very next `git commit` ran in **`fix/media-delete-orphans`**. **Neither committed anything, and that is purely because the other tree happened to be clean.** Had it been dirty, somebody else's work would have gone in under our commit message.
+
+It takes two forms, and they need different detection.
+
+- **Split** — git and the shell point at different places. A relative `git add` then fails with a `pathspec` error, so it is comparatively visible.
+- **Whole-session move** — `pwd` and `git rev-parse` **agree with each other and both point somewhere wrong.** A check that compares the two will never catch this one.
+
+**Checking beforehand cannot prevent it.** The move can happen between the check and the command, so two separate calls guarantee nothing about each other. The branch has to be proven **inside the very shell that does the work.**
+
+```bash
+git branch --show-current | grep -qx <branch> && git <cmd>
+```
+
+This form is the one to use because it **refuses** when it is wrong. `git rev-parse --abbrev-ref HEAD && git <cmd>` only prints the branch and then runs anyway, so it is caught only if a person reads the output.
+
+**A guard that reports has to be read by somebody; a guard that short-circuits cannot be misread.** That distinction matters more than the command itself — whenever building a new check, decide what happens on failure first, then pick the form.
+
+The guard fired for real while this paragraph was being written, stopping a commit from landing in `feat/admin-claim`. Separately, the worktree directory itself came back on another agent's branch; what saved the work then was not the guard but **committing and pushing after every edit**. The guard protects where a commit lands, not whether the checkout is still yours.
 
 **A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
 
@@ -246,9 +317,38 @@ Four of his recent changes contradict something we had already decided or built.
 
 It sits mid-way through `loadPersistentContent()`, so everything after it is dead: waitlist offers never render, the localStorage cache never refreshes, media, member avatars and notice attachments never load. `loginMember()` awaits it inside a try whose catch shows `로그인 중 오류가 발생했습니다` — **a fresh login fails outright**. A resumed session degrades silently.
 
-`final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer. Every release from `final66` to `final80` carries it — fourteen of them.
+`final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer.
+
+**Still live at `final91` (verified 2026-08-26), which makes it 26 releases and counting.** The consumer has moved to `index.html:1631` and `loadPersistentContent()` now destructures six slots where `final64` destructured seven; a Python scan of the whole file finds the identifier on that one line and nowhere else. So **anything downstream of 1631 in his app has never run**, and none of it can be treated as reference behaviour when we port it.
 
 The lesson for us is narrow and important: **a feature we are porting may never have run in his app.** `final62-history-all-participants` and `final64-canonical-training-attendance` are both downstream of this, so reconstruct them from the `bc3523d` snapshot and do not assume he has validated their semantics against real data. Reported to the president separately; his own breakage, not exploitable, so naming the line here is safe.
+
+**And no member of his club received a push notification before `final85`** — but the reason is not the obvious one, and the obvious one is wrong.
+
+`sw.js` fails to parse in **57 consecutive versions**, `final14-auth` through `final83-push-clean-start`. The cause is one character on line 3, where `e.waitUntil(` is closed and `self.addEventListener(` never is.
+
+**A file that fails to parse is a rejected update, not an uninstall.** A member already holding a working worker keeps it; the browser simply declines the new one. So "there was no worker" would be false, and the conclusion has to rest on something else. It does:
+
+```
+480259d  final12-profile-role      parses   addEventListener('push')  0   <- last installable worker
+1d60225  final14-auth              FAILS                              0   <- break enters here
+1cf1697  final16-push-status…      FAILS                              1   <- push handling first appears
+…        56 more failing versions, all with a push handler
+265e14d  final85-push-true-reset   parses                             1   <- first file that does both
+```
+
+**The last worker that could install had no push handler, and every file that had one was rejected.** Push handling and a parsable file were never the same file until `final85`. That is why the run of five push releases — `push-repair` · `push-autofix` · `push-server-register` · `push-clean-start` — ends exactly there: he rewrote `sw.js` from scratch and the bracket went with it.
+
+Reproduce it over the whole history rather than the slice we can see; sweeping only `origin/main..upstream/main` gives 31 and reads as though the fault began at our fork point:
+
+```bash
+for c in $(git log --format=%h --reverse upstream/main -- sw.js); do
+  git show "$c:sw.js" > /tmp/sw.js
+  printf '%s ' "$c"; node --check /tmp/sw.js && echo ok
+done
+```
+
+Two things follow. His push problem and his notice-push problem have **different causes** — the first is a worker that could not install, the second is `historicalTrainingRes` throwing, and from `final66` to `final83` both were live at once. And our own `push-notify` 500 is a third, separate problem, so **there is nothing to take from those five releases.**
 
 **"이벤트" no longer means what it means in our code.** In his app the third activity kind is now labelled **기타**, and **이벤트** was reassigned to a rankings hub — a different feature entirely (출석왕 · 지각왕 · 단축왕). The database token stays `event`; only the Korean label changed, and he left the stored value alone too. Ours still renders '이벤트' for the kind, which now names the wrong thing to anyone reading both apps.
 

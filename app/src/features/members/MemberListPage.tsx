@@ -34,6 +34,9 @@ export function MemberListPage() {
               <Link to="/members/blocked" className="btn outline">
                 회원 내보내기
               </Link>
+              <Link to="/members/link" className="btn outline">
+                회원 연결
+              </Link>
             </>
           )}
         </div>

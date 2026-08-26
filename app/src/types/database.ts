@@ -380,6 +380,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -404,6 +405,7 @@ export type Database = {
           real_name?: string | null
           role?: string
           short_name?: string | null
+          signup_pass_expires_at?: string | null
           status?: string
           swim_experience?: string | null
           team_role?: string | null
@@ -428,6 +430,7 @@ export type Database = {
           real_name?: string | null
           role?: string
           short_name?: string | null
+          signup_pass_expires_at?: string | null
           status?: string
           swim_experience?: string | null
           team_role?: string | null
@@ -1103,8 +1106,13 @@ export type Database = {
       is_my_team_file_path: { Args: { p_path: string }; Returns: boolean }
       is_push_endpoint: { Args: { p_endpoint: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      link_member_login_v1: {
+        Args: { p_signup_member_id: string; p_target_member_id: string }
+        Returns: Json
+      }
       media_object_is_claimed: { Args: { p_path: string }; Returns: boolean }
       member_is_staff: { Args: { p_member: string }; Returns: boolean }
+      member_link_board_v1: { Args: never; Returns: Json }
       my_achievement_v1: { Args: { p_year?: number }; Returns: Json }
       my_monthly_activity_v1: {
         Args: { p_month: number; p_year: number }
@@ -1217,6 +1225,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1250,6 +1259,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1283,6 +1293,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1316,6 +1327,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1349,6 +1361,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1382,6 +1395,41 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_signup_pass_v1: {
+        Args: { p_allowed: boolean; p_member_id: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
