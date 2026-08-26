@@ -1083,6 +1083,11 @@ export type Database = {
       is_staff: { Args: never; Returns: boolean }
       media_object_is_claimed: { Args: { p_path: string }; Returns: boolean }
       member_is_staff: { Args: { p_member: string }; Returns: boolean }
+      my_achievement_v1: { Args: { p_year?: number }; Returns: Json }
+      my_monthly_activity_v1: {
+        Args: { p_month: number; p_year: number }
+        Returns: Json
+      }
       offer_seat_to_next_waitlister: {
         Args: { p_activity_id: string }
         Returns: string

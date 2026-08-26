@@ -341,7 +341,18 @@ test.describe('출석 체크', () => {
       await member.page.goto('/attendance')
       await waitForScreen(member.page)
       await expect(member.page.getByText(SEED.attendanceActivityTitle)).toBeVisible()
-      await expect(member.page.getByText('출석', { exact: true })).toBeVisible()
+      // Scoped to the row, not the page. A bare getByText('출석') matched a
+      // single element only while this member had exactly one attendance row;
+      // any second mark makes it ambiguous, and a member with a history is the
+      // normal case rather than the exotic one. The row is what the assertion
+      // was always about.
+      const markedRow = member.page
+        .locator('li.row')
+        .filter({ hasText: SEED.attendanceActivityTitle })
+      await expect(
+        markedRow.getByText('출석', { exact: true }),
+        '회원 화면의 출석 표시',
+      ).toBeVisible()
 
       // Changing the mark overwrites rather than adding a second row, and the
       // 지각비 control only exists once somebody is marked 지각 — his own

@@ -168,3 +168,37 @@ export function isRankingsEmpty(data: TeamEventRankings, kind: RankingKind): boo
 export function formatSeconds(seconds: number): string {
   return seconds.toFixed(2)
 }
+
+// ---------------------------------------------------------------- 메달·등급
+
+/**
+ * How many rows a ranking shows before the 전체 랭킹 보기 button
+ * (upstream:4152, and his rankToggleButton at :4226).
+ */
+export const TOP_RANK_LIMIT = 5
+
+/**
+ * 금·은·동 for the podium, the plain number for everybody else — his
+ * rankDisplay (upstream:4212-4218), shipped in final75-medal-rank.
+ *
+ * Ties make this less obvious than it looks. team_event_rankings_v1 ranks with
+ * rank(), so two members on the same count share a rank and the next distinct
+ * count skips: two 1st places are followed by a 3rd, never a 2nd. The screen
+ * then shows two 🥇 and a 🥉 with no 🥈 at all — which is correct, and is what a
+ * real podium does, but reads as a missing medal unless you know the rule.
+ */
+export const RANK_MEDALS: Readonly<Record<number, string>> = { 1: '🥇', 2: '🥈', 3: '🥉' }
+
+export function rankDisplay(rank: number): string {
+  return RANK_MEDALS[rank] ?? String(rank)
+}
+
+/** True once a list is long enough to be worth collapsing. */
+export function hasHiddenRanks(rowCount: number): boolean {
+  return rowCount > TOP_RANK_LIMIT
+}
+
+/** The button's label, which says what the next tap will do (upstream:4224). */
+export function rankToggleLabel(expanded: boolean): string {
+  return expanded ? 'TOP5만 보기' : '전체 랭킹 보기'
+}
