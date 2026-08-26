@@ -5,7 +5,7 @@ import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { creatableKinds } from './permissions'
 import { ActivityCard } from './ActivityCard'
-import { todayKey } from './order'
+import { hasFinished, todayKey } from './order'
 import {
   ACTIVITY_KINDS,
   KIND_LABEL,
@@ -85,11 +85,13 @@ function ScheduleList({ rows }: { rows: ScheduleEntry[] }) {
   return (
     <ul className="list">
       {rows.map((entry, index) => {
-        const isPast = entry.activity.activity_date < today
+        const isPast = hasFinished(entry.activity, today)
         const previous = rows[index - 1]
         // sortUpcomingFirst() guarantees every past row follows every upcoming
-        // one, so the first past row is where the divider belongs.
-        const opensPast = isPast && (!previous || previous.activity.activity_date >= today)
+        // one, so the first past row is where the divider belongs. Both sides ask
+        // hasFinished, or an in-progress multi-day race between them would put
+        // the divider in the wrong place.
+        const opensPast = isPast && (!previous || !hasFinished(previous.activity, today))
 
         return (
           <li key={entry.activity.id}>

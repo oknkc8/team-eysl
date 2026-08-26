@@ -49,7 +49,7 @@ test.describe('여러 날 일정 수정', () => {
   test.use({ storageState: STATE.admin })
 
   test('다른 항목만 고쳐도 종료일이 남는다', async ({ page, consoleWatcher }) => {
-    await page.goto(`/schedule/${SEED.multiDayRaceId}/edit`)
+    await page.goto(`/schedule/${SEED.multiDayEditRaceId}/edit`)
     await waitForScreen(page)
 
     // Read the value rather than hardcoding it: the fixture is seeded relative to
@@ -75,7 +75,7 @@ test.describe('여러 날 일정 수정', () => {
   })
 
   test('종료일이 시작일보다 빠르면 저장이 막힌다', async ({ page }) => {
-    await page.goto(`/schedule/${SEED.multiDayRaceId}/edit`)
+    await page.goto(`/schedule/${SEED.multiDayEditRaceId}/edit`)
     await waitForScreen(page)
 
     const start = await page.getByLabel('날짜').inputValue()

@@ -4,7 +4,8 @@ import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { ActivityCard } from './ActivityCard'
 import { coversDate, formatMonthTitle, monthGrid, monthPrefix, stepMonth } from './calendar'
-import { todayKey } from './order'
+import { hasFinished, todayKey } from './order'
+import { seoulYearMonth } from '../../lib/seoulDate'
 import {
   ACTIVITY_KINDS,
   KIND_LABEL,
@@ -34,10 +35,10 @@ const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'] as const
  */
 export function ScheduleCalendarPage() {
   const today = todayKey()
-  const [cursor, setCursor] = useState(() => {
-    const now = new Date()
-    return { year: now.getFullYear(), month: now.getMonth() + 1 }
-  })
+  // Seoul, not the device: on 1 September in Seoul a member on the US west
+  // coast is still on 31 August, and would open the calendar a month behind
+  // what the club considers current.
+  const [cursor, setCursor] = useState(seoulYearMonth)
   const [filter, setFilter] = useState<Filter>('all')
   // Today when the month on screen contains it, nothing otherwise. His version
   // clears the day panel on every month change (upstream:3220), so arriving at
@@ -90,17 +91,22 @@ export function ScheduleCalendarPage() {
       </div>
 
       <AsyncSection query={query} loading={<Shimmer rows={3} />} error="일정을 불러오지 못했습니다">
-        {(rows) => (
+        {({ entries, truncated }) => (
           <>
+            {truncated && (
+              <p role="alert" className="card meta">
+                이 달의 일정이 너무 많아 일부만 표시했습니다. 목록에서 확인해 주세요.
+              </p>
+            )}
             <MonthGrid
               year={cursor.year}
               month={cursor.month}
-              rows={rows}
+              rows={entries}
               today={today}
               selected={selected}
               onSelect={setSelected}
             />
-            <DayPanel rows={rows} day={selected} today={today} />
+            <DayPanel rows={entries} day={selected} today={today} />
           </>
         )}
       </AsyncSection>
@@ -214,10 +220,7 @@ function DayPanel({
         <li key={entry.activity.id}>
           {/* Dimmed by whether the activity is over, not by which day is
               selected — a three-day race is not "past" on its second day. */}
-          <ActivityCard
-            entry={entry}
-            dimmed={(entry.activity.end_date ?? entry.activity.activity_date) < today}
-          />
+          <ActivityCard entry={entry} dimmed={hasFinished(entry.activity, today)} />
         </li>
       ))}
     </ul>

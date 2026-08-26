@@ -1,6 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import { lastDayOfMonth, monthPrefix } from './calendar'
-import { shiftDays, sortUpcomingFirst, todayKey } from './order'
+import { hasFinished, shiftDays, sortUpcomingFirst, todayKey } from './order'
 import { toKind, type ActivityKind } from './kinds'
 import { dedupeRaceHistory, type RaceHistoryRow } from './raceHistory'
 
@@ -247,11 +247,27 @@ export async function listSchedule(kind?: ActivityKind): Promise<ScheduleEntry[]
  * synthetic rows spanning every shape, the four that touch March came back and
  * the single-day row in February did not.
  */
+/**
+ * The most activities one month may show.
+ *
+ * This club runs a few dozen activities a year, so the cap is not expected to
+ * bind. It exists because an unbounded month query is unbounded, and the screen
+ * has to be able to SAY when it bound — a calendar quietly missing the last
+ * three days of a month looks like an empty calendar, not a truncated one.
+ */
+const MONTH_LIMIT = 200
+
+export type MonthEntries = {
+  entries: ScheduleEntry[]
+  /** True when more activities exist in this month than were returned. */
+  truncated: boolean
+}
+
 export async function listActivitiesInMonth(
   year: number,
   month: number,
   kind?: ActivityKind,
-): Promise<ScheduleEntry[]> {
+): Promise<MonthEntries> {
   const memberId = await getMyMemberId()
   const first = `${monthPrefix(year, month)}-01`
   const last = lastDayOfMonth(year, month)
@@ -263,13 +279,19 @@ export async function listActivitiesInMonth(
     .or(`activity_date.gte.${first},end_date.gte.${first}`)
     .order('activity_date', { ascending: true })
     .order('start_time', { ascending: true, nullsFirst: true })
-    .limit(200)
+    // One more than we intend to show. Asking for exactly MONTH_LIMIT and
+    // getting MONTH_LIMIT back is indistinguishable from "that is all there is"
+    // — the extra row is the only thing that tells the two apart.
+    .limit(MONTH_LIMIT + 1)
   if (kind) query = query.eq('kind', kind)
 
   const { data, error } = await query
   if (error) throw error
 
-  return withSeatsAndMine((data ?? []).map(toActivity), memberId)
+  const rows = data ?? []
+  const truncated = rows.length > MONTH_LIMIT
+  const entries = await withSeatsAndMine(rows.slice(0, MONTH_LIMIT).map(toActivity), memberId)
+  return { entries, truncated }
 }
 
 /** One activity with its seat counts and the viewer's own application. */
@@ -423,7 +445,10 @@ export async function listApplicationSummaries(
       participants: [...bucket.participants].sort((a, b) => a.nickname.localeCompare(b.nickname)),
       // The queue order is the information here, so this one is not alphabetised.
       waitlist: [...bucket.waitlist].sort((a, b) => (a.wait_order ?? 0) - (b.wait_order ?? 0)),
-      finished: activity.activity_date < today,
+      // The staff view of an activity has to agree with the member's about
+      // whether it is over, or a 취합본 reads finished while the member can
+      // still cancel.
+      finished: hasFinished(activity, today),
     }
   })
 }

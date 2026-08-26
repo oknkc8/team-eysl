@@ -7,7 +7,7 @@
 // Greenwich — and a calendar that files a race under the wrong square is exactly
 // the kind of wrong that looks fine.
 
-import { shiftDays } from './order'
+import { lastDay, shiftDays, type Dated } from './order'
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
@@ -108,21 +108,16 @@ export function datesInRange(start: string, end: string | null | undefined): str
 }
 
 /** Whether an activity covers a day — his dateInActivityRange (upstream:3166). */
-export function coversDate(
-  activity: { activity_date: string; end_date?: string | null },
-  key: string,
-): boolean {
+export function coversDate(activity: Dated, key: string): boolean {
   const start = activity.activity_date
   if (!start) return false
-  const end = activity.end_date && activity.end_date > start ? activity.end_date : start
-  return key >= start && key <= end
+  // lastDay is the same rule hasFinished uses, so "shown on the calendar" and
+  // "still open for 신청" can no longer disagree about the same activity.
+  return key >= start && key <= lastDay(activity)
 }
 
 /** True when the activity runs over more than one day. */
-export function isMultiDay(activity: {
-  activity_date: string
-  end_date?: string | null
-}): boolean {
+export function isMultiDay(activity: Dated): boolean {
   return !!activity.end_date && activity.end_date > activity.activity_date
 }
 
