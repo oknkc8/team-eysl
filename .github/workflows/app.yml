@@ -1,0 +1,146 @@
+name: app
+
+# What "CI is green" means for the rewrite in app/.
+#
+# Until this file existed, the answer was "no secret leaked" and nothing more:
+# guard.yml is the only other workflow and every step in it greps the tree. A PR
+# could fail to compile, fail its own unit tests, and fail to build, and CI would
+# still report success. That claim was made repeatedly in this project's PR
+# comments and it was hollow. This is the gate that makes it mean something.
+#
+# guard.yml is unchanged and still runs alongside this. The two answer different
+# questions and neither substitutes for the other.
+
+on:
+  pull_request:
+  # Same trigger as guard.yml, and for a related reason: a branch that does not
+  # compile is worth knowing about when it is pushed, not when someone gets
+  # round to opening a PR. Deliberately no `paths:` filter — a path-filtered job
+  # reports "skipped", and a skipped check that branch protection requires is
+  # the same kind of hollow green this file exists to remove.
+  push:
+
+# Nothing here writes anything back. Read-only is the correct token for a job
+# that only compiles, tests, and builds.
+permissions:
+  contents: read
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # The rewrite lives here. The legacy root has no build step at all and
+        # nothing in it is checked by this job.
+        working-directory: app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the version this project is developed on (v24.14.1). There is
+          # no `engines` field and no .nvmrc, so this file is where the version
+          # is decided; if one of those is added later, read from it instead.
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # `ci`, not `install`: it fails when package.json and package-lock.json
+      # disagree instead of quietly resolving a different tree than the one the
+      # lockfile describes.
+      - name: Install
+        run: npm ci
+
+      # Two typechecks, and they are not redundant.
+      #
+      # tsconfig.json has "include": ["src", "vite.config.ts"], so it never reads
+      # supabase/functions/**. A type error in the push Edge Function was caught
+      # by nothing in this repository — it would first appear as a failed deploy
+      # or a production runtime error. tsconfig.functions.json is the config that
+      # covers that directory. Dropping either one narrows the gate without
+      # making it look any narrower.
+      - name: Typecheck the app
+        run: npm run typecheck
+
+      - name: Typecheck the Edge Functions
+        run: npm run typecheck:functions
+
+      # The Playwright specs in e2e/ cannot be run here — see the note at the
+      # bottom of this file for why — so typechecking them is the whole of their
+      # coverage in CI. That is exactly why the step is worth having: without it
+      # a type error in a spec sits undiscovered until the next person runs the
+      # suite locally against the dev project, and 83 browser tests rot quietly
+      # in the meantime. tsc needs no database and no credentials, so the one
+      # signal available for that tree is also the cheapest one in this file.
+      - name: Typecheck the e2e specs
+        run: npm run typecheck:e2e
+
+      # The offline unit tests — several hundred and growing, so no count is
+      # written here to go stale. vite.config.ts excludes e2e/** from vitest, so
+      # nothing in this step opens a browser or a database.
+      - name: Unit tests
+        env:
+          # src/lib/env.ts validates at module load and throws when these are
+          # unset, and endpoint.rule.test.ts reaches it transitively through
+          # src/features/push/api.ts. Locally that is satisfied by app/.env,
+          # which is git-ignored and therefore absent on a fresh checkout — so
+          # without these two lines this step fails on CI and passes on every
+          # developer's machine, which is the worst way for a gate to behave.
+          #
+          # Both values are deliberate nonsense and neither is a secret. They
+          # only have to satisfy z.string().url() and z.string().min(1); no test
+          # opens a network connection. The URL must not name the production
+          # project ref, and this one does not — env.ts refuses that ref outright.
+          VITE_SUPABASE_URL: https://ci-placeholder.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: ci-placeholder-not-a-real-key
+        run: npm test
+
+      # Not `npm run build`, which is `tsc -b && vite build` — the tsc half is
+      # already the "Typecheck the app" step above, and running it twice would
+      # mean a plain type error reddened two steps and told you less about which
+      # one. This is the other half. It needs no environment: the build inlines
+      # whatever VITE_ variables exist and there are none here, which is fine
+      # because nothing executes app code at build time.
+      #
+      # Read this before reordering or removing this step: it is the ONLY gate
+      # over src/sw.js. The service worker owns the `push` and
+      # `notificationclick` listeners — the entire delivery half of
+      # notifications, the thing that decides whether a club member is told
+      # about a training session at all — and it is plain JavaScript.
+      # tsconfig.json sets no `allowJs`, so tsc never opens it; a broken import
+      # there leaves all three typechecks green and reddens this step alone
+      # (demonstrated: `tsc --noEmit` exits 0 on a src/sw.js that fails to
+      # build). Its coverage here is thin even so, because a bundler catches
+      # unresolved imports and syntax errors and not a misspelled event name.
+      # Thin is still the whole of it. Drop this step and that file is checked
+      # by nothing.
+      - name: Build
+        run: ./node_modules/.bin/vite build
+
+# Two things that are deliberately absent.
+#
+# ESLint. There is none in this project: app/package.json carries no eslint
+# dependency and no lint script, and `npx eslint` here resolves to an unrelated
+# global v6 that fails on the config before it reads a line of source. Adding a
+# lint step would mean first adopting ESLint, which is a separate decision with
+# its own diff. If a brief or a checklist ever says to run lint here, that brief
+# predates this comment and is wrong.
+#
+# Playwright, meaning the RUNNING of it. app/e2e/ holds 83 real browser tests
+# and `npm run test:e2e` runs them, but they need a live Supabase project and the
+# credentials in app/.env. This repository is public. Putting the dev database
+# password into Actions secrets to make those tests run in CI would recreate, by
+# hand, exactly the exposure guard.yml exists to prevent — and it would do it on
+# the one project we can actually damage. They stay a local command, run against
+# the dev project by a person who already has the credentials. This is a
+# decision, not an oversight; please do not "fix" it.
+#
+# What is NOT excluded is typechecking those same specs: `npm run typecheck:e2e`
+# is a step above. tsc opens no connection and needs no credentials, so the
+# argument against running them says nothing against compiling them, and it is
+# the only signal that tree gets here.

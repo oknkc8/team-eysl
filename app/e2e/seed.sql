@@ -235,9 +235,11 @@ select
   m.id
 from public.members m where m.nickname = 'pwtestadmin';
 
--- The attendance roster. attendance_for_activity_v1 lists only rows at
--- application_type = 'participant', so an activity nobody applied to shows
--- 신청자가 없습니다 and there is nothing to check anyone in against.
+-- The attendance roster. Since 0030 attendance_for_activity_v1 lists the union
+-- of application_type = 'participant' and anyone already marked, so an activity
+-- with neither shows 신청자가 없습니다 and there is nothing to check anyone in
+-- against. Exactly one member applies below, and the write test marks that same
+-- member, which is why the roster it reads back is one row and not two.
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
   '55555555-5555-4555-8555-555555555555',
