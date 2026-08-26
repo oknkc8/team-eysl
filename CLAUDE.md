@@ -78,7 +78,7 @@ final59-event-top5-yoy
 
 Walking `git show <sha>:sw.js | grep VERSION` across `origin/main..upstream/main` is the cheapest way to see what a batch of uploads was actually about — far faster than reading a whole-file diff, and it names his intent rather than yours.
 
-**But the walk tells you only what he meant to do — it is no evidence at all that the file ran.** Verified 2026-08-26: `sw.js` **failed to parse for 31 consecutive releases**, `final47` through `final83`. One character on line 3 — `e.waitUntil(` is closed and `self.addEventListener(` never is.
+**But the walk tells you only what he meant to do — it is no evidence at all that the file ran.** Verified 2026-08-26: `sw.js` **failed to parse for 29 consecutive releases**, `final47` through `final83`. One character on line 3 — `e.waitUntil(` is closed and `self.addEventListener(` never is.
 
 ```
 a2afc67  final78-swimming-team-board   node --check -> SyntaxError: missing ) after argument list
@@ -492,7 +492,13 @@ The grep is for call sites, not for the definition. At `final92`, `openFunEventP
 
 **And no member of his club received a push notification before `final85`** — but the reason is not the obvious one, and the obvious one is wrong.
 
-`sw.js` fails to parse in **57 consecutive versions**, `final14-auth` through `final83-push-clean-start`. The cause is one character on line 3, where `e.waitUntil(` is closed and `self.addEventListener(` never is.
+`sw.js` fails to parse in **56 consecutive versions**, `final14-auth` through `final83-push-clean-start`. The cause is one character on line 3, where `e.waitUntil(` is closed and `self.addEventListener(` never is.
+
+*(This said **57** until it was measured. 57 is real, but it counts **commits that touched `sw.js`** and fail to parse; the sentence calls them versions, and two of those commits shared one VERSION string. Re-measured over the whole history: 73 distinct VERSION strings ever existed, **56** of them unparsable, occupying positions 11 through 66 of the sequence with no parsable version among them — so **consecutive is right, and only the number was wrong.***
+
+***Consecutive was checked by printing the sequence, not inferred from the count.** A count cannot establish consecutiveness: 56 broken out of 73 is equally consistent with them being scattered. Two separate claims live in that sentence and they need two separate measurements.*
+
+***And the unit that survives the filter is the one to quote.** Walking every commit instead of only those touching `sw.js` moves the commit figures — 74 → 80 commits carrying a `sw.js`, 57 → 62 of them unparsable — while the version count stays **56 either way**. A quantity that changes when you change which commits you look at is describing your walk; a quantity that does not is describing his releases. Same filter defect, same conclusion, as the `index.html` walk above.)*
 
 **A file that fails to parse is a rejected update, not an uninstall.** A member already holding a working worker keeps it; the browser simply declines the new one. So "there was no worker" would be false, and the conclusion has to rest on something else. It does:
 
@@ -500,16 +506,16 @@ The grep is for call sites, not for the definition. At `final92`, `openFunEventP
 480259d  final12-profile-role      parses   addEventListener('push')  0   <- last installable worker
 1d60225  final14-auth              FAILS                              0   <- break enters here
 1cf1697  final16-push-status…      FAILS                              1   <- push handling first appears
-…        56 more failing versions, all with a push handler
+…        54 more failing versions, all with a push handler
 265e14d  final85-push-true-reset   parses                             1   <- first file that does both
 ```
 
 **The last worker that could install had no push handler, and every file that had one was rejected.** Push handling and a parsable file were never the same file until `final85`. That is why the run of five push releases — `push-repair` · `push-autofix` · `push-server-register` · `push-clean-start` — ends exactly there: he rewrote `sw.js` from scratch and the bracket went with it.
 
-Reproduce it over the whole history rather than the slice we can see; sweeping only `origin/main..upstream/main` gives 31 and reads as though the fault began at our fork point:
+Reproduce it over the whole history rather than the slice we can see; sweeping only `origin/main..upstream/main` gives 29 and reads as though the fault began at our fork point. Note the path filter is **gone** from the loop below — it is what produced the 57, and `-- sw.js` answers "which commits edited this file", not "which releases shipped it broken":
 
 ```bash
-for c in $(git log --format=%h --reverse upstream/main -- sw.js); do
+for c in $(git log --format=%h --reverse upstream/main); do
   git show "$c:sw.js" > /tmp/sw.js
   printf '%s ' "$c"; node --check /tmp/sw.js && echo ok
 done
