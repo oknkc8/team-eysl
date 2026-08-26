@@ -303,6 +303,168 @@ select
   m.id
 from public.members m where m.nickname = 'pwtestadmin';
 
+-- ---------------------------------------------------------------------------
+-- A roster with depth: twelve synthetic members.
+--
+-- The four accounts above are enough to test permissions and two-party races,
+-- and not enough to test anything that only appears in bulk — a roster that
+-- scrolls, a waitlist with an order to get wrong, a ranking with a tie in it.
+-- These twelve exist for that, and they are DATA rather than accounts: no
+-- auth.users row, no password, auth_user_id left null. Nothing signs in as them,
+-- so nothing here weakens the point 0029 makes about seeded credentials in a
+-- public repository.
+--
+-- Names are unmistakably fake. The dev database also holds the real club roster
+-- imported from the club workbook, and a plausible-looking Korean name in a
+-- committed file would be indistinguishable from one of those at a glance —
+-- 'pwtest더미01' cannot be mistaken for a person.
+--
+-- The pwtest prefix is the same contract as everywhere else: cleanup.sql
+-- matches on it and removes every row below.
+-- ---------------------------------------------------------------------------
+
+create temporary table pwtest_dummies (
+  n          int primary key,
+  nickname   text not null,
+  gender     text not null,
+  birth_year smallint not null,
+  member_id  uuid not null
+) on commit drop;
+
+insert into pwtest_dummies (n, nickname, gender, birth_year, member_id)
+select n,
+       'pwtest더미' || to_char(n, 'FM00'),
+       case when n % 2 = 0 then '여' else '남' end,
+       (1985 + n)::smallint,
+       -- Fixed and readable, for the same reason the four accounts above have
+       -- fixed ids: a spec that needs /members/:memberId cannot query for one.
+       ('e0000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
+from generate_series(1, 12) as n;
+
+insert into public.members (
+  id, nickname, short_name, real_name, birth_year, gender, lesson_level, status, role
+)
+select d.member_id,
+       d.nickname,
+       d.nickname,
+       '테스트더미 ' || to_char(d.n, 'FM00'),
+       d.birth_year,
+       d.gender,
+       case d.n % 3 when 0 then '상급' when 1 then '중급' else '연수' end,
+       'approved',
+       'member'
+from pwtest_dummies d;
+
+-- ------------------------------------------------------------------ 대기 순번
+--
+-- Capacity 3 with 8 applicants, so the waitlist is five deep and has an order
+-- that can be read back. 'pwtest 정원1 훈련' above is capacity 1 and answers a
+-- different question — whether the server arbitrates a single seat — which is
+-- why it cannot also be the fixture for an ordered queue.
+--
+-- Rows are written directly rather than through apply_to_activity(): this is a
+-- starting state, and going through the RPC would make the fixture depend on
+-- the very seat handout the tests exist to check.
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  '88888888-8888-4888-8888-888888888888',
+  'training',
+  'pwtest 대기 훈련',
+  current_date + 11,
+  '20:30',
+  'pwtest 수영장',
+  3,
+  m.id
+from public.members m where m.nickname = 'pwtestadmin';
+
+insert into public.activity_applications (activity_id, member_id, application_type, wait_order)
+select
+  '88888888-8888-4888-8888-888888888888',
+  d.member_id,
+  case when d.n <= 3 then 'participant' else 'waitlist' end,
+  -- wait_order_only_for_waitlist (0001) refuses an order on a participant, and
+  -- activity_applications_wait_order_uq refuses a repeated one on a waitlist.
+  case when d.n <= 3 then null else d.n - 3 end
+from pwtest_dummies d
+where d.n <= 8;
+
+-- -------------------------------------------------------------------- 랭킹
+--
+-- team_event_rankings_v1 (0016) scopes 상반기/하반기 to the calendar year of
+-- now() in Asia/Seoul, so these dates are anchored to the current year rather
+-- than offset from today. `current_date - 60` would drift into the previous
+-- year whenever the suite runs in the first two months and the ranking would
+-- quietly see nothing.
+create temporary table pwtest_rank_days (slot int primary key, activity_id uuid, on_date date)
+on commit drop;
+
+insert into pwtest_rank_days (slot, activity_id, on_date) values
+  (1, '99999999-9999-4999-8999-999999999991',
+      make_date(extract(year from current_date)::int, 3, 2)),   -- 상반기
+  (2, '99999999-9999-4999-8999-999999999992',
+      make_date(extract(year from current_date)::int, 7, 20)),  -- 하반기
+  (3, '99999999-9999-4999-8999-999999999993',
+      make_date(extract(year from current_date)::int, 7, 30));  -- 하반기
+
+insert into public.activities (id, kind, title, activity_date, place, capacity, created_by)
+select r.activity_id, 'training', 'pwtest 랭킹 훈련 ' || r.slot, r.on_date, 'pwtest 수영장', 20, m.id
+from pwtest_rank_days r
+cross join public.members m
+where m.nickname = 'pwtestadmin';
+
+-- The tallies are deliberately uneven, and deliberately not all distinct:
+--
+--   더미01  present x3            출석 3, 지각 0
+--   더미02  present x2, late x1   출석 3, 지각 1   <- ties 더미01 at the top
+--   더미03  late x2               출석 2, 지각 2   <- top of 지각왕
+--   더미04  present x1            출석 1
+--   더미05  late x1               출석 1, 지각 1
+--
+-- The tie at the top is the point. 0016 ranks with rank() so ties share a place
+-- and the next distinct count skips one; a fixture where every total differed
+-- would pass whether or not that held.
+insert into public.attendance (activity_id, member_id, status, marked_by)
+select r.activity_id, d.member_id, v.status, adm.id
+from (values
+  (1, 1, 'present'), (1, 2, 'present'), (1, 3, 'late'), (1, 4, 'present'), (1, 5, 'late'),
+  (2, 1, 'present'), (2, 2, 'present'), (2, 3, 'late'),
+  (3, 1, 'present'), (3, 2, 'late')
+) as v(slot, n, status)
+join pwtest_rank_days r on r.slot = v.slot
+join pwtest_dummies d on d.n = v.n
+cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+
+-- 단축왕 reads records, not attendance, and only category='meet',
+-- subcategory='personal', stroke in the four pool strokes. It builds two lists:
+-- within_year (first swim of the year minus the year's best) and yoy_pb (last
+-- year's best minus this year's), so the fixture seeds one of each.
+--
+--   더미01  자유형 50  35.00 → 33.50 this year        within_year, -1.50
+--   더미02  배영   50  42.00 last year → 40.50 this   yoy_pb,      -1.50
+--   더미03  평영   50  48.00 → 47.00 this year        within_year, -1.00
+insert into public.records (
+  member_id, category, subcategory, stroke, distance_m,
+  event_name, event_date, result_display, result_centiseconds, created_by
+)
+select d.member_id, 'meet', 'personal', v.stroke, 50,
+       v.event_name, v.event_date, v.result_display, v.result_centiseconds, adm.id
+from (values
+  (1, '자유형', 'pwtest 봄 대회',
+      make_date(extract(year from current_date)::int, 3, 2), '35.00', 3500),
+  (1, '자유형', 'pwtest 여름 대회',
+      make_date(extract(year from current_date)::int, 7, 20), '33.50', 3350),
+  (2, '배영', 'pwtest 작년 대회',
+      make_date(extract(year from current_date)::int - 1, 6, 15), '42.00', 4200),
+  (2, '배영', 'pwtest 여름 대회',
+      make_date(extract(year from current_date)::int, 7, 20), '40.50', 4050),
+  (3, '평영', 'pwtest 봄 대회',
+      make_date(extract(year from current_date)::int, 3, 2), '48.00', 4800),
+  (3, '평영', 'pwtest 여름 대회',
+      make_date(extract(year from current_date)::int, 7, 20), '47.00', 4700)
+) as v(n, stroke, event_name, event_date, result_display, result_centiseconds)
+join pwtest_dummies d on d.n = v.n
+cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+
 commit;
 
 select nickname, status, role from public.members where nickname like 'pwtest%' order by nickname;

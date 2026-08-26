@@ -56,7 +56,7 @@ jobs:
       - name: Install
         run: npm ci
 
-      # Two typechecks, and they are not redundant.
+      # Four typechecks, and none of them is redundant.
       #
       # tsconfig.json has "include": ["src", "vite.config.ts"], so it never reads
       # supabase/functions/**. A type error in the push Edge Function was caught
@@ -64,6 +64,17 @@ jobs:
       # or a production runtime error. tsconfig.functions.json is the config that
       # covers that directory. Dropping either one narrows the gate without
       # making it look any narrower.
+      #
+      # scripts/ was the same gap found a second time. Nothing typechecked the
+      # workbook importer, and adding tsconfig.scripts.json immediately caught a
+      # real error the unit tests had run straight past: vitest transpiles with
+      # esbuild, which strips types without checking them, so a passing test says
+      # nothing about whether the file typechecks.
+      #
+      # Four trees each needing their own command is the shape where one quietly
+      # gets forgotten, which is why every one of them is named here rather than
+      # left to whoever remembers. "typecheck passes" is not a claim about the
+      # repository until all four have run.
       - name: Typecheck the app
         run: npm run typecheck
 
@@ -79,6 +90,13 @@ jobs:
       # signal available for that tree is also the cheapest one in this file.
       - name: Typecheck the e2e specs
         run: npm run typecheck:e2e
+
+      # scripts/ holds the workbook importer, which talks to the dev database
+      # directly. It is run by hand rather than by this workflow, so a type error
+      # here surfaces as a failed import against a live database — the worst
+      # place to find one.
+      - name: Typecheck the scripts
+        run: npm run typecheck:scripts
 
       # The offline unit tests — several hundred and growing, so no count is
       # written here to go stale. vite.config.ts excludes e2e/** from vitest, so
