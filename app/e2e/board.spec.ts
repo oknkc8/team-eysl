@@ -1,4 +1,4 @@
-import { STATE, directRequest, expect, openAs, test, waitForScreen } from './fixtures'
+import { APP_ENV, STATE, directRequest, expect, openAs, test, waitForScreen } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -64,6 +64,46 @@ async function removePost(page: Page, postId: string) {
     method: 'POST',
     body: { p_post_id: postId },
   })
+}
+
+/**
+ * A request carrying the publishable key and NO session, which is what a
+ * stranger with the bundle in their browser can send.
+ *
+ * directRequest cannot express this: it reads the page's own token and attaches
+ * it, which is the whole point of it everywhere else. anon is the one caller
+ * that has no token to read.
+ */
+async function anonRequest(
+  page: Page,
+  init: { path: string; method?: string; body?: unknown },
+): Promise<{ status: number; body: string }> {
+  return page.evaluate(
+    async ({ base, key, req }) => {
+      const response = await fetch(`${base}${req.path}`, {
+        method: req.method ?? 'GET',
+        headers: {
+          apikey: key,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation',
+        },
+        body: req.body === undefined ? undefined : JSON.stringify(req.body),
+      })
+      return { status: response.status, body: await response.text() }
+    },
+    { base: APP_ENV.url, key: APP_ENV.key, req: init },
+  )
+}
+
+/** The current `updated_at` of a post, as the version an editor would be holding. */
+async function versionOf(page: Page, postId: string): Promise<string> {
+  const read = await directRequest(page, {
+    path: `/rest/v1/board_posts?id=eq.${postId}&select=updated_at`,
+  })
+  const rows = JSON.parse(read.body) as { updated_at: string }[]
+  const version = rows[0]?.updated_at
+  if (!version) throw new Error(`no post at ${postId}: ${read.body}`)
+  return version
 }
 
 test.describe('자유게시판 — 작성과 목록', () => {
@@ -169,6 +209,164 @@ test.describe('자유게시판 — 작성과 목록', () => {
   })
 })
 
+test.describe('자유게시판 — 두 탭에서 같은 글', () => {
+  test.use({ storageState: STATE.member })
+
+  /**
+   * The lost update, which 0033 had and 0037 closes.
+   *
+   * Both tabs are the SAME member, because that is who this happens to: editing
+   * is author-only, so the two writers in a board conflict are always one person
+   * on two devices. Under 0033 the second save overwrote the first and both
+   * reported success — verified against the dev database by re-installing that
+   * version and watching tab B's text disappear.
+   */
+  test('나중에 저장한 쪽이 먼저 저장한 글을 덮어쓰지 않는다', async ({ page, consoleWatcher }) => {
+    const title = `${PREFIX} 두탭 ${Date.now()}`
+    let postId = ''
+    const tabB = await openAs(browserOf(page), STATE.member)
+
+    try {
+      postId = await writePost(page, title)
+
+      // Both tabs open the editor on the same version.
+      await page.goto(`/board/${postId}/edit`)
+      await waitForScreen(page)
+      await tabB.page.goto(`/board/${postId}/edit`)
+      await waitForScreen(tabB.page)
+
+      // Tab B saves first and lands on the post.
+      await tabB.page.getByLabel('제목').fill(`${title} B`)
+      await tabB.page.getByLabel('내용').fill('B가 먼저 저장한 본문입니다.')
+      await tabB.page.getByRole('button', { name: '수정하기' }).click()
+      await tabB.page.waitForURL(`**/board/${postId}`, { timeout: 20_000 })
+
+      // Tab A now saves the version it loaded before B wrote.
+      await page.getByLabel('제목').fill(`${title} A`)
+      await page.getByLabel('내용').fill('A가 나중에 저장한 본문입니다.')
+      await page.getByRole('button', { name: '수정하기' }).click()
+
+      // Refused, and told why — beside B's text, so the member can decide.
+      await expect(page.getByText('다른 곳에서 먼저 수정됐습니다.')).toBeVisible()
+      await expect(page.getByText('B가 먼저 저장한 본문입니다.')).toBeVisible()
+      // Still on the editor, with their own draft intact rather than discarded.
+      await expect(page).toHaveURL(new RegExp(`/board/${postId}/edit$`))
+      await expect(page.getByLabel('내용')).toHaveValue('A가 나중에 저장한 본문입니다.')
+
+      // And the row still holds B's text. This is the assertion 0033 failed.
+      const afterRefusal = await directRequest(page, {
+        path: `/rest/v1/board_posts?id=eq.${postId}&select=title,body`,
+      })
+      expect(JSON.parse(afterRefusal.body)).toEqual([
+        { title: `${title} B`, body: 'B가 먼저 저장한 본문입니다.' },
+      ])
+
+      // Having been shown B's version, saving again is a decision, and it works:
+      // the form advanced to the version it was just shown.
+      await page.getByRole('button', { name: '수정하기' }).click()
+      await page.waitForURL(`**/board/${postId}`, { timeout: 20_000 })
+      const afterDecision = await directRequest(page, {
+        path: `/rest/v1/board_posts?id=eq.${postId}&select=title,body`,
+      })
+      expect(JSON.parse(afterDecision.body)).toEqual([
+        { title: `${title} A`, body: 'A가 나중에 저장한 본문입니다.' },
+      ])
+
+      expect(withoutHttpErrors(consoleWatcher.errors), 'A 콘솔').toEqual([])
+      expect(withoutHttpErrors(tabB.console.errors), 'B 콘솔').toEqual([])
+    } finally {
+      if (postId) await removePost(page, postId)
+      await tabB.close()
+    }
+  })
+
+  /**
+   * The same refusal at the wire, where its shape is visible.
+   *
+   * The screen keys off the SQLSTATE rather than the HTTP status, so the
+   * SQLSTATE is what this pins — along with the DETAIL, because that is where
+   * the current text the member is shown actually comes from.
+   */
+  test('오래된 판본으로 보낸 수정은 PT409로 거절되고 현재 내용을 돌려준다', async ({ page }) => {
+    const title = `${PREFIX} 판본 ${Date.now()}`
+    let postId = ''
+
+    try {
+      postId = await writePost(page, title)
+      const v0 = await versionOf(page, postId)
+
+      // One accepted save moves the version on.
+      const first = await directRequest(page, {
+        path: '/rest/v1/rpc/update_board_post_v1',
+        method: 'POST',
+        body: {
+          p_post_id: postId,
+          p_title: `${title} 첫 수정`,
+          p_body: '첫 수정 본문',
+          p_expected_updated_at: v0,
+        },
+      })
+      expect(first.status).toBe(200)
+      const v1 = (JSON.parse(first.body) as { updated_at: string }).updated_at
+      expect(v1).not.toBe(v0)
+
+      // The stale one is refused.
+      const stale = await directRequest(page, {
+        path: '/rest/v1/rpc/update_board_post_v1',
+        method: 'POST',
+        body: {
+          p_post_id: postId,
+          p_title: '덮어쓰려던 제목',
+          p_body: '덮어쓰려던 본문',
+          p_expected_updated_at: v0,
+        },
+      })
+      const refusal = JSON.parse(stale.body) as { code: string; message: string; details: string }
+      expect(refusal.code).toBe('PT409')
+      expect(refusal.message).toBe('post changed elsewhere')
+      // The row it refused in favour of, which is what the screen renders.
+      expect(JSON.parse(refusal.details)).toEqual({
+        title: `${title} 첫 수정`,
+        body: '첫 수정 본문',
+        updated_at: v1,
+      })
+
+      // A conflict and a missing post are different answers, because they ask
+      // opposite things of the person editing.
+      const missing = await directRequest(page, {
+        path: '/rest/v1/rpc/update_board_post_v1',
+        method: 'POST',
+        body: {
+          p_post_id: '00000000-0000-4000-8000-000000000000',
+          p_title: '제목',
+          p_body: '본문',
+          p_expected_updated_at: v1,
+        },
+      })
+      expect((JSON.parse(missing.body) as { code: string }).code).toBe('42704')
+      expect(refusal.code).not.toBe((JSON.parse(missing.body) as { code: string }).code)
+
+      // And the check cannot be skipped by leaving the field out: the
+      // three-argument overload is gone, so there is no unchecked way in.
+      const omitted = await directRequest(page, {
+        path: '/rest/v1/rpc/update_board_post_v1',
+        method: 'POST',
+        body: { p_post_id: postId, p_title: '제목', p_body: '본문' },
+      })
+      expect(omitted.status).toBeGreaterThanOrEqual(400)
+      expect(omitted.status).toBeLessThan(500)
+
+      // Nothing above changed the row.
+      const stored = await directRequest(page, {
+        path: `/rest/v1/board_posts?id=eq.${postId}&select=title`,
+      })
+      expect(JSON.parse(stored.body)).toEqual([{ title: `${title} 첫 수정` }])
+    } finally {
+      if (postId) await removePost(page, postId)
+    }
+  })
+})
+
 test.describe('자유게시판 — 남의 글', () => {
   test.use({ storageState: STATE.member })
 
@@ -197,10 +395,19 @@ test.describe('자유게시판 — 남의 글', () => {
 
       // Now the requests the missing buttons would have sent, from their own
       // session. This is the part a hidden button cannot tell us.
+      // The version is the CURRENT one, deliberately. A stale version would make
+      // this a conflict test, and the answer would be PT409 — which would leave
+      // the authorship refusal unproven while looking like a passing refusal.
+      // 0037 checks authorship before staleness precisely so this stays sharp.
       const rpcUpdate = await directRequest(other.page, {
         path: '/rest/v1/rpc/update_board_post_v1',
         method: 'POST',
-        body: { p_post_id: postId, p_title: '가로챈 제목', p_body: '가로챈 본문' },
+        body: {
+          p_post_id: postId,
+          p_title: '가로챈 제목',
+          p_body: '가로챈 본문',
+          p_expected_updated_at: await versionOf(page, postId),
+        },
       })
       expect(rpcUpdate.status).toBe(403)
       expect(rpcUpdate.body).toContain('not your post')
@@ -244,6 +451,159 @@ test.describe('자유게시판 — 남의 글', () => {
   })
 })
 
+test.describe('자유게시판 — 승인되지 않은 사람', () => {
+  test.use({ storageState: STATE.member })
+
+  /**
+   * The approval gate and the grants, pinned in every state that has to fail.
+   *
+   * Neither property is in doubt today. Both have been LOST here before: a
+   * `revoke ... from public` once left anon holding EXECUTE, and the approval
+   * check had to be restored in 0010 after it went missing. Each was found by
+   * querying the live database after the fact, which is a thing somebody has to
+   * remember to do. This is the version that runs itself.
+   *
+   * pending / rejected / blocked are not variants of one another to
+   * current_member_id() — it asks for `status = 'approved'` and gets null for
+   * all three — but they are three different rows a human would have to reason
+   * about, and the cost of naming all three is one array entry each.
+   */
+  const REFUSED = [
+    { label: '승인 대기', state: STATE.pending },
+    { label: '거절됨', state: STATE.rejected },
+    { label: '내보내짐', state: STATE.blocked },
+  ] as const
+
+  for (const { label, state } of REFUSED) {
+    test(`${label} 회원은 글을 쓰지도 고치지도 지우지도 못한다`, async ({ page }) => {
+      const title = `${PREFIX} 승인거부 ${label} ${Date.now()}`
+      let postId = ''
+      const outsider = await openAs(browserOf(page), state)
+
+      try {
+        // A real post, owned by an approved member, so each refusal below is
+        // about the caller's standing rather than about a row that is not there.
+        postId = await writePost(page, title)
+        const version = await versionOf(page, postId)
+
+        // The outsider's browser has to LOAD the app before anything can be
+        // asked of it: directRequest reads the session out of localStorage, and
+        // a context that has never navigated is sitting on about:blank, where
+        // reading localStorage throws SecurityError rather than returning null.
+        // Landing on /pending is also the screen half of this test — RequireAuth
+        // turns all three states away from every board route.
+        await outsider.page.goto(`/board/${postId}`)
+        await outsider.page.waitForURL('**/pending', { timeout: 20_000 })
+
+        const create = await directRequest(outsider.page, {
+          path: '/rest/v1/rpc/create_board_post_v1',
+          method: 'POST',
+          body: { p_title: '들어가면 안 되는 글', p_body: '본문' },
+        })
+        expect(create.status, `${label} create`).toBe(403)
+        expect(create.body).toContain('not an approved member')
+
+        const update = await directRequest(outsider.page, {
+          path: '/rest/v1/rpc/update_board_post_v1',
+          method: 'POST',
+          body: {
+            p_post_id: postId,
+            p_title: '가로챈 제목',
+            p_body: '가로챈 본문',
+            p_expected_updated_at: version,
+          },
+        })
+        expect(update.status, `${label} update`).toBe(403)
+        expect(update.body).toContain('not an approved member')
+
+        const remove = await directRequest(outsider.page, {
+          path: '/rest/v1/rpc/delete_board_post_v1',
+          method: 'POST',
+          body: { p_post_id: postId },
+        })
+        expect(remove.status, `${label} delete`).toBe(403)
+        expect(remove.body).toContain('not an approved member')
+
+        // Reading is refused too: board_posts_read wants a member id as well.
+        const read = await directRequest(outsider.page, {
+          path: '/rest/v1/board_posts?select=id',
+        })
+        expect(JSON.parse(read.body), `${label} read`).toEqual([])
+
+        // The post is exactly as the author left it.
+        const stored = await directRequest(page, {
+          path: `/rest/v1/board_posts?id=eq.${postId}&select=title`,
+        })
+        expect(JSON.parse(stored.body)).toEqual([{ title }])
+      } finally {
+        if (postId) await removePost(page, postId)
+        await outsider.close()
+      }
+    })
+  }
+
+  test('세션 없이 publishable key만으로는 어떤 RPC도 부를 수 없다', async ({ page }) => {
+    const title = `${PREFIX} anon ${Date.now()}`
+    let postId = ''
+
+    try {
+      postId = await writePost(page, title)
+      const version = await versionOf(page, postId)
+
+      // Every write RPC, with the key a stranger reads out of the bundle.
+      for (const [what, body] of [
+        ['create', { p_title: '익명이 쓴 글', p_body: '본문' }],
+        [
+          'update',
+          {
+            p_post_id: postId,
+            p_title: '제목',
+            p_body: '본문',
+            p_expected_updated_at: version,
+          },
+        ],
+        ['delete', { p_post_id: postId }],
+      ] as const) {
+        const response = await anonRequest(page, {
+          path: `/rest/v1/rpc/${what}_board_post_v1`,
+          method: 'POST',
+          body,
+        })
+        expect(response.status, `anon ${what}`).toBeGreaterThanOrEqual(400)
+        expect(response.status, `anon ${what}`).toBeLessThan(500)
+      }
+
+      // board_post_text is granted to nobody at all — not anon, not
+      // authenticated. It is only ever called from inside the SECURITY DEFINER
+      // functions, which run as its owner and need no grant.
+      for (const [who, send] of [
+        ['anon', anonRequest],
+        ['authenticated', directRequest],
+      ] as const) {
+        const helper = await send(page, {
+          path: '/rest/v1/rpc/board_post_text',
+          method: 'POST',
+          body: { p_value: '아무거나', p_field: 'title', p_max: 120 },
+        })
+        expect(helper.status, `${who} board_post_text`).toBeGreaterThanOrEqual(400)
+        expect(helper.status, `${who} board_post_text`).toBeLessThan(500)
+      }
+
+      // Reading the table without a session, too.
+      const read = await anonRequest(page, { path: '/rest/v1/board_posts?select=id' })
+      expect(read.status).toBeGreaterThanOrEqual(400)
+
+      // Nothing anon sent changed anything.
+      const stored = await directRequest(page, {
+        path: `/rest/v1/board_posts?id=eq.${postId}&select=title`,
+      })
+      expect(JSON.parse(stored.body)).toEqual([{ title }])
+    } finally {
+      if (postId) await removePost(page, postId)
+    }
+  })
+})
+
 test.describe('자유게시판 — 운영진', () => {
   test.use({ storageState: STATE.member })
 
@@ -267,7 +627,14 @@ test.describe('자유게시판 — 운영진', () => {
       const rpcUpdate = await directRequest(admin.page, {
         path: '/rest/v1/rpc/update_board_post_v1',
         method: 'POST',
-        body: { p_post_id: postId, p_title: '운영진이 고친 제목', p_body: '운영진 본문' },
+        body: {
+          p_post_id: postId,
+          p_title: '운영진이 고친 제목',
+          p_body: '운영진 본문',
+          // Current, not stale: the claim being tested is that staff may not
+          // edit at all, which has to hold even when they are perfectly in sync.
+          p_expected_updated_at: await versionOf(page, postId),
+        },
       })
       expect(rpcUpdate.status).toBe(403)
       expect(rpcUpdate.body).toContain('not your post')

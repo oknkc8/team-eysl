@@ -6,11 +6,13 @@ import { SaveState } from '../../components/ui/SaveState'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import {
   BODY_MAX,
+  BoardConflictError,
   createBoardPost,
   getBoardPost,
   TITLE_MAX,
   updateBoardPost,
   type BoardPost,
+  type BoardPostVersion,
 } from './api'
 
 /**
@@ -86,10 +88,23 @@ function PostForm({ post }: { post?: BoardPost }) {
   const [body, setBody] = useState(post?.body ?? '')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
+  /**
+   * Which version of the post this form is editing.
+   *
+   * Seeded from the row that seeded the fields, and moved forward only when the
+   * member has been SHOWN a newer one. That is what makes a second press after a
+   * conflict a decision rather than an accident: they have read the other text
+   * by then. If the refusal arrived without it, this stays put and the next save
+   * conflicts again — which is the right answer, because nothing has been seen.
+   */
+  const [baseUpdatedAt, setBaseUpdatedAt] = useState(post?.updated_at ?? '')
+  const [conflict, setConflict] = useState<{ current: BoardPostVersion | null } | null>(null)
 
   const save = useMutation({
     mutationFn: (input: { title: string; body: string }) =>
-      post ? updateBoardPost({ postId: post.id, ...input }) : createBoardPost(input),
+      post
+        ? updateBoardPost({ postId: post.id, ...input, expectedUpdatedAt: baseUpdatedAt })
+        : createBoardPost(input),
     onMutate: () => {
       setSaveState('saving')
       setSaveError(null)
@@ -104,10 +119,18 @@ function PostForm({ post }: { post?: BoardPost }) {
       void navigate(`/board/${saved.id}`, { replace: true })
     },
     // The draft stays in the boxes on failure, so a retry does not ask the
-    // member to retype what they wrote.
+    // member to retype what they wrote. That matters most on a conflict: the
+    // member's text and the server's are both on screen, and neither has been
+    // thrown away for them.
     onError: (error) => {
       setSaveState('error')
       setSaveError(error instanceof Error ? error.message : '게시글을 저장하지 못했습니다.')
+      if (error instanceof BoardConflictError) {
+        setConflict({ current: error.current })
+        if (error.current) setBaseUpdatedAt(error.current.updated_at)
+      } else {
+        setConflict(null)
+      }
     },
   })
 
@@ -167,14 +190,56 @@ function PostForm({ post }: { post?: BoardPost }) {
         </button>
       </div>
 
-      {/* The reason, under the status. "저장 실패" says a write did not land;
-          this says whether it was the length, the authority, or a post somebody
-          else had already deleted. */}
-      {saveError && (
-        <p role="alert" className="authMsg error">
-          {saveError}
-        </p>
+      {/* A conflict gets a panel rather than a line, because it is the one
+          failure the member has to ACT on: both versions are in front of them
+          and they choose. Everything else is a sentence. */}
+      {conflict ? (
+        <ConflictPanel current={conflict.current} />
+      ) : (
+        /* The reason, under the status. "저장 실패" says a write did not land;
+           this says whether it was the length, the authority, or a post somebody
+           else had already deleted. */
+        saveError && (
+          <p role="alert" className="authMsg error">
+            {saveError}
+          </p>
+        )
       )}
     </>
+  )
+}
+
+/**
+ * What the server holds now, shown beside what the member typed.
+ *
+ * The draft is never replaced with this and this is never discarded for the
+ * draft — picking one silently is the defect 0037 exists to prevent, and doing
+ * it in the client would reintroduce it one layer up.
+ */
+function ConflictPanel({ current }: { current: BoardPostVersion | null }) {
+  return (
+    <div className="card" role="alert" style={{ marginTop: 14 }}>
+      <p className="authMsg error" style={{ marginTop: 0 }}>
+        다른 곳에서 먼저 수정됐습니다.
+      </p>
+      {current ? (
+        <>
+          <p className="fieldNote">
+            지금 저장된 내용입니다. 확인한 뒤 다시 저장하면 아래 내용을 위에 쓴 내용으로 바꿉니다.
+          </p>
+          <b>{current.title}</b>
+          <p className="body" style={{ whiteSpace: 'pre-wrap' }}>
+            {current.body}
+          </p>
+        </>
+      ) : (
+        // The refusal arrived without the current row, so there is nothing
+        // honest to show and the form is still holding a version the server has
+        // moved past. Saying so is better than a retry that cannot succeed.
+        <p className="fieldNote">
+          현재 저장된 내용을 불러오지 못했습니다. 새로고침한 뒤 다시 작성해주세요.
+        </p>
+      )}
+    </div>
   )
 }

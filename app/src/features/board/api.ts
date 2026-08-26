@@ -119,13 +119,66 @@ export async function getBoardPost(postId: string): Promise<BoardPost> {
  * which function raised it — "not an approved member" on create, "not your post"
  * on update and delete — and only the caller knows which it asked for.
  */
+/** The version of a post that a save was refused in favour of. */
+export type BoardPostVersion = { title: string; body: string; updated_at: string }
+
+/**
+ * The save was refused because the post changed underneath it (0037, PT409).
+ *
+ * Its own class rather than a message, because the screen has to do something
+ * with it that no other failure calls for: show what is on the server now,
+ * beside what the member typed, so they can reconcile the two themselves. The
+ * alternative every version of this bug takes is to pick one silently.
+ *
+ * `current` is nullable and the screen must cope: it is parsed out of the
+ * error's DETAIL, and a refusal that arrives without one is still a refusal.
+ */
+export class BoardConflictError extends Error {
+  readonly current: BoardPostVersion | null
+
+  constructor(current: BoardPostVersion | null) {
+    super('다른 곳에서 먼저 수정됐습니다.')
+    this.name = 'BoardConflictError'
+    this.current = current
+  }
+}
+
+/**
+ * 0037 puts the row it refused in favour of into the exception's DETAIL as
+ * JSON, which PostgREST hands back as `error.details`.
+ *
+ * Every field is checked rather than trusted. This is a string that crossed a
+ * database, a REST layer and a network to get here, and the screen renders what
+ * comes out of it — so a malformed detail has to degrade to "no current text"
+ * rather than to a crash inside an error handler.
+ */
+function parseConflictDetail(details: string | null): BoardPostVersion | null {
+  if (!details) return null
+  try {
+    const parsed: unknown = JSON.parse(details)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const { title, body, updated_at: updatedAt } = parsed as Record<string, unknown>
+    if (typeof title !== 'string' || typeof body !== 'string' || typeof updatedAt !== 'string') {
+      return null
+    }
+    return { title, body, updated_at: updatedAt }
+  } catch {
+    return null
+  }
+}
+
 function boardError(error: PostgrestError, refused: string): Error {
   switch (error.code) {
     case '42501':
       return new Error(refused)
     case '42704':
-      // Somebody else deleted it while this screen was showing it.
+      // Somebody else deleted it while this screen was showing it. Deliberately
+      // a different answer from the conflict below: this one says stop typing,
+      // that one says reconcile. 0037 gives them separate SQLSTATEs for exactly
+      // this reason.
       return new Error('이미 삭제된 글입니다.')
+    case 'PT409':
+      return new BoardConflictError(parseConflictDetail(error.details))
     case '22023':
       return new Error('제목과 내용을 모두 입력해주세요.')
     case '22001':
@@ -148,15 +201,28 @@ export async function createBoardPost(input: { title: string; body: string }): P
   return { ...data, author_nickname: UNKNOWN_AUTHOR }
 }
 
+/**
+ * `expectedUpdatedAt` is the `updated_at` of the version being edited, and it is
+ * required — 0037 refuses a null rather than treating it as "skip the check".
+ *
+ * It MUST be passed through as the opaque string PostgREST returned. Postgres
+ * stores microseconds and renders all six digits; a JavaScript Date holds only
+ * milliseconds, so `new Date(post.updated_at).toISOString()` would silently
+ * round 08:03:00.571693 to 08:03:00.571 and the comparison in the database
+ * would then fail against the post's own current version — every save would
+ * report a conflict with itself. Nothing on this path may construct a Date.
+ */
 export async function updateBoardPost(input: {
   postId: string
   title: string
   body: string
+  expectedUpdatedAt: string
 }): Promise<BoardPost> {
   const { data, error } = await supabase.rpc('update_board_post_v1', {
     p_post_id: input.postId,
     p_title: input.title,
     p_body: input.body,
+    p_expected_updated_at: input.expectedUpdatedAt,
   })
   // Author only. Staff are deliberately not an exception here — his
   // editBoardPost refuses a non-author outright (upstream:2639) and he made no

@@ -1371,7 +1371,12 @@ export type Database = {
       team_event_rankings_v1: { Args: never; Returns: Json }
       team_file_is_readable: { Args: { p_path: string }; Returns: boolean }
       update_board_post_v1: {
-        Args: { p_body: string; p_post_id: string; p_title: string }
+        Args: {
+          p_body: string
+          p_expected_updated_at: string
+          p_post_id: string
+          p_title: string
+        }
         Returns: {
           author_id: string
           body: string
