@@ -25,23 +25,62 @@ const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
  * do not remove it — the row still holds a seat in members, still carries
  * master_admin, and still has to be found by hand.
  */
-/**
- * Release the seed lock by killing the psql that holds it.
- *
- * The lock is a session lock, so it goes when the connection does. Killing the
- * holder is the release; there is no separate unlock to forget, and a run that
- * dies without reaching here releases it the same way.
- */
 type SeedLock = { localPid: number; backendPid: number; nonceKey: number }
 
+/**
+ * Every field is validated, localPid included.
+ *
+ * localPid used to be taken on trust while the other two were checked, and it is
+ * the one that gets handed to process.kill() on this machine. A file left by a
+ * crash an hour ago names a pid the OS has very likely reused by now, so the
+ * unvalidated path could kill an unrelated local process — the same "a recorded
+ * pid is not identity" mistake this file already fixed on the database side,
+ * still live on the client side.
+ */
 function readSeedLock(): SeedLock | null {
   try {
     const [local, backend, nonce] = fs.readFileSync(SEED_LOCK_PID_FILE, 'utf8').trim().split(/\s+/)
     const lock = { localPid: Number(local), backendPid: Number(backend), nonceKey: Number(nonce) }
-    if (!Number.isInteger(lock.backendPid) || !Number.isInteger(lock.nonceKey)) return null
+    if (
+      !Number.isInteger(lock.localPid) ||
+      lock.localPid <= 0 ||
+      !Number.isInteger(lock.backendPid) ||
+      !Number.isInteger(lock.nonceKey)
+    ) {
+      return null
+    }
     return lock
   } catch {
     return null // Setup never got far enough to take it.
+  }
+}
+
+/**
+ * Is ANY session holding the shared seed key right now?
+ *
+ * Asked only when we have no pid file of our own, where the question is not
+ * "is it ours" but "is anybody running at all". Deliberately ignores the nonce:
+ * a run we cannot identify is exactly the case here.
+ *
+ * Returns true on error, because the failure has to be safe. Not knowing whether
+ * somebody is running has to mean "do not delete", or this reintroduces the bug
+ * it was added to close.
+ */
+function sharedKeyHeldByAnyone(): boolean {
+  const sql =
+    'select count(*) from pg_locks l' +
+    " where l.locktype = 'advisory' and l.classid = 0 and l.objsubid = 1 and l.granted" +
+    `   and l.objid = ${LOCK_KEY}`
+  try {
+    const out = execFileSync('bash', ['scripts/psql.sh', '-q', '-tAX', '-c', sql], {
+      cwd: appDir,
+      stdio: 'pipe',
+      encoding: 'utf8',
+    }).trim()
+    const n = Number(out)
+    return !Number.isInteger(n) || n > 0
+  } catch {
+    return true
   }
 }
 
@@ -100,13 +139,29 @@ function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null) {
   // lock, so the pid we recorded is no longer proof of anything — the pooler may
   // have handed it to somebody else's work, and killing it would take a stranger
   // down. Only a pid that just answered "holds both our keys" is ours to end.
+  //
+  // THE PREDICATE TRAVELS WITH THE KILL. Passing a bare pid to
+  // pg_terminate_backend meant the answer came from an earlier statement on an
+  // earlier connection: true when it was asked, not necessarily true now. The
+  // hold can lapse in that gap and the pooler can hand the backend to somebody
+  // else, so the bare form could kill a stranger's work using a pid that was
+  // ours a moment ago. Selecting the pid and terminating it in ONE statement
+  // makes both halves read the same snapshot: if it stopped being ours, the
+  // select matches nothing and nothing is killed.
   if (backendPid !== null && backendPid > 0) {
+    const sql =
+      'select pg_terminate_backend(l.pid) from pg_locks l' +
+      " where l.locktype = 'advisory' and l.classid = 0 and l.objsubid = 1 and l.granted" +
+      `   and l.objid = ${LOCK_KEY} and l.pid = ${backendPid}` +
+      '   and exists (select 1 from pg_locks n' +
+      `                where n.pid = l.pid and n.locktype = 'advisory' and n.classid = 0` +
+      `                  and n.objsubid = 1 and n.granted and n.objid = ${lock.nonceKey})`
     try {
-      execFileSync(
-        'bash',
-        ['scripts/psql.sh', '-q', '-tAX', '-c', `select pg_terminate_backend(${backendPid})`],
-        { cwd: appDir, stdio: 'pipe', encoding: 'utf8' },
-      )
+      execFileSync('bash', ['scripts/psql.sh', '-q', '-tAX', '-c', sql], {
+        cwd: appDir,
+        stdio: 'pipe',
+        encoding: 'utf8',
+      })
     } catch {
       // Raced with its own expiry between the check and here. Nothing to do:
       // the lock is gone either way, which is the outcome we wanted.
@@ -233,12 +288,47 @@ export default function globalTeardown() {
     )
   }
 
+  // NO PID FILE IS NOT PERMISSION TO DELETE. The guard above was gated on
+  // `lock`, so a null lock fell straight past it into cleanup — which recreated,
+  // through the one path that skips the check, exactly the bug this file exists
+  // to prevent.
+  //
+  // The path is not hypothetical: a run that waits out LOCK_WAIT_MS and fails to
+  // acquire never writes the pid file, and Playwright runs global teardown even
+  // when global setup threw. So the run that lost the race would delete the
+  // fixtures of the run that won it, mid-suite.
+  //
+  // Without a nonce we cannot ask "is it ours", so we ask the weaker question
+  // that is still sound: is anybody holding the shared key? If somebody is, the
+  // rows are theirs by construction — we never seeded.
+  if (!lock && sharedKeyHeldByAnyone()) {
+    throw new Error(
+      'e2e: this run never recorded a seed lock, and another run holds it now, so nothing was ' +
+        'removed.\n' +
+        'That normally means this run failed to acquire the lock and never seeded — in which ' +
+        'case it has no fixtures here and the rows belong to the run still going.\n' +
+        'If you are certain nothing is running: npm run db:psql -- -f e2e/cleanup.sql',
+    )
+  }
+
+  // Checked again AFTER cleanup, while the lock is still held, because the check
+  // above and the delete below are separate statements on separate connections
+  // and the hold can lapse between them.
+  //
+  // THIS DETECTS, IT DOES NOT PREVENT. Closing the race outright would mean
+  // running cleanup.sql on the holder's own session, so the delete cannot
+  // outlive the lock that authorises it — the honest fix, and a larger change
+  // than this PR should make while it is under review. What this buys is that
+  // the survivor finds out: without it, deleting a live run's fixtures is
+  // silent and the symptom lands on them with no way back to the cause.
+  let lostLockDuringCleanup = false
   try {
     execFileSync(
       'bash',
       ['scripts/psql.sh', '-v', 'ON_ERROR_STOP=1', '-q', '-f', 'e2e/cleanup.sql'],
       { cwd: appDir, stdio: 'pipe', encoding: 'utf8' },
     )
+    lostLockDuringCleanup = lock !== null && heldBackendPid(lock) === null
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string }
     throw new Error(
@@ -253,7 +343,23 @@ export default function globalTeardown() {
     // cleanup that also kept the lock would leave the next suite waiting five
     // minutes and then failing, for a fault that was not theirs. Releasing here
     // costs the diagnosis nothing — the rows are still there to look at.
+    //
+    // heldPid is the pre-cleanup answer and may be stale by now. That is safe
+    // only because the terminate carries its own predicate: a backend that
+    // stopped being ours matches nothing and is left alone.
     if (lock) releaseSeedLock(lock, heldPid)
+  }
+
+  if (lostLockDuringCleanup) {
+    throw new Error(
+      'e2e: the seed lock lapsed WHILE cleanup was running, so the rows just deleted may have ' +
+        'belonged to another run rather than this one.\n' +
+        'This run held the lock when teardown began and no longer held it when cleanup ' +
+        `finished, which means the suite outran LOCK_HOLD_SECONDS (${LOCK_HOLD_SECONDS}s) and ` +
+        'another run may have seeded in the gap.\n' +
+        'If a suite is running elsewhere, expect it to fail with missing fixtures — it is this ' +
+        'run that broke it, not their change. Re-seed and re-run that suite.',
+    )
   }
 
   // Cleanup succeeded, so anything still here belongs to somebody. Say who.
