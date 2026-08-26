@@ -182,6 +182,7 @@ function ActivityForm({
   const [kind, setKind] = useState<ActivityKind>(activity?.kind ?? kinds[0] ?? MEMBER_KIND)
   const [title, setTitle] = useState(activity?.title ?? '')
   const [date, setDate] = useState(activity?.activity_date ?? '')
+  const [endDate, setEndDate] = useState(activity?.end_date ?? '')
   const [startTime, setStartTime] = useState(toTimeInput(activity?.start_time ?? null))
   const [endTime, setEndTime] = useState(toTimeInput(activity?.end_time ?? null))
   const [place, setPlace] = useState(activity?.place ?? '')
@@ -239,6 +240,10 @@ function ActivityForm({
   // An end before a start is the one cross-field rule worth catching here; the
   // database has no constraint for it.
   const timesOrdered = startTime === '' || endTime === '' || startTime <= endTime
+  // Empty is the ordinary case — most activities last a day. The CHECK in the
+  // database refuses a backwards range too; this is what keeps a member from
+  // meeting that refusal as a raw Postgres error.
+  const datesOrdered = endDate === '' || date === '' || date <= endDate
 
   const canSubmit =
     trimmedTitle.length > 0 &&
@@ -246,6 +251,7 @@ function ActivityForm({
     capacityValid &&
     !belowReserved &&
     timesOrdered &&
+    datesOrdered &&
     state !== 'saving'
 
   function submit() {
@@ -254,6 +260,9 @@ function ActivityForm({
       kind,
       title: trimmedTitle,
       activity_date: date,
+      // An empty box is null, not ''. A `date` column refuses the empty string,
+      // and null is what "single day" means everywhere else.
+      end_date: endDate === '' ? null : endDate,
       start_time: fromTimeInput(startTime),
       end_time: fromTimeInput(endTime),
       place: trimToNull(place),
@@ -346,6 +355,31 @@ function ActivityForm({
           }}
           style={FIELD}
         />
+
+        <label htmlFor="activity-end-date" style={{ ...LABEL, marginTop: 14 }}>
+          종료일 <span style={{ color: '#6b7178', fontWeight: 400 }}>(하루 일정은 비워두세요)</span>
+        </label>
+        <input
+          id="activity-end-date"
+          type="date"
+          value={endDate}
+          // Nothing before the start date is selectable, so the ordinary way of
+          // getting this wrong is closed in the picker rather than only caught
+          // afterwards. The CHECK still refuses it and datesOrdered still says
+          // so — a min attribute is a convenience, never the guard.
+          min={date || undefined}
+          onChange={(e) => {
+            setEndDate(e.target.value)
+            touched()
+          }}
+          style={FIELD}
+        />
+
+        {!datesOrdered && (
+          <p role="alert" style={{ fontSize: 12, color: '#a33', margin: '8px 0 0' }}>
+            종료일이 시작일보다 빠릅니다.
+          </p>
+        )}
 
         <div style={{ display: 'flex', gap: 9, marginTop: 14 }}>
           <div style={{ flex: 1 }}>

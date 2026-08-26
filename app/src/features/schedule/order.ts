@@ -1,3 +1,5 @@
+import { seoulTodayKey } from '../../lib/seoulDate'
+
 // activity_date is a bare `date` column, so it arrives as 'YYYY-MM-DD' with no
 // zone attached. Comparing those strings directly is both correct and cheaper
 // than parsing: Date('2026-09-02') is read as UTC midnight, which lands on the
@@ -6,9 +8,45 @@
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
-/** Local calendar day as 'YYYY-MM-DD' — what a member means by "today". */
+/**
+ * The club's calendar day as 'YYYY-MM-DD'.
+ *
+ * Seoul, not the device. Every activity_date is a bare `date` entered in Seoul
+ * terms and the server takes its own year there (0034), so a member reading this
+ * from another timezone would otherwise file today's training under 지난 일정 and
+ * lose the 신청 button on an activity that has not started.
+ */
 export function todayKey(now: Date = new Date()): string {
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  return seoulTodayKey(now)
+}
+
+/** An activity, as far as any date question in this app is concerned. */
+export type Dated = { activity_date: string; end_date?: string | null }
+
+/**
+ * The last day an activity occupies: its end date, or its start when there is
+ * none.
+ */
+export function lastDay(activity: Dated): string {
+  const start = activity.activity_date
+  const end = activity.end_date
+  return end && end > start ? end : start
+}
+
+/**
+ * Whether the activity is over on `today`. A multi-day activity is not over
+ * until its LAST day has passed — on day two of three it is happening.
+ *
+ * This exists because five screens asked that question as `activity_date <
+ * today` while the calendar asked it with the end date, so a three-day 대회
+ * appeared on the calendar for all three days and the detail screen treated it
+ * as finished on the morning of day two: 신청 and 취소 gone, offers hidden, the
+ * member able to see the race and do nothing about it. Putting the end date in
+ * the data fixed one of six readers. This is the rule the other five now share.
+ */
+export function hasFinished(activity: Dated, today: string): boolean {
+  if (!activity.activity_date) return false
+  return lastDay(activity) < today
 }
 
 // Number('a') is NaN rather than undefined, so a length check alone would let
@@ -53,11 +91,11 @@ export function formatTimeRange(start: string | null, end: string | null): strin
   return end ? `${hhmm(start)}–${hhmm(end)}` : hhmm(start)
 }
 
-type Dated = { activity_date: string; start_time: string | null }
+type Sortable = Dated & { start_time: string | null }
 
 // A `time` column sorts lexicographically too, and an activity with no start
 // time is treated as the beginning of its day rather than dropped to the end.
-const sortKey = (row: Dated) => `${row.activity_date}T${row.start_time ?? '00:00:00'}`
+const sortKey = (row: Sortable) => `${row.activity_date}T${row.start_time ?? '00:00:00'}`
 
 /**
  * Upcoming activities in ascending order, then past ones most-recent-first.
@@ -66,10 +104,13 @@ const sortKey = (row: Dated) => `${row.activity_date}T${row.start_time ?? '00:00
  * belongs at the top. Past activities stay reachable underneath rather than
  * being filtered away, since nothing else in the app lists them for a member.
  */
-export function sortUpcomingFirst<T extends Dated>(rows: readonly T[], today: string): T[] {
+export function sortUpcomingFirst<T extends Sortable>(rows: readonly T[], today: string): T[] {
   const upcoming: T[] = []
   const past: T[] = []
-  for (const row of rows) (row.activity_date >= today ? upcoming : past).push(row)
+  // hasFinished, not `activity_date >= today`: a three-day 대회 on its second day
+  // is happening, and filing it under 지난 일정 is the same defect the detail
+  // screen had. This one was not on the review list; it is the sixth reader.
+  for (const row of rows) (hasFinished(row, today) ? past : upcoming).push(row)
 
   upcoming.sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
   past.sort((a, b) => sortKey(b).localeCompare(sortKey(a)))
