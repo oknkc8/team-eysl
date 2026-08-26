@@ -383,22 +383,56 @@ begin
 
   -- ---- prove the discarded row is empty ------------------------------------
   -- Read off pg_constraint so a table added later is covered without anybody
-  -- remembering to come back here. conkey is unnested: a composite key is
-  -- checked one column at a time, which is stricter than the constraint and
-  -- never wrong — it can only refuse a delete that would have been fine.
+  -- remembering to come back here, and read BOTH sides of every constraint —
+  -- see the note on the unnest below for why the referenced column matters.
   for v_fk in
-    select nsp.nspname::text as schema_name,
-           src.relname::text as table_name,
-           att.attname::text as column_name
+    select con.conname::text  as constraint_name,
+           nsp.nspname::text  as schema_name,
+           src.relname::text  as table_name,
+           array_length(con.conkey, 1) as column_count,
+           att.attname::text  as column_name,
+           ref.attname::text  as referenced_column
       from pg_constraint con
       join pg_class src        on src.oid = con.conrelid
       join pg_namespace nsp    on nsp.oid = src.relnamespace
-      join lateral unnest(con.conkey) as k(attnum) on true
+      -- Two-argument unnest walks conkey and confkey in step, so each row is
+      -- a (child column, referenced column) pair rather than a child column and
+      -- a guess about its counterpart. Unnesting conkey alone — the earlier
+      -- version — compared every child column against p_signup_member_id
+      -- without asking WHICH members column the constraint points at. That is
+      -- correct today only because every foreign key here happens to reference
+      -- members(id). members.auth_user_id is unique too (0001:16), so a future
+      -- CASCADE foreign key onto that column would be tested against a member
+      -- id, match nothing, and let the DELETE cascade in silence — precisely
+      -- the failure this loop exists to prevent.
+      join lateral unnest(con.conkey, con.confkey)
+             as k(child_attnum, parent_attnum) on true
       join pg_attribute att    on att.attrelid = con.conrelid
-                              and att.attnum   = k.attnum
+                              and att.attnum   = k.child_attnum
+      join pg_attribute ref    on ref.attrelid = con.confrelid
+                              and ref.attnum   = k.parent_attnum
      where con.contype   = 'f'
        and con.confrelid = 'public.members'::regclass
   loop
+    -- AN UNSUPPORTED SHAPE RAISES RATHER THAN PASSING. For a composite key, or
+    -- one referencing any column other than id, this function cannot say which
+    -- value to look for — and a check that cannot answer must not answer
+    -- "clear". Refusing the link is recoverable and loud; a silent cascade is
+    -- neither.
+    if v_fk.column_count <> 1 then
+      raise exception
+        '% (%.%)는 복합 외래키라 연결 안전성을 확인할 수 없습니다',
+        v_fk.constraint_name, v_fk.schema_name, v_fk.table_name
+        using errcode = '42501';
+    end if;
+    if v_fk.referenced_column <> 'id' then
+      raise exception
+        '% (%.%)가 members.%를 참조해 연결 안전성을 확인할 수 없습니다',
+        v_fk.constraint_name, v_fk.schema_name, v_fk.table_name,
+        v_fk.referenced_column
+        using errcode = '42501';
+    end if;
+
     execute format('select exists (select 1 from %I.%I where %I = $1)',
                    v_fk.schema_name, v_fk.table_name, v_fk.column_name)
        into v_found
