@@ -41,6 +41,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           details: Json
+          end_date: string | null
           end_time: string | null
           id: string
           kind: string
@@ -55,6 +56,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           details?: Json
+          end_date?: string | null
           end_time?: string | null
           id?: string
           kind: string
@@ -69,6 +71,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           details?: Json
+          end_date?: string | null
           end_time?: string | null
           id?: string
           kind?: string

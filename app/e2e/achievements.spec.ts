@@ -116,7 +116,10 @@ test.describe('메달 · 등급', () => {
     await page.goto('/events/attendance')
     await waitForScreen(page)
 
-    await expect(page.getByRole('heading', { name: '출석왕' })).toBeVisible()
+    // level 1, because the ranking sections below render <h3>누적 출석왕</h3> and
+    // two more like it — this matched four headings once the rankings had data,
+    // and passed only while that shared data happened to be empty.
+    await expect(page.getByRole('heading', { name: '출석왕', level: 1 })).toBeVisible()
 
     // The badge keeps the rank in its aria-label even though it paints a medal,
     // so this locates the podium by meaning and then checks the glyph. A screen

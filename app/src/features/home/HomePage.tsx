@@ -5,7 +5,7 @@ import { useCurrentUser } from '../auth/useCurrentUser'
 import { isStaff } from '../auth/schema'
 import { getLatestNotice, type Notice } from '../notices/api'
 import { ActivityCard } from '../schedule/ActivityCard'
-import { todayKey } from '../schedule/order'
+import { hasFinished, todayKey } from '../schedule/order'
 import { viewerKey } from '../../lib/queryKeys'
 import { useSession } from '../auth/SessionProvider'
 import { listSchedule, type ScheduleEntry } from '../schedule/api'
@@ -61,7 +61,9 @@ export function HomePage() {
   // means what it says, and an activity a member attended last week is not the
   // one they need reminding about.
   const rows = scheduleQuery.data
-  const upcoming = rows?.filter((entry) => entry.activity.activity_date >= todayKey())
+  // Not finished, rather than not yet started: a race in progress is exactly
+  // what 다가오는 일정 should still be showing.
+  const upcoming = rows?.filter((entry) => !hasFinished(entry.activity, todayKey()))
   // Already sorted nearest-first, so the first match is the next one.
   const nextMine =
     upcoming === undefined ? undefined : (upcoming.find((entry) => entry.mine !== null) ?? null)

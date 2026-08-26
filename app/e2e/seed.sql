@@ -557,6 +557,39 @@ from (values
 cross join (select id from public.members where nickname = 'pwtestmember') mem
 cross join (select id from public.members where nickname = 'pwtestadmin') adm;
 
+-- ---------------------------------------------------------------------------
+-- 다중일 대회 fixture
+-- ---------------------------------------------------------------------------
+-- A race that runs three days, for the calendar and for the edit path that must
+-- not lose the range.
+--
+-- created_by is pwtestadmin so cleanup.sql removes it with the rest (it deletes
+-- activities by created_by), and 대회 rather than 훈련 because editing a race is
+-- staff-only — which is what makes the edit test exercise the real permission
+-- path rather than a member-owned 기타.
+--
+-- Days 10-12 of the current month: every month has them, so the calendar test
+-- opens on today's month and finds the race without month arithmetic, and the
+-- 9th is always a real day on which the race must NOT appear.
+insert into public.activities (id, kind, title, activity_date, end_date, place, created_by)
+select v.id::uuid,
+       'race',
+       v.title,
+       make_date(extract(year from current_date)::int, extract(month from current_date)::int, v.d1),
+       make_date(extract(year from current_date)::int, extract(month from current_date)::int, v.d2),
+       'pwtest 수영장',
+       adm.id
+  from (values
+    -- Read-only: the calendar test asserts which squares it occupies.
+    ('99999999-9999-4999-8999-0000000000b1', 'pwtest 다중일 대회', 10, 12),
+    -- Written to: the edit tests save through the real form. A separate row,
+    -- because playwright.config sets fullyParallel — a test that saves and a test
+    -- that reads would otherwise race over one activity, which is the reason the
+    -- block at the foot of this file gives every write test a fixture of its own.
+    ('99999999-9999-4999-8999-0000000000b2', 'pwtest 다중일 수정 대회', 20, 22)
+  ) as v(id, title, d1, d2)
+ cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+
 commit;
 
 select nickname, status, role from public.members where nickname like 'pwtest%' order by nickname;

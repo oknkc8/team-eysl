@@ -6,7 +6,7 @@ import { SaveState } from '../../components/ui/SaveState'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { canEditActivity } from './permissions'
 import { formatCountdown, msUntil } from './countdown'
-import { formatDateLabel, formatTimeRange, todayKey } from './order'
+import { formatDateLabel, formatTimeRange, hasFinished, todayKey } from './order'
 import { viewerKey } from '../../lib/queryKeys'
 import { useSession } from '../auth/SessionProvider'
 import {
@@ -90,7 +90,9 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
   const { activity, mine } = entry
   const { user } = useCurrentUser()
   const time = formatTimeRange(activity.start_time, activity.end_time)
-  const isPast = activity.activity_date < todayKey()
+  // hasFinished, not the start date: a three-day 대회 keeps its 신청 and 취소
+  // controls through day three.
+  const isPast = hasFinished(activity, todayKey())
   // Staff for anything, the creator for their own 기타 — the same question
   // activities_member_event_update asks, asked here only to decide what to draw.
   // A past activity keeps the link: fixing a wrong time after the fact is the

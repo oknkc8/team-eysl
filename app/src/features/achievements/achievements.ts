@@ -236,23 +236,10 @@ export function momentEventLabel(moment: Pick<PbMoment, 'stroke' | 'distance'>):
 
 // ------------------------------------------------------------------ 월간 요약
 
-/**
- * Today's year and month in Asia/Seoul.
- *
- * The device clock is the wrong source here. 0034 takes its year in Asia/Seoul
- * (`now() at time zone 'Asia/Seoul'`), so a member reading this from another
- * timezone on the 1st — or late on the last day of a month — would open on a
- * month the server does not consider current, and meet an empty summary that
- * looks like a bug rather than like a different month.
- *
- * `en-CA` is used only because it formats as YYYY-MM-DD, the one widely
- * available locale that yields sortable, unambiguous parts without assembling
- * them by hand.
- */
-export function seoulYearMonth(now: Date = new Date()): { year: number; month: number } {
-  const [year, month] = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' }).split('-')
-  return { year: Number(year), month: Number(month) }
-}
+// seoulYearMonth used to live here. It moved to lib/seoulDate.ts once the
+// calendar needed the same answer and reproduced the same device-clock bug a
+// few files away — re-exported so this feature's imports stay put.
+export { seoulYearMonth } from '../../lib/seoulDate'
 
 /** `2026년 3월` — the label between the two arrows. */
 export function formatMonthLabel(year: number, month: number): string {
