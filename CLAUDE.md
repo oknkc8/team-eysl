@@ -203,6 +203,8 @@ This is the most dangerous tool failure on the list, because every other one ann
 
 `[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Prefix with `rtk proxy` to get the real output, or ask the GitHub API directly. Never let a wrapper's empty listing be the reason you skipped a step.
 
+**`gh`에는 `--repo`를 명시한다.** 2026-08-26: `rtk proxy gh pr create --base dev --head chore/hygiene-and-lessons …`가 `Head sha can't be blank, Base sha can't be blank, No commits between …, Head ref must be a branch`로 실패했다. 두 ref는 원격에 멀쩡히 있었다. `--repo oknkc8/team-eysl`을 붙이니 그대로 통과했다. 같은 래퍼, 같은 부류이고, **존재하는 ref를 두고 "ref가 비었다"고 말하기 때문에 원인을 엉뚱한 데서 찾게 만든다** — 브랜치를 다시 푸시하거나 커밋을 의심하기 전에 `--repo`부터 붙여 본다.
+
 **아무것도 찾지 못한 뒤 통과를 선언하는 검사는 검사가 없는 것보다 나쁘다.** 위의 두 항목은 이 한 가지 고장의 사례이고, 이 저장소는 2026-08-26 하루에만 여섯 가지 모습으로 이것을 만났다.
 
 - `grep`이 12개 중 11개만 반환했다. 다른 경우에는 19개가 든 파일들에 대해 0개를 반환했다.
