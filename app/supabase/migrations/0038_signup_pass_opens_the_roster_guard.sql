@@ -1,4 +1,4 @@
--- 0037 — 가입 허용을 받은 신청자는 로스터 가드를 통과한다.
+-- 0038 — 가입 허용을 받은 신청자는 로스터 가드를 통과한다.
 --
 -- ============================================================================
 -- WHY THIS MIGRATION EXISTS AT ALL
@@ -27,12 +27,19 @@
 -- ============================================================================
 --
 -- The guard now asks a second question: does a matching roster row hold a live
--- signup pass? Everything else in register_member_v1 is untouched -- the format
--- check, the invisible-character check, the NFC normalisation, the rate limit,
--- the bcrypt cost, the ordering of the quota increment. This file is a slice of
--- 0032 lines 77-534 with six lines replaced; the diff was taken against the
--- original before it was written, and it removes exactly the `if exists (...)`
--- head and nothing else.
+-- signup pass that could still be linked to? And on the way out, a successful
+-- signup spends that pass. Everything else in register_member_v1 is untouched --
+-- the format check, the invisible-character check, the NFC normalisation, the
+-- rate limit, the bcrypt cost, the ordering of the quota increment.
+--
+-- MEASURED AGAINST 0032 lines 77-534, not asserted: 6 lines removed, 86 added,
+-- across 4 unchanged blocks. The 6 removed are exactly the `if exists (...)`
+-- head. The 86 added are the counting guard, the consume, and the comments for
+-- both. An earlier version of this paragraph said "six lines replaced and
+-- nothing else", which was true when written and false the moment the review
+-- fixes landed. Re-measure with difflib after editing here and put the real
+-- numbers back: a count that has drifted is worse than no count, because it
+-- reads as evidence.
 --
 -- That is not tidiness, it is 0024's lesson. Rewriting a function body from a
 -- description silently dropped a parameter and changed a conflict target, and
@@ -50,13 +57,17 @@
 --
 -- Two consequences we accept on purpose:
 --
--- 1. The pass is NOT consumed by a successful signup. It stays live for its
---    window. Re-using the same nickname hits the unique index and returns the
---    same 'already_registered', so the practical opening is a second signup
---    under a different 지역 -- which lands as another pending row on the same
---    admin's board, next to the first, for the admin who just spoke to the
---    person offline. Consuming it instead would strand an applicant whose first
---    attempt failed for any reason, with no way back except another admin.
+-- 1. The pass IS consumed by a successful signup, and saying so reverses what
+--    an earlier draft of this header argued. That draft claimed consuming would
+--    strand an applicant whose first attempt failed. It does not: a failed
+--    attempt creates no account, and the consume sits after both auth inserts,
+--    so nothing is spent by a refusal. There was never a trade to make.
+--
+--    Leaving it unconsumed had a real cost. For the whole window, anyone who
+--    knows the name, birth year and gender could register under an arbitrary
+--    지역 -- repeatedly, and could take the nickname the real member intended.
+--    MemberLinkPage.tsx tells the admin 한 건이 통과; consuming is what makes
+--    that sentence true rather than something we would have had to reword.
 --
 -- 2. During the window, a matching applicant learns they match, because they
 --    are let through instead of refused. That is a narrower oracle than the one
@@ -95,10 +106,13 @@ declare
   v_attempts int;
   v_retry    int;
   v_auth_id  uuid := gen_random_uuid();
-  -- 0037. Counted rather than tested with exists(), so that a namesake
+  -- 0038. Counted rather than tested with exists(), so that a namesake
   -- cannot refuse the one applicant an admin has actually let through.
   v_roster_matches int;
   v_passed_matches int;
+  -- The rows whose pass this signup is about to spend. Captured in the same
+  -- pass as the count so the check and the consume cannot drift apart.
+  v_passed_ids     uuid[];
 begin
   -- ============================================================================
   -- NORMALISE FIRST. This line is a security control, not tidiness.
@@ -430,7 +444,7 @@ begin
   -- construction costs a function call per row on a table that holds a swimming
   -- club.
   --
-  -- 0037 ASKS A SECOND QUESTION HERE. Matching the roster is no longer reason
+  -- 0038 ASKS A SECOND QUESTION HERE. Matching the roster is no longer reason
   -- enough to refuse. An admin who has confirmed offline that this applicant IS
   -- that roster member issues a signup pass (set_signup_pass_v1, 0035), and a
   -- live pass lets them through to create the pending row that the admin then
@@ -448,9 +462,23 @@ begin
   -- `> now()` and not `is not null`: a withdrawn pass is stored as NULL and an
   -- expired one as a past timestamp, and NULL > now() is NULL, so filter counts
   -- neither. One comparison covers both ways a pass stops being live.
+  --
+  -- A LIVE PASS IS NOT ENOUGH ON ITS OWN: the row must still be one a link could
+  -- be made to. set_signup_pass_v1 checks standing when it issues (0035), but
+  -- nothing clears the pass when a status changes afterwards — set_member_status_v1
+  -- (0010) and set_member_blocked_v1 (0011) do not touch this column. Without
+  -- the two conditions below, a member blocked the day after being granted a
+  -- pass would keep generating pending accounts until it expired. Asking here
+  -- rather than editing those RPCs keeps the decision in the one place that
+  -- makes it, and stays correct for any future code that sets a status.
   select count(*),
-         count(*) filter (where m.signup_pass_expires_at > now())
-    into v_roster_matches, v_passed_matches
+         count(*) filter (where m.signup_pass_expires_at > now()
+                            and m.auth_user_id is null
+                            and m.status in ('approved', 'pending')),
+         array_agg(m.id) filter (where m.signup_pass_expires_at > now()
+                            and m.auth_user_id is null
+                            and m.status in ('approved', 'pending'))
+    into v_roster_matches, v_passed_matches, v_passed_ids
     from public.members m
    where lower(normalize(m.short_name, nfc)) = lower(v_parts[1])
      and m.birth_year % 100                  = v_parts[2]::int
@@ -550,6 +578,31 @@ begin
       return jsonb_build_object('ok', false, 'reason', 'already_registered',
         'message', '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.');
   end;
+
+  -- ============================================================================
+  -- SPEND THE PASS. Reaching this line means the account exists.
+  -- ============================================================================
+  --
+  -- POSITION IS THE WHOLE POINT. Every refusal above returns, and the
+  -- unique_violation arm returns from inside the block, so this runs only after
+  -- auth.users and auth.identities both took the insert. A pass therefore
+  -- survives every failed attempt — a taken nickname, a short password, a rate
+  -- limit — and is spent exactly once, by the attempt that produced an account.
+  --
+  -- Only the rows the guard actually counted as passed, by the ids it captured
+  -- in the same query. If two roster rows matched the triple and one held the
+  -- pass, that is the one cleared; the namesake's row is untouched because it
+  -- never had one.
+  --
+  -- updated_at is deliberately NOT bumped. getApprovalQueue orders 최근 처리한
+  -- 회원 by it, and spending a pass is not a change to anybody's standing —
+  -- touching it would float an unrelated roster member to the top of a list
+  -- about approvals.
+  if v_passed_ids is not null then
+    update public.members
+       set signup_pass_expires_at = null
+     where id = any (v_passed_ids);
+  end if;
 
   -- Nothing about the created row is returned. The caller already knows the
   -- nickname it sent and derives the address the same way this function did; the
