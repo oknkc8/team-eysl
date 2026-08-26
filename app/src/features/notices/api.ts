@@ -57,6 +57,33 @@ export async function listNotices(): Promise<NoticeSummary[]> {
   }))
 }
 
+/**
+ * The newest notice, for the home screen's hero card.
+ *
+ * Not `listNotices()[0]`: that query leaves `body` out on purpose — a hundred
+ * notice bodies is a lot to send a phone for a list that prints none of them —
+ * and the hero shows the first line of the body under the title, the way his
+ * renderHome does (upstream:2470). One row with its body is cheaper than a
+ * hundred without.
+ *
+ * Null rather than a throw when the club has never posted: an empty notices
+ * table is a state the hero draws, not a failure.
+ */
+export async function getLatestNotice(): Promise<Notice | null> {
+  const { data, error } = await supabase
+    .from('notices')
+    .select(NOTICE_COLUMNS)
+    .order('created_at', { ascending: false })
+    // Tiebreak, for the same reason listComments has one: two notices posted in
+    // the same second would otherwise swap places between refetches and the
+    // hero would flicker between them.
+    .order('id', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  return data
+}
+
 export async function getNotice(noticeId: string): Promise<Notice> {
   const { data, error } = await supabase
     .from('notices')

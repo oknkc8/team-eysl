@@ -49,7 +49,7 @@ export function ResourceListPage() {
   }
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
+    <div className="page">
       <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: 0 }}>자료실</h1>
       <p style={{ fontSize: 12, color: '#6b7178', margin: '6px 0 0', lineHeight: 1.6 }}>
         폴더에 속하지 않은 공용 자료입니다. 사진과 영상은{' '}

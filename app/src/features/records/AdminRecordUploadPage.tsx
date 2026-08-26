@@ -82,8 +82,8 @@ export function AdminRecordUploadPage() {
   const rosterQuery = useQuery({ queryKey: ['record-match-roster'], queryFn: listMatchRoster })
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
-      <Link to="/records" style={{ fontSize: 12, color: '#6b7178', textDecoration: 'none' }}>
+    <div className="page">
+      <Link to="/records" className="backLink">
         ← 기록
       </Link>
       <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: '12px 0 16px' }}>결과지 업로드</h1>

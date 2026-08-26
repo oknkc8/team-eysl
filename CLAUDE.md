@@ -177,6 +177,10 @@ It was found by planting stale offers and waiting for a real scheduled tick. **A
 
 Reproducing it needs a staff session **and** two or more members at once, which is why 381 unit tests never saw it and why it took a browser. Two rules fall out. Any query whose result count depends on the caller's role must filter by identity explicitly — `.eq('auth_user_id', …)`, not "the policy will handle it"; `schedule/api.ts` already said this in a comment and `auth/api.ts` was the one place that forgot. And **a swallowed query error looks exactly like a slow network**: if a screen can render a spinner forever, something is discarding an error.
 
+**`grep` under-reports in this environment, and a false "no matches" reads exactly like a clean result.** A wrapper reformats grep output here, and it drops hits: `grep -l "default privileges" app/supabase/migrations/*.sql` returned 11 files where a Python scan of the same glob found 12. Another agent hit a worse case the same day — 0 matches against files that contained 19.
+
+This is the most dangerous tool failure on the list, because every other one announces itself. An absent match is indistinguishable from an absence, and "I grepped and found nothing" has been offered as evidence throughout this project. **Cross-check any load-bearing negative with a second tool** — Python, `rg` directly, or reading the file — before writing "there is no X".
+
 **And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
 
 That makes "typecheck passes" narrower than it sounds, and it is the kind of claim that gets repeated because it was true about the part somebody happened to be looking at. **Say which tree you checked, not just that the check was green.**
@@ -184,6 +188,12 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 `npm run typecheck:functions` (`app/tsconfig.functions.json`) now covers that second tree, and it is worth knowing exactly how far it reaches. It catches everything about **our** code — wrong property names, wrong argument counts, a value of the wrong type moving between `index.ts`, `send.ts`, `payload.ts` and `endpoint.ts`. It does **not** catch us being wrong about Deno or about `web-push`: neither is installed here, so both are hand-declared in `supabase/functions/_shims/`, and a wrong declaration is a check that agrees with the mistake. `supabase-js` is the exception — it maps to the real installed package, so those types are genuine. Deno is not installed, so `deno check` remains the thing this stands in for rather than replaces, and the function's runtime behaviour still rests on the Docker edge-runtime harness under `tmp/pushverify/`, which is a test, not a typecheck.
 
 **Both typecheck commands have to be run; neither implies the other.** `npm run typecheck` reads `src`, `npm run typecheck:functions` reads `supabase/functions`, and a green one says nothing about the other tree.
+
+**A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
+
+The local pass is therefore not evidence about CI, and the failure direction is the awkward one: it is green for everyone who could notice and red only in the place nobody watches until a PR is already open. Reading the workflow would never have found it. It took copying the tree without `.env` and running the suite there, which is the general move — **to predict a fresh checkout, make one.**
+
+`.github/workflows/app.yml` supplies two synthetic values scoped to the Unit tests step alone rather than to the job. Job-wide would have been shorter and would have quietly guaranteed that a step which genuinely needs real configuration passes anyway; granting the env only where the need was demonstrated keeps every other step failing honestly.
 
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
@@ -224,9 +234,17 @@ Line numbers above are against **`origin/main:index.html` (3,846 lines)** unless
 
 **Not verifiable from this repo** (needs the president's Supabase dashboard): whether RLS actually enforces anything, the source of all 14 RPCs and the 3 Edge Functions, and whether `member_history_v4` returns real per-event attendance or merely synthesizes from the `members.historical_*` counters. Treat every claim about server-side enforcement as an assumption until checked — and do not probe production authorization to find out, since that system isn't ours.
 
-## Where upstream has moved (verified 2026-08-25)
+## Where upstream has moved (verified 2026-08-25, extended 2026-08-26)
 
 Four of his recent changes contradict something we had already decided or built. The scope rule applies to these exactly as it does to the rest: what he shipped **is** the spec, and where we differ, we move.
+
+**But his diff is intent, not observed behaviour — check before you treat it as a spec.** `upstream/main:index.html:1624` reads `historicalTrainingRes?.error ? [] : (historicalTrainingRes?.data||[])`, and that identifier appears **exactly once in the whole file** — at that use. Nothing declares it. Optional chaining guards a null *value*, not an undeclared binding, so the line throws `ReferenceError` on every call.
+
+It sits mid-way through `loadPersistentContent()`, so everything after it is dead: waitlist offers never render, the localStorage cache never refreshes, media, member avatars and notice attachments never load. `loginMember()` awaits it inside a try whose catch shows `로그인 중 오류가 발생했습니다` — **a fresh login fails outright**. A resumed session degrades silently.
+
+`final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer. Every release from `final66` to `final80` carries it — fourteen of them.
+
+The lesson for us is narrow and important: **a feature we are porting may never have run in his app.** `final62-history-all-participants` and `final64-canonical-training-attendance` are both downstream of this, so reconstruct them from the `bc3523d` snapshot and do not assume he has validated their semantics against real data. Reported to the president separately; his own breakage, not exploitable, so naming the line here is safe.
 
 **"이벤트" no longer means what it means in our code.** In his app the third activity kind is now labelled **기타**, and **이벤트** was reassigned to a rankings hub — a different feature entirely (출석왕 · 지각왕 · 단축왕). The database token stays `event`; only the Korean label changed, and he left the stored value alone too. Ours still renders '이벤트' for the kind, which now names the wrong thing to anyone reading both apps.
 

@@ -65,7 +65,7 @@ export function EventRankingPage() {
 
 function Page({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
+    <div className="page">
       <header style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <Link
           to="/events"

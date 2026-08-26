@@ -188,8 +188,8 @@ export function NotificationSettingsPage() {
   if (!user) return null
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
-      <Link to="/" style={{ fontSize: 12, color: '#6b7178', textDecoration: 'none' }}>
+    <div className="page">
+      <Link to="/" className="backLink">
         ← 홈
       </Link>
       <h1 style={{ fontSize: 26, letterSpacing: -1.2, margin: '12px 0 0' }}>알림 설정</h1>

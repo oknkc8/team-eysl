@@ -55,10 +55,10 @@ export function MemberActivityPage() {
   const nickname = member.data?.member.nickname
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
+    <div className="page">
       <Link
         to={`/members/${memberId}`}
-        style={{ fontSize: 12, color: '#6b7178', textDecoration: 'none' }}
+        className="backLink"
       >
         ← 회원 상세
       </Link>

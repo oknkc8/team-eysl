@@ -30,8 +30,8 @@ export function DmPage() {
   if (!user) return null
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
-      <Link to="/chat" style={{ fontSize: 12, color: '#6b7178', textDecoration: 'none' }}>
+    <div className="page">
+      <Link to="/chat" className="backLink">
         ← 채팅
       </Link>
 

@@ -13,7 +13,7 @@ const ENTRIES: { kind: RankingKind; desc: string }[] = [
 
 export function EventHubPage() {
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
+    <div className="page">
       <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: 0, color: '#111317' }}>이벤트</h1>
       <nav style={{ display: 'grid', gap: 9, marginTop: 16 }}>
         {ENTRIES.map(({ kind, desc }) => (
