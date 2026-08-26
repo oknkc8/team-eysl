@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:functions": "tsc -p tsconfig.functions.json",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
