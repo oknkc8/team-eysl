@@ -86,6 +86,14 @@ export const STAMP_PATH = '/eysl-e2e-stamp.txt'
 export const STAMP_VALUE = HERE
 
 /**
+ * POSIX single-quoting: everything is literal inside '…', and the only thing
+ * that cannot appear is a single quote, which is closed, escaped and reopened.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
+/**
  * Browser smoke coverage for the rewrite.
  *
  * The unit suite is 381 pure-function tests and never mounts a component, so
@@ -141,9 +149,16 @@ export default defineConfig({
     // starts, so anything answering on this port either serves our stamp or is
     // not us. Written here rather than in public/ because public/ is committed
     // and this value is per-worktree.
+    // The value travels in the environment rather than in argv, and is quoted
+    // for the SHELL rather than for JSON. JSON.stringify() escapes for a
+    // JavaScript string literal — it leaves `$`, backticks and `\` untouched,
+    // which a shell then expands. A worktree path containing any of those would
+    // have produced a wrong stamp or run something nobody wrote. POSIX
+    // single-quoting has one escape and this is it.
     command:
       `npm run build` +
-      ` && node -e "require('fs').writeFileSync('dist${STAMP_PATH}', process.argv[1])" ${JSON.stringify(STAMP_VALUE)}` +
+      ` && EYSL_E2E_STAMP=${shellQuote(STAMP_VALUE)}` +
+      ` node -e "require('fs').writeFileSync('dist${STAMP_PATH}', process.env.EYSL_E2E_STAMP)"` +
       ` && npm run preview -- --port ${PORT} --strictPort`,
     url: BASE_URL,
     // Safe again now that PORT is ours alone: this reuses OUR server between

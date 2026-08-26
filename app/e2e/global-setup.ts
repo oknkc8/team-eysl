@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
+import { randomInt } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,10 +44,16 @@ const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
  * And worst: it was called a lease, so the next person would assume it protected
  * them.
  *
- * A session advisory lock has none of those properties. Acquisition is atomic,
- * waiting is the database's job rather than a poll loop, and the lock is bound
- * to a connection — so a run that crashes releases it by dying, which is the
- * staleness problem solved by construction instead of by a guessed timeout.
+ * A session advisory lock fixes the first two: acquisition is atomic, and
+ * waiting is the database's job rather than a poll loop over a shared tick.
+ *
+ * IT DOES NOT FIX THE THIRD, and the earlier version of this comment claimed it
+ * did. "The lock is released when the connection dies" is true of PostgreSQL and
+ * false of us: we reach the database through the session pooler, so killing the
+ * local psql leaves Supavisor's backend holding the lock. See acquireSeedLock,
+ * which records the backend pid for exactly this reason. Expiry is still handled
+ * by a timeout — LOCK_HOLD_SECONDS — and teardown verifies it still holds the
+ * lock rather than assuming the timeout has not fired.
  */
 export const LOCK_KEY = 728193647
 
@@ -63,9 +70,34 @@ const LOCK_WAIT_MS = 300_000
  * process killed before teardown stops blocking everyone within the quarter
  * hour rather than until somebody notices.
  */
-const LOCK_HOLD_SECONDS = 900
+export const LOCK_HOLD_SECONDS = 900
 
 const LOCK_HELD_MARKER = 'EYSL_E2E_SEED_LOCK_HELD'
+
+/**
+ * A second advisory lock, on a key nobody else will pick, taken by the same
+ * session as the shared one.
+ *
+ * It exists to answer "is that backend still OURS?", which the shared key cannot
+ * answer on its own: the pooler recycles backends, so a recorded pid may since
+ * have become somebody else's work, and the shared key does not distinguish us
+ * from the next run — which holds exactly the same key.
+ *
+ * Only one session can hold both, because both were taken by one psql. So "the
+ * backend holding our shared key AND our nonce" is an identity, not a guess.
+ *
+ * Not application_name: the pooler overwrites that with `Supavisor`, which is
+ * how the connection-death claim above was caught being false.
+ *
+ * Below 2^31 so the bigint form lands as classid 0 / objid <nonce>, matching how
+ * LOCK_KEY is stored and keeping the pg_locks predicate uniform.
+ */
+function newNonceKey(): number {
+  for (;;) {
+    const candidate = randomInt(1, 2 ** 31 - 1)
+    if (candidate !== LOCK_KEY) return candidate
+  }
+}
 
 /** Where the holder's pid is left for global-teardown. Git-ignored with .auth. */
 export const SEED_LOCK_PID_FILE = path.join(appDir, 'e2e', '.auth', 'seed-lock.pid')
@@ -83,6 +115,7 @@ export const SEED_LOCK_PID_FILE = path.join(appDir, 'e2e', '.auth', 'seed-lock.p
  */
 async function acquireSeedLock(): Promise<void> {
   fs.mkdirSync(path.dirname(SEED_LOCK_PID_FILE), { recursive: true })
+  const nonceKey = newNonceKey()
 
   const holder = spawn(
     'bash',
@@ -96,6 +129,10 @@ async function acquireSeedLock(): Promise<void> {
       `set lock_timeout = '${LOCK_WAIT_MS}ms'`,
       '-c',
       `select pg_advisory_lock(${LOCK_KEY})`,
+      // The identity half, in the same session and therefore the same backend.
+      // No wait is possible on this one: the key is random and unheld.
+      '-c',
+      `select pg_advisory_lock(${nonceKey})`,
       // The BACKEND pid, not this process's. Killing the local psql does not
       // release the lock: we reach the database through the session pooler
       // (scripts/_env.sh — direct connections are IPv6-only and unreachable from
@@ -145,9 +182,13 @@ async function acquireSeedLock(): Promise<void> {
     })
   })
 
-  // Both pids: the local process to stop, and the backend that actually owns the
-  // lock. Teardown needs the second one — see the comment on the marker above.
-  fs.writeFileSync(SEED_LOCK_PID_FILE, `${holder.pid} ${backendPid}`, { encoding: 'utf8' })
+  // The local process to stop, the backend that owns the lock, and the nonce
+  // that proves that backend is still the one we started. Teardown needs all
+  // three: the third is what turns "this pid was ours 15 minutes ago" into
+  // something it can check now.
+  fs.writeFileSync(SEED_LOCK_PID_FILE, `${holder.pid} ${backendPid} ${nonceKey}`, {
+    encoding: 'utf8',
+  })
   // The suite, not this process, is what the lock is waiting on.
   holder.unref()
 }

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { LOCK_KEY, SEED_LOCK_PID_FILE } from './global-setup'
+import { LOCK_HOLD_SECONDS, LOCK_KEY, SEED_LOCK_PID_FILE } from './global-setup'
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -32,23 +32,75 @@ const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
  * holder is the release; there is no separate unlock to forget, and a run that
  * dies without reaching here releases it the same way.
  */
-function releaseSeedLock() {
-  let localPid: number
-  let backendPid: number
+type SeedLock = { localPid: number; backendPid: number; nonceKey: number }
+
+function readSeedLock(): SeedLock | null {
   try {
-    const [local, backend] = fs.readFileSync(SEED_LOCK_PID_FILE, 'utf8').trim().split(/\s+/)
-    localPid = Number(local)
-    backendPid = Number(backend)
+    const [local, backend, nonce] = fs.readFileSync(SEED_LOCK_PID_FILE, 'utf8').trim().split(/\s+/)
+    const lock = { localPid: Number(local), backendPid: Number(backend), nonceKey: Number(nonce) }
+    if (!Number.isInteger(lock.backendPid) || !Number.isInteger(lock.nonceKey)) return null
+    return lock
   } catch {
-    return // Setup never got far enough to take it.
+    return null // Setup never got far enough to take it.
   }
+}
+
+/**
+ * The backend holding BOTH our keys, or null if we no longer hold the lock.
+ *
+ * This is the question the two review findings were both answering by
+ * inference. "We took it and have not finished" is not a fact about now:
+ * LOCK_HOLD_SECONDS may have fired and the holder exited, in which case another
+ * run legitimately owns the fixtures. And a recorded pid is not identity either,
+ * because the pooler recycles backends — that pid may since have become somebody
+ * else's work, and the shared key alone cannot tell us apart from the next run,
+ * which holds exactly the same key.
+ *
+ * Both keys together can only be held by one session, so this is a check rather
+ * than a belief. Which is the whole reason this PR replaced the age heuristic —
+ * it would be a poor joke to use the lock and then go on guessing.
+ *
+ * classid and objsubid are matched as well as objid: the bigint form of
+ * pg_advisory_lock stores the key as classid 0 / objsubid 1, and the two-int
+ * form uses objsubid 2, so objid alone could collide with an unrelated lock.
+ */
+function heldBackendPid(lock: SeedLock): number | null {
+  const sql =
+    'select coalesce((select l.pid from pg_locks l' +
+    " where l.locktype = 'advisory' and l.classid = 0 and l.objsubid = 1 and l.granted" +
+    `   and l.objid = ${LOCK_KEY}` +
+    '   and exists (select 1 from pg_locks n' +
+    `                where n.pid = l.pid and n.locktype = 'advisory' and n.classid = 0` +
+    `                  and n.objsubid = 1 and n.granted and n.objid = ${lock.nonceKey})` +
+    ' limit 1), 0)'
+  try {
+    const out = execFileSync('bash', ['scripts/psql.sh', '-q', '-tAX', '-c', sql], {
+      cwd: appDir,
+      stdio: 'pipe',
+      encoding: 'utf8',
+    }).trim()
+    const pid = Number(out)
+    return Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
+}
+
+function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null) {
+  const { localPid } = lock
+  const backendPid = verifiedBackendPid
 
   // The backend first, because it is the thing that owns the lock. Killing only
   // the local client leaves the pooler's backend — and the session lock with it
   // — alive until pg_sleep finishes, which is 15 minutes of every other suite
   // waiting. Measured, not assumed: that is exactly what happened the first time
   // this was written.
-  if (Number.isInteger(backendPid) && backendPid > 0) {
+  //
+  // NULL MEANS TERMINATE NOTHING, deliberately. It says we no longer hold the
+  // lock, so the pid we recorded is no longer proof of anything — the pooler may
+  // have handed it to somebody else's work, and killing it would take a stranger
+  // down. Only a pid that just answered "holds both our keys" is ours to end.
+  if (backendPid !== null && backendPid > 0) {
     try {
       execFileSync(
         'bash',
@@ -56,7 +108,8 @@ function releaseSeedLock() {
         { cwd: appDir, stdio: 'pipe', encoding: 'utf8' },
       )
     } catch {
-      // Already gone, or the pooler recycled it. The next check will say.
+      // Raced with its own expiry between the check and here. Nothing to do:
+      // the lock is gone either way, which is the outcome we wanted.
     }
   }
 
@@ -122,9 +175,14 @@ function reportSurvivingRows() {
         // and a real leak of ours gets reported as somebody else's rows — the
         // same inversion the mtime version had, arrived at from a different
         // direction.
+        // classid and objsubid alongside objid: the bigint form of
+        // pg_advisory_lock stores its key as classid 0 / objsubid 1, and the
+        // two-int form uses objsubid 2 — so objid on its own could match an
+        // unrelated advisory lock that happens to share the low half.
         "select (select count(*) from public.members where nickname like 'pwtest%')" +
           " || ' ' || (select count(*) = 0 from pg_locks" +
-          ` where locktype = 'advisory' and objid = ${LOCK_KEY} and granted)`,
+          ` where locktype = 'advisory' and classid = 0 and objsubid = 1` +
+          ` and objid = ${LOCK_KEY} and granted)`,
       ],
       { cwd: appDir, stdio: 'pipe', encoding: 'utf8' },
     ).trim()
@@ -153,6 +211,28 @@ function reportSurvivingRows() {
 }
 
 export default function globalTeardown() {
+  const lock = readSeedLock()
+  // Asked BEFORE cleanup, because cleanup deletes fixed ids and cannot tell our
+  // fixtures from the fixtures of whoever legitimately took the lock after ours
+  // expired. If a suite outlives LOCK_HOLD_SECONDS, the next run seeds and then
+  // this teardown would delete THEIR accounts mid-suite — silently, and the
+  // symptom would land on them rather than on us.
+  //
+  // Expiry is not the defect; deleting without re-checking is. One question
+  // turns it into a failure somebody can see.
+  const heldPid = lock ? heldBackendPid(lock) : null
+
+  if (lock && heldPid === null) {
+    releaseSeedLock(lock, null)
+    throw new Error(
+      'e2e: this run no longer holds the seed lock, so its fixtures were NOT removed.\n' +
+        `The holder expired after ${LOCK_HOLD_SECONDS}s (the suite ran longer than that), or it ` +
+        'was terminated. Another run may own the pwtest rows now, and deleting them would break ' +
+        'that run instead.\n' +
+        'Remove them by hand once nothing is running: npm run db:psql -- -f e2e/cleanup.sql',
+    )
+  }
+
   try {
     execFileSync(
       'bash',
@@ -173,7 +253,7 @@ export default function globalTeardown() {
     // cleanup that also kept the lock would leave the next suite waiting five
     // minutes and then failing, for a fault that was not theirs. Releasing here
     // costs the diagnosis nothing — the rows are still there to look at.
-    releaseSeedLock()
+    if (lock) releaseSeedLock(lock, heldPid)
   }
 
   // Cleanup succeeded, so anything still here belongs to somebody. Say who.
