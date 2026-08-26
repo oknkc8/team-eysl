@@ -156,14 +156,34 @@ begin
   -- Another table -- or another row of this one -- may still claim this exact
   -- path, and then the object is not garbage, it is theirs.
   --
-  -- KNOWN LIMIT, recorded rather than hidden: two transactions deleting rows in
-  -- DIFFERENT claim tables can each still see the other's row and both skip the
-  -- insert, leaving the object with no row and no queue entry. The failure
-  -- direction is the safe one — an orphan nobody deletes, not a live file
-  -- deleted — and 0036's adoption select is what recovers it, since an object
-  -- no table claims is by definition debris. Closing it properly needs
-  -- serialisable isolation or a lock ordered across four tables, and neither is
-  -- worth buying at the price of a leak that a re-adoption sweeps up.
+  -- CLOSED — and it had to be, because the note that used to stand here was
+  -- wrong about the one fact it rested on.
+  --
+  -- The race: two transactions deleting rows in DIFFERENT claim tables each
+  -- still see the other's row, both skip the insert, and the object ends with no
+  -- row and no queue entry. That was recorded as survivable on the grounds that
+  -- "0036's adoption select recovers it". It does not. That adoption
+  -- (0036:413-421) is a bare `insert … select` at MIGRATION level: it ran once,
+  -- when 0036 was applied, and never runs again. The runtime sweeper reads only
+  -- paths ALREADY in the queue. So an object reaching the no-row-no-queue state
+  -- at any point after 0036 was applied is invisible to both, forever. The
+  -- failure direction was still the safer one — a leak, not a live file deleted
+  -- — but it was a PERMANENT leak, not the self-healing one described.
+  --
+  -- One transaction-scoped advisory lock per path closes it. The second
+  -- transaction blocks until the first commits, then sees the first's delete and
+  -- correctly finds the path unclaimed. Serialisable isolation or a lock ordered
+  -- across four tables would also work and cost considerably more.
+  --
+  -- Deadlock is the thing to weigh against it, and it is bounded. A transaction
+  -- takes one lock per deleted row, so two concurrent MULTI-row deletes touching
+  -- the same paths in opposite orders could deadlock. Deletes here are one row
+  -- from a screen, or a cascade whose paths are per-notice UUIDs and therefore
+  -- disjoint between notices. And it trades a silent permanent leak for a loud
+  -- abort: Postgres detects a deadlock and raises, where the old failure was a
+  -- file nobody could see again and nobody would be told about.
+  perform pg_advisory_xact_lock(hashtext(v_path));
+
   if exists (select 1 from public.media_files where storage_path = v_path)
      or exists (select 1 from public.notice_attachments where storage_path = v_path)
      or exists (select 1 from public.messages where attachment_path = v_path)
@@ -192,6 +212,18 @@ begin
   if v_path is null then
     return null;
   end if;
+
+  -- THE SAME LOCK, and here it guards the dangerous direction rather than the
+  -- merely wasteful one. Without it: T1 deletes the last row claiming P and,
+  -- seeing no claim, queues P; concurrently T2 inserts a row claiming P and its
+  -- release deletes nothing, because T1's queue entry is not committed yet. T1
+  -- commits. The queue now holds a path a LIVE row claims, and the next sweep
+  -- deletes an object somebody owns.
+  --
+  -- Ordering the two under one lock per path makes the later transaction see the
+  -- earlier one's work, whichever way round they arrive.
+  perform pg_advisory_xact_lock(hashtext(v_path));
+
   delete from public.pending_object_deletions where storage_path = v_path;
   return null;
 end $$;
@@ -257,6 +289,78 @@ drop trigger if exists record_uploads_release_object_deletion on public.record_u
 create trigger record_uploads_release_object_deletion
   after insert on public.record_uploads
   for each row execute function public.release_object_deletion();
+
+-- ------------------------------------------ and when a row CHANGES its path
+-- The direct descendant of the widening above, and the half it missed. That
+-- change took the TABLE set from two to four and left the EVENT set at two.
+-- DELETE and INSERT are not the only ways a claim moves: an UPDATE that
+-- rewrites the path column retires one path and takes up another in a single
+-- statement, and neither trigger fires for it.
+--
+-- What that costs, concretely. Move a claim from A to B where B is already
+-- queued: B's queue entry is never released, so the next sweep deletes B out
+-- from under the row that now legitimately claims it — a live file, which is
+-- the failure direction this whole mechanism exists to prevent. Meanwhile A,
+-- which nothing claims any more, is never enqueued and leaks permanently. One
+-- UPDATE produces both halves at once.
+--
+-- No third function is needed, and writing one would have been the mistake:
+-- enqueue reads OLD, release reads NEW, and an UPDATE trigger has both. So the
+-- existing pair is reused exactly as it stands and only the triggers are new —
+-- which also means the advisory lock added above covers this path for free.
+--
+-- `after update of <col>` narrows the trigger to statements that mention the
+-- column; the WHEN clause then narrows it to those that actually change it,
+-- because naming a column in SET is not the same as altering its value.
+-- `is distinct from` rather than `<>` so a nullable path (messages) compares
+-- correctly instead of yielding NULL and never firing.
+drop trigger if exists notice_attachments_enqueue_on_path_change on public.notice_attachments;
+create trigger notice_attachments_enqueue_on_path_change
+  after update of storage_path on public.notice_attachments
+  for each row when (old.storage_path is distinct from new.storage_path)
+  execute function public.enqueue_object_deletion();
+
+drop trigger if exists notice_attachments_release_on_path_change on public.notice_attachments;
+create trigger notice_attachments_release_on_path_change
+  after update of storage_path on public.notice_attachments
+  for each row when (old.storage_path is distinct from new.storage_path)
+  execute function public.release_object_deletion();
+
+drop trigger if exists media_files_enqueue_on_path_change on public.media_files;
+create trigger media_files_enqueue_on_path_change
+  after update of storage_path on public.media_files
+  for each row when (old.storage_path is distinct from new.storage_path)
+  execute function public.enqueue_object_deletion();
+
+drop trigger if exists media_files_release_on_path_change on public.media_files;
+create trigger media_files_release_on_path_change
+  after update of storage_path on public.media_files
+  for each row when (old.storage_path is distinct from new.storage_path)
+  execute function public.release_object_deletion();
+
+drop trigger if exists messages_enqueue_on_path_change on public.messages;
+create trigger messages_enqueue_on_path_change
+  after update of attachment_path on public.messages
+  for each row when (old.attachment_path is distinct from new.attachment_path)
+  execute function public.enqueue_object_deletion('attachment_path');
+
+drop trigger if exists messages_release_on_path_change on public.messages;
+create trigger messages_release_on_path_change
+  after update of attachment_path on public.messages
+  for each row when (old.attachment_path is distinct from new.attachment_path)
+  execute function public.release_object_deletion('attachment_path');
+
+drop trigger if exists record_uploads_enqueue_on_path_change on public.record_uploads;
+create trigger record_uploads_enqueue_on_path_change
+  after update of storage_path on public.record_uploads
+  for each row when (old.storage_path is distinct from new.storage_path)
+  execute function public.enqueue_object_deletion();
+
+drop trigger if exists record_uploads_release_on_path_change on public.record_uploads;
+create trigger record_uploads_release_on_path_change
+  after update of storage_path on public.record_uploads
+  for each row when (old.storage_path is distinct from new.storage_path)
+  execute function public.release_object_deletion();
 
 -- ------------------------------------------ who may write a notice object
 -- The storage policies ask two questions — is this path mine, and does a row
@@ -573,4 +677,46 @@ revoke all on function public.save_notice_v1(uuid, text, text, jsonb, timestampt
   from public, anon, authenticated;
 grant execute on function public.save_notice_v1(uuid, text, text, jsonb, timestamptz)
   to authenticated;
+
+-- ============================ 4. the version check is only worth what the
+-- ============================    policies around it leave standing
+--
+-- save_notice_v1 is SECURITY DEFINER, so it does not consult these policies.
+-- That cuts both ways: it means the RPC keeps working however tight they get,
+-- and it means everything they still permit is a way AROUND the conflict check
+-- rather than a way to use it. Two doors stood open, and the second is worse
+-- than the first.
+--
+-- notices_write was `for all`, so a staff session could UPDATE title and body
+-- directly. That write never passes through the greatest(now(), …) stamp, so a
+-- form holding the pre-UPDATE version still compares equal on its next save and
+-- overwrites the edit without ever reporting a conflict.
+--
+-- notice_attachments_write was `for all` too, and there the damage is not a
+-- lost edit but a lost FILE. An attachment row inserted directly does not touch
+-- notices.updated_at at all. A form that loaded BEFORE that insert therefore
+-- passes the version check cleanly, and its reconciliation — which takes the
+-- desired final set and deletes everything else — removes the new attachment as
+-- though the editor had asked for that. The save looks correct, reports
+-- success, and destroys somebody else's upload.
+--
+-- So both tables lose their direct write path and the RPC becomes the only way
+-- in. DELETE stays on notices alone, because deleteNotice() is a real screen
+-- action with no RPC behind it; notice_attachments needs no delete arm of its
+-- own, since notice_attachments.notice_id is ON DELETE CASCADE (0004:27) and a
+-- cascade fires the row triggers exactly as a direct delete would.
+--
+-- The dead client functions go with it. updateNotice() and createNotice() had
+-- no callers left after saveNotice() landed, and an exported writer that
+-- bypasses the check is a thing the next screen calls by accident — which is
+-- the whole reason this finding exists rather than being theoretical.
+drop policy if exists notices_write on public.notices;
+drop policy if exists notices_delete on public.notices;
+create policy notices_delete on public.notices
+  for delete using (public.is_staff());
+
+-- No write policy at all. RLS with no policy denies by default, which is the
+-- same shape 0028 used for signup_attempt_quota: bookkeeping that exactly one
+-- SECURITY DEFINER function is allowed to touch.
+drop policy if exists notice_attachments_write on public.notice_attachments;
 
