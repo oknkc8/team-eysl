@@ -103,6 +103,42 @@
 --
 -- The DELETE below fires activity_applications_offer_next, which already offers
 -- the freed seat to the next waitlister. Nothing here needs to do that by hand.
+--
+-- ============================================================================
+-- LOCK ORDER: ACTIVITY, THEN MEMBER, THEN APPLICATION
+-- ============================================================================
+--
+-- Both functions take their locks in that order and neither may deviate. Two
+-- separate defects were found in review, and both are this one rule missing.
+--
+-- WITHOUT THE MEMBER LOCK, THE ELIGIBILITY CHECK IS A TOCTOU. The first draft
+-- read auth_user_id without FOR UPDATE and then locked only the activity, so:
+--
+--   1. enrol reads auth_user_id IS NULL and decides the member is eligible
+--   2. link_member_login_v1 attaches a login to that same row and commits
+--      (0035 does exactly this: `update public.members set auth_user_id = ...`)
+--   3. enrol carries on and seats a member who can now sign in
+--
+-- which is the one thing decision 1 exists to prevent. Taking the row lock and
+-- reading auth_user_id AFTER it holds is what makes the check mean anything:
+-- under READ COMMITTED the locked re-read sees the committed new value, so the
+-- refusal fires instead.
+--
+-- WITHOUT THE ACTIVITY LOCK FIRST, UNENROL DEADLOCKS THE SWEEP. The first draft
+-- deleted the application row and let the AFTER DELETE trigger reach for the
+-- activity — application, then activity. The expiry sweep goes the other way:
+--
+--   expire_stale_offers_for_activity   activity FOR UPDATE (0020) -> updates applications
+--   offer_seat_to_next_waitlister      activity FOR UPDATE        -> picks an application
+--   unenrol (as first written)         deletes an application     -> trigger wants activity
+--
+-- Two transactions, opposite orders, one 40P01. Locking the activity up front
+-- costs nothing — the trigger is going to take that lock a moment later anyway
+-- — and removes the cycle.
+--
+-- The cost of the order is that "no such activity" is now raised before "no
+-- such member" when both are wrong. That is a strictly less useful message in a
+-- case that only arises from a malformed call, and it is the right trade.
 
 -- ---------------------------------------------------------------- enrol
 
@@ -128,10 +164,25 @@ begin
     raise exception 'staff only' using errcode = '42501';
   end if;
 
+  -- Lock 1 of 3, activity. The same row lock apply_to_activity takes, and for
+  -- the same reason: the seat count below must not be read against a snapshot a
+  -- concurrent application has already invalidated. It is taken FIRST so that
+  -- every path through this migration agrees with the offer sweep's order.
+  select capacity into v_capacity
+    from public.activities where id = p_activity_id for update;
+  if not found then
+    raise exception 'no such activity' using errcode = '23503';
+  end if;
+
+  -- Lock 2 of 3, member. FOR UPDATE is what makes the two checks below true at
+  -- the moment they are acted on rather than a moment before — see the lock
+  -- order note in the header. Without it link_member_login_v1 can attach a
+  -- login between this read and the insert.
   select (m.auth_user_id is not null), m.status
     into v_can_sign_in, v_status
     from public.members m
-   where m.id = p_member_id;
+   where m.id = p_member_id
+   for update;
   if not found then
     raise exception 'no such member' using errcode = '23503';
   end if;
@@ -145,15 +196,7 @@ begin
       using errcode = '42501';
   end if;
 
-  -- The same row lock apply_to_activity takes, and for the same reason: the
-  -- seat count below must not be read against a snapshot a concurrent
-  -- application has already invalidated.
-  select capacity into v_capacity
-    from public.activities where id = p_activity_id for update;
-  if not found then
-    raise exception 'no such activity' using errcode = '23503';
-  end if;
-
+  -- Lock 3 of 3, application.
   select * into v_existing
     from public.activity_applications
    where activity_id = p_activity_id and member_id = p_member_id
@@ -221,9 +264,21 @@ begin
     raise exception 'staff only' using errcode = '42501';
   end if;
 
+  -- Lock 1 of 3, activity — before the DELETE, not after it. The AFTER DELETE
+  -- trigger takes this lock anyway when it offers the freed seat onward; taking
+  -- it here is what stops that happening in the opposite order from the expiry
+  -- sweep. See the lock order note in the header.
+  --
+  -- No raise when the activity is gone: its applications went with it by
+  -- cascade, so the DELETE below finds nothing and returns false, which is the
+  -- same answer a second press gets and is the truthful one.
+  perform 1 from public.activities where id = p_activity_id for update;
+
+  -- Lock 2 of 3, member.
   select (m.auth_user_id is not null) into v_can_sign_in
     from public.members m
-   where m.id = p_member_id;
+   where m.id = p_member_id
+   for update;
   if not found then
     raise exception 'no such member' using errcode = '23503';
   end if;
@@ -236,6 +291,7 @@ begin
       using errcode = '42501';
   end if;
 
+  -- Lock 3 of 3, application.
   delete from public.activity_applications
    where activity_id = p_activity_id and member_id = p_member_id;
   get diagnostics v_removed = row_count;
