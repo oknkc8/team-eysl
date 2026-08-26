@@ -33,6 +33,9 @@ import { EventRankingPage } from '../features/events/EventRankingPage'
 import { ChatPage } from '../features/chat/ChatPage'
 import { DmPage } from '../features/chat/DmPage'
 import { NotificationSettingsPage } from '../features/push/NotificationSettingsPage'
+import { BoardListPage } from '../features/board/BoardListPage'
+import { BoardDetailPage } from '../features/board/BoardDetailPage'
+import { BoardEditPage } from '../features/board/BoardEditPage'
 
 /**
  * The frame above every route, and the only thing in it is scroll position.
@@ -246,6 +249,25 @@ export const router = createBrowserRouter([
               },
             ],
           },
+          // 자유게시판. Every one of these is RequireAuth and none is
+          // RequireStaff, which is the whole shape of his board: the ＋ that
+          // opens 글 작성 is unconditional markup (upstream:1279) and applyRole()
+          // never touches a board control, so any approved member writes here.
+          //
+          // Editing is the one narrow permission, and it is narrower than any
+          // guard can say — the author of the row at this id, and not staff
+          // (upstream:2639 refuses a non-author, and he made no admin case for
+          // it). A RequireStaff copy of /board/:postId/edit would be the thing
+          // this file keeps warning about: a guard that looks like it decides
+          // something while update_board_post_v1 is what actually does. The
+          // screen mirrors the RPC instead and prints a Korean refusal.
+          //
+          // Ranked matching puts the literal /board/new ahead of the sibling
+          // /board/:postId, the same trap /notices/new springs.
+          { path: '/board', element: <BoardListPage /> },
+          { path: '/board/new', element: <BoardEditPage /> },
+          { path: '/board/:postId', element: <BoardDetailPage /> },
+          { path: '/board/:postId/edit', element: <BoardEditPage /> },
         ],
       },
       { path: '*', element: <div style={{ padding: 24 }}>페이지를 찾을 수 없습니다.</div> },
