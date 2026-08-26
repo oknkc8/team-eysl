@@ -217,6 +217,21 @@ const RECORD_ROWS: Row[] = [
   row({ 0: '*50m 기준', 5: '일자', 11: '테스트 핀대회 (26/05/17)' }),
   row(BLOCK_HEADER),
   row({ 0: '1', 1: '테스트일', 2: '일', 3: '90', 4: '여', 11: '30.00' }),
+
+  // The third section. All three of the schema's categories are reachable —
+  // 일반 → 'meet', 핀 → 'fin', 기타 → 'other' — and until this block existed the
+  // 기타 branch of categoryFromSectionTitle was never once executed by a test.
+  //
+  // It also carries the section-boundary rows that the section walk has to get
+  // right: its own '*50m 기준' meet row and 'NO' header, and a 단체전 block ahead
+  // of the member rows, so a walk that ran past the end of section 2 or started
+  // section 3 at the wrong row shows up here.
+  row({ 0: '3) 기타' }),
+  row({ 0: '*50m 기준', 5: '일자', 11: '테스트 신년회 (26/01/17)' }),
+  row(BLOCK_HEADER),
+  row({ 0: '단\n체\n전', 1: '혼성계영', 6: '-', 11: '2:29.82' }),
+  row({ 0: '1', 1: '테스트일', 2: '일', 3: '90', 4: '여', 11: '40.00' }),
+  row({ 0: '2', 1: '테스트이', 2: '이', 3: '95', 4: '남', 13: '45.50' }),
 ]
 
 const RECORD_MERGES: XLSX.Range[] = [

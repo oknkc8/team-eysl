@@ -20,6 +20,28 @@
 secrets/
 .supabase/
 
+# Spreadsheets, and anything the club-workbook importer produces.
+#
+# The club master workbook holds the names, birth dates and phone numbers of
+# forty real people. It is meant to stay where the operator keeps it and is never
+# copied into the tree — but "never" was previously enforced only by saying so,
+# and `git check-ignore -v probe.xlsx app/out.sql` exited 1 with no output,
+# meaning neither was protected by anything.
+#
+# The generated SQL matters as much as the workbook: it carries the same
+# personal data in plain text, and one `> out.sql` inside the repo would make it
+# a tracked file. .github/workflows/guard.yml checks for both as well, because
+# the whole point is that one of the two layers eventually gets forgotten.
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.csv
+# Importer output, whatever somebody calls it.
+*.import.sql
+import-output*.sql
+app/scripts/import/*.sql
+
 # Dependencies / build output
 node_modules/
 dist/

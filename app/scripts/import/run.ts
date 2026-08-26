@@ -48,7 +48,10 @@ function main(argv: string[]): number {
 
   const present = data.attendance.filter((a) => a.status === 'present').length
   const late = data.attendance.length - present
-  const { rows, dropped } = dedupeRecords(data.records)
+  // Throws rather than returning drops now: a collision that survives the
+  // post-0031 key means the same swim appears twice, which somebody has to look
+  // at. See DuplicateRecordError.
+  const { rows } = dedupeRecords(data.records)
 
   const byCategory = new Map<string, number>()
   for (const r of rows) byCategory.set(r.category, (byCategory.get(r.category) ?? 0) + 1)
@@ -60,8 +63,11 @@ function main(argv: string[]): number {
     `trainings    ${data.trainings.length}`,
     `attendance   ${data.attendance.length}  (present ${present}, late ${late})`,
     `meets        ${data.meets.length}`,
-    `records      ${rows.length}` +
-      (dropped.length > 0 ? `  (${dropped.length} collapsed on records_dedup_uq)` : ''),
+    // Raw as well as stored. Reporting only the stored figure is what let a
+    // cross-category collision look like a clean import: a count of rows that
+    // arrived says nothing about rows that should have.
+    `records      ${rows.length} stored, ${data.records.length} parsed` +
+      (data.records.length === rows.length ? '' : '  <- MISMATCH, investigate'),
     ...[...byCategory].sort().map(([category, n]) => `  ${category}: ${n}`),
     // Parsed and deliberately not loaded — see the note on ClubData.relays.
     `relays       ${data.relays.length}  (parsed, NOT loaded: records.member_id is NOT NULL,`,

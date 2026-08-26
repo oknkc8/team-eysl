@@ -221,9 +221,48 @@ const COL = {
   firstDate: 15,
 } as const
 
+/**
+ * The nickname prefix e2e owns, which a club member may never carry.
+ *
+ * e2e/cleanup.sql treats every member whose nickname starts with this as
+ * test-owned and deletes them together with their attendance and records. A
+ * club member imported under it would therefore be destroyed, silently, by the
+ * next Playwright run — and cleanup removing rows looks exactly like cleanup
+ * working.
+ *
+ * Nothing in the sheet collides today. That is a coincidence rather than a
+ * control: one nickname edit is all it takes, and the failure is quiet.
+ */
+export const RESERVED_NICKNAME_PREFIX = 'pwtest'
+
+/** Thrown to abort the whole import rather than skip or rename a row. */
+export class ReservedNicknameError extends Error {
+  // A plain field, not a `public readonly` constructor parameter: these modules
+  // run under Node's strip-only type stripping, which erases annotations and
+  // refuses syntax that would need emitting. tsconfig.scripts.json sets
+  // erasableSyntaxOnly so tsc catches that at check time rather than at 2am.
+  readonly rows: number[]
+
+  constructor(rows: number[]) {
+    super(
+      `row(s) ${rows.join(', ')} of ☆명단(출석부) carry a nickname starting with ` +
+        `'${RESERVED_NICKNAME_PREFIX}', which e2e/cleanup.sql deletes along with all ` +
+        `attendance and records filed against it. Importing them would let the next ` +
+        `Playwright run destroy real member history. Rename in the sheet and re-run. ` +
+        `(No import was performed.)`,
+    )
+    this.name = 'ReservedNicknameError'
+    this.rows = rows
+  }
+}
+
+const isReserved = (value: string) =>
+  value.trim().toLowerCase().startsWith(RESERVED_NICKNAME_PREFIX)
+
 function parseMembers(matrix: string[][], warnings: string[]): ImportedMember[] {
   const members: ImportedMember[] = []
   const seen = new Map<string, number>()
+  const reservedRows: number[] = []
 
   for (let r = 0; r < matrix.length; r++) {
     const no = at(matrix, r, COL.no)
@@ -234,11 +273,22 @@ function parseMembers(matrix: string[][], warnings: string[]): ImportedMember[] 
     // summary row below that; both fail this test.
     if (!/^\d+$/.test(no) || !realName || !shortName) continue
 
+    // Both source names, not the nickname that comes out the far end. The
+    // disambiguation below can fall back to the real name, so checking only the
+    // final value would let a reserved short name be renamed around — and a
+    // member imported under a different nickname than the sheet states is its
+    // own defect. Case-insensitive because 'PWtest' is no less confusing than
+    // 'pwtest', even though cleanup.sql's LIKE would miss it.
+    if (isReserved(shortName) || isReserved(realName)) {
+      reservedRows.push(r)
+      continue
+    }
+
     const birth = at(matrix, r, COL.birth)
     let birthYear: number | null = null
     if (/^\d{6}$/.test(birth)) birthYear = fourDigitYear(Number(birth.slice(0, 2)))
     else if (/^\d{2}$/.test(birth)) birthYear = fourDigitYear(Number(birth))
-    else if (birth) warnings.push(`member "${shortName}": unreadable 생년월일 shape`)
+    else if (birth) warnings.push(`row ${r}: unreadable 생년월일 shape`)
 
     // members_nickname_lower_uq (0001) is unique on lower(nickname), so two
     // members sharing a short name would collapse into one row on load — the
@@ -261,14 +311,12 @@ function parseMembers(matrix: string[][], warnings: string[]): ImportedMember[] 
         (c): c is string => c !== null && !seen.has(c.toLowerCase()),
       )
       if (resolved === undefined) {
-        warnings.push(
-          `short name "${shortName}" (row ${r}) collides and could not be disambiguated — skipped`,
-        )
+        warnings.push(`row ${r}: short name collides and could not be disambiguated — skipped`)
         continue
       }
       warnings.push(
-        `short name "${shortName}" is shared (rows ${seen.get(shortName.toLowerCase())} and ${r}); ` +
-          `row ${r} imports as "${resolved}" so members_nickname_lower_uq cannot collapse them`,
+        `rows ${seen.get(shortName.toLowerCase())} and ${r} share a short name; row ${r} ` +
+          `imports with its birth year appended so members_nickname_lower_uq cannot collapse them`,
       )
       nickname = resolved
     }
@@ -290,6 +338,13 @@ function parseMembers(matrix: string[][], warnings: string[]): ImportedMember[] 
       notes: at(matrix, r, COL.notes),
     })
   }
+
+  // After the walk, so one run names every offending row rather than making
+  // somebody fix them one at a time. Thrown rather than warned: a warning would
+  // let the other 39 members import while the flagged rows went missing, and a
+  // partial import that looks successful is how this becomes somebody else's
+  // confusing afternoon.
+  if (reservedRows.length > 0) throw new ReservedNicknameError(reservedRows)
 
   return members
 }
@@ -529,7 +584,9 @@ function parseRecords(
     if (shortNameCounts.get(key) === 1) byShortName.set(key, m)
   }
 
-  const unresolved = new Set<string>()
+  // Row numbers, not names. A warning ends up on stderr, and --summary output
+  // gets pasted into issues and PR comments — so nothing here may carry a name.
+  const unresolved = new Set<number>()
   const width = widthOf(matrix)
   const sections = findSections(matrix)
 
@@ -584,7 +641,8 @@ function parseRecords(
           const centiseconds = parseSwimTime(display)
           if (centiseconds === null || centiseconds <= 0) {
             warnings.push(
-              `relay ${relayType} at "${meet.name}": unreadable time ${JSON.stringify(display)}`,
+              `row ${r} (relay ${relayType}) at "${meet.name}": unreadable time ` +
+                `${JSON.stringify(display)}`,
             )
             continue
           }
@@ -604,7 +662,7 @@ function parseRecords(
       const member =
         byRealName.get(rowRealName.toLowerCase()) ?? byShortName.get(rowShortName.toLowerCase())
       if (!member) {
-        unresolved.add(rowShortName)
+        unresolved.add(r)
         continue
       }
       const nickname = member.nickname
@@ -627,7 +685,7 @@ function parseRecords(
             // swim this schema has no way to record.
             if (display && display !== '-' && centiseconds !== 0) {
               warnings.push(
-                `"${nickname}" ${stroke} at "${meet.name}": no storable time in ` +
+                `row ${r} ${stroke} at "${meet.name}": no storable time in ` +
                   `${JSON.stringify(display)} — skipped`,
               )
             }
@@ -668,8 +726,8 @@ function parseRecords(
     }
   }
 
-  for (const name of unresolved) {
-    warnings.push(`대회 기록 names "${name}", who is not in ☆명단(출석부) — records skipped`)
+  for (const r of unresolved) {
+    warnings.push(`row ${r} of ☆대회 기록 names somebody absent from ☆명단(출석부) — records skipped`)
   }
 
   return { meets, records, relays }

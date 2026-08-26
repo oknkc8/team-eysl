@@ -31,6 +31,13 @@
     // that is what Node 24's native type stripping requires — run.ts executes
     // as `node scripts/import/run.ts` with no bundler and no ts-node.
     "allowImportingTsExtensions": true,
+    // Strip-only mode erases type annotations and refuses anything that would
+    // need code emitted: enums, namespaces, and `constructor(public readonly x)`
+    // parameter properties. Without this flag tsc happily accepts all three and
+    // the failure arrives at run time, mid-import, as ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX.
+    // That is not hypothetical — it is how the first version of this error class
+    // was written.
+    "erasableSyntaxOnly": true,
     "types": ["node", "vitest/globals"]
   },
   // parse.ts imports parseSwimTime from src/features/records/time.ts, so that

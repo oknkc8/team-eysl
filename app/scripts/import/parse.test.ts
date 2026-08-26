@@ -1,9 +1,81 @@
 import { describe, expect, it } from 'vitest'
+import * as XLSX from 'xlsx'
 import { buildFixtureWorkbook } from './fixture.ts'
-import { parseClubWorkbook } from './parse.ts'
+import {
+  RESERVED_NICKNAME_PREFIX,
+  ReservedNicknameError,
+  SHEET_MEMBERS,
+  parseClubWorkbook,
+} from './parse.ts'
 
 const parse = (year?: number) =>
   parseClubWorkbook(buildFixtureWorkbook(), year === undefined ? {} : { attendanceYear: year })
+
+/** The fixture with one member's name column rewritten, to test refusal. */
+function workbookWithName(column: 1 | 2, row: number, value: string): ArrayBuffer {
+  const workbook = XLSX.read(buildFixtureWorkbook(), { type: 'array' })
+  const sheet = workbook.Sheets[SHEET_MEMBERS]
+  if (!sheet) throw new Error('fixture lost its member sheet')
+  XLSX.utils.sheet_add_aoa(sheet, [[value]], { origin: { r: row, c: column } })
+  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
+}
+
+describe('the nickname prefix e2e owns', () => {
+  // e2e/cleanup.sql deletes every member whose nickname starts with `pwtest`,
+  // together with their attendance and records. A club member imported under it
+  // would be destroyed by the next Playwright run — silently, because cleanup
+  // removing rows is cleanup working. Nothing in the real sheet collides today;
+  // that is a coincidence, not a control.
+  it('refuses a short name carrying the prefix, and imports nothing', () => {
+    expect(() => parseClubWorkbook(workbookWithName(2, 5, `${RESERVED_NICKNAME_PREFIX}일`))).toThrow(
+      ReservedNicknameError,
+    )
+  })
+
+  it('refuses a full name carrying the prefix', () => {
+    // Both source columns, because the disambiguation path can fall back to the
+    // real name — so checking only the short name would let a reserved value
+    // reach the database by another route.
+    expect(() => parseClubWorkbook(workbookWithName(1, 6, `${RESERVED_NICKNAME_PREFIX}이`))).toThrow(
+      ReservedNicknameError,
+    )
+  })
+
+  it('refuses regardless of case', () => {
+    expect(() => parseClubWorkbook(workbookWithName(2, 5, 'PWTest일'))).toThrow(
+      ReservedNicknameError,
+    )
+  })
+
+  it('names the row and no member', () => {
+    try {
+      parseClubWorkbook(workbookWithName(2, 5, `${RESERVED_NICKNAME_PREFIX}비밀`))
+      throw new Error('expected a ReservedNicknameError')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ReservedNicknameError)
+      const { message, rows } = error as ReservedNicknameError
+      expect(rows).toEqual([5])
+      expect(message).toContain('row(s) 5')
+      // The message reaches stderr and gets pasted into public places.
+      expect(message).not.toContain('비밀')
+    }
+  })
+
+  it('does not rename around it', () => {
+    // Importing under a different nickname than the sheet states is its own
+    // defect: the roster would disagree with the spreadsheet the club maintains.
+    expect(() => parseClubWorkbook(workbookWithName(2, 5, `${RESERVED_NICKNAME_PREFIX}일`))).toThrow(
+      /No import was performed/,
+    )
+  })
+
+  it('leaves the clean fixture importing normally', () => {
+    // The negative control for all of the above: without a reserved name the
+    // same workbook parses, so these tests are detecting the prefix rather than
+    // a broken fixture.
+    expect(parse().members).toHaveLength(3)
+  })
+})
 
 describe('members', () => {
   it('reads the three member rows and neither of the two that only look like rows', () => {
@@ -120,8 +192,14 @@ describe('records', () => {
     const { records, warnings } = parse()
     // 'DQ' is a disqualification. result_centiseconds is NOT NULL with a > 0
     // CHECK, so there is no way to file it — but dropping it silently would
-    // read as 테스트이 never having swum.
-    expect(records.some((r) => r.nickname === '이')).toBe(false)
+    // read as 테스트이 never having swum that event.
+    //
+    // Scoped to the meet that holds the DQ. 테스트이 does have a result in the
+    // 기타 section, so a global "has no records" assertion would pass for the
+    // wrong reason before that section existed and fail for the wrong reason
+    // after it.
+    const atDqMeet = records.filter((r) => r.nickname === '이' && r.eventDate === '2026-03-08')
+    expect(atDqMeet).toHaveLength(0)
     expect(warnings.some((w) => w.includes('DQ'))).toBe(true)
   })
 
@@ -158,10 +236,24 @@ describe('records', () => {
     })
   })
 
-  it('maps each section to its own category', () => {
+  it('maps all three sections to their own category', () => {
     const { records } = parse()
-    expect(records.find((r) => r.eventDate === '2026-05-17')?.category).toBe('fin')
     expect(records.find((r) => r.eventDate === '2026-03-08')?.category).toBe('meet')
+    expect(records.find((r) => r.eventDate === '2026-05-17')?.category).toBe('fin')
+    // 기타 → 'other'. Until the fixture grew a third section this branch of
+    // categoryFromSectionTitle was never executed by a test, and every one of
+    // the schema's three categories has to be reachable from a real sheet.
+    expect(records.find((r) => r.eventDate === '2026-01-17')?.category).toBe('other')
+  })
+
+  it('walks past a section boundary without losing or merging rows', () => {
+    const { records, meets } = parse()
+    // Three sections, each with its own meet row, header row and 단체전 block.
+    // A walk that overran section 2 would file 기타 results under 'fin'.
+    expect(meets.map((m) => m.category)).toEqual(['meet', 'meet', 'fin', 'other'])
+    const other = records.filter((r) => r.category === 'other')
+    expect(other).toHaveLength(2)
+    expect(other.map((r) => r.stroke).sort()).toEqual(['배영', '자유형'])
   })
 })
 
@@ -178,9 +270,21 @@ describe('relays', () => {
         resultDisplay: '1:58.54',
         resultCentiseconds: 11854,
       },
+      // The 기타 section has a 단체전 block too, which is what proves the relay
+      // walk is per-section rather than only ever finding the first one.
+      {
+        category: 'other',
+        relayType: '혼성계영',
+        gender: '',
+        eventName: '테스트 신년회',
+        eventDate: '2026-01-17',
+        resultDisplay: '2:29.82',
+        resultCentiseconds: 14982,
+      },
     ])
     // records.member_id is NOT NULL and the block names no swimmers, so a relay
     // must never reach the records list.
     expect(records.some((r) => r.resultCentiseconds === 11854)).toBe(false)
+    expect(records.some((r) => r.resultCentiseconds === 14982)).toBe(false)
   })
 })

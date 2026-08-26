@@ -7,17 +7,39 @@
 // the president's live project. A generator also leaves the statements
 // reviewable before they run.
 //
-// EVERY STATEMENT IS AN UPSERT. Running this twice must leave the same rows:
+// EVERY STATEMENT IS `ON CONFLICT ... DO NOTHING`, and that is the whole design:
 //
 //   members     on conflict (lower(nickname))       — members_nickname_lower_uq
 //   activities  on conflict (id)                    — ids are md5 of a stable key
 //   attendance  on conflict (activity_id, member_id)
-//   records     on conflict (member_id, stroke, subcategory, event_date,
-//                            distance_m, result_centiseconds) — records_dedup_uq
+//   records     on conflict (member_id, category, stroke, subcategory,
+//                            event_date, distance_m, result_centiseconds)
+//                                                   — records_dedup_uq, per 0031
+//
+// DO NOTHING RATHER THAN DO UPDATE, WHICH IS NOT A DETAIL.
+//
+// An earlier version wrote `do update set real_name = excluded.real_name, ...,
+// updated_at = now()` on every table. Row counts stayed identical across runs,
+// so it was reported as idempotent — and it was not. Two things were wrong:
+//
+//   1. The second run still performed a write on every row. "Same counts" and
+//      "unchanged" are different claims, and only the cheap one was checked.
+//   2. real_name and attendance status are both editable in the app. So a
+//      re-import silently REVERTED a member's own profile edit and an admin's
+//      attendance correction, back to whatever the spreadsheet said.
+//
+// This is a one-time backfill of a paper register, not a sync. Once a row
+// exists the app is the newer source, and the importer's job is finished. To
+// deliberately re-apply the sheet over live data, delete the rows first — an
+// explicit act, rather than a side effect of running the importer twice.
+//
+// scripts/import/verify-idempotence.sh is what actually holds this: it
+// fingerprints every club row INCLUDING updated_at, runs the import twice, and
+// diffs. A count check cannot see any of the above.
 //
 // activities is the only table with no natural key, so its ids are derived from
 // the thing they identify: md5('eysl-import:training:2026-01-04')::uuid. Same
-// input, same uuid, so a second run updates rather than inserts.
+// input, same uuid, so a second run collides and does nothing.
 
 import type { ClubData, ImportedRecord } from './parse.ts'
 
@@ -134,21 +156,13 @@ export function toSql(data: ClubData, options: SqlOptions = {}): string {
         )
         .join(',\n'),
     )
-    out.push('on conflict (lower(nickname)) do update set')
-    out.push('  short_name      = excluded.short_name,')
-    out.push('  real_name       = excluded.real_name,')
-    out.push('  birth_year      = excluded.birth_year,')
-    out.push('  birth_date_text = excluded.birth_date_text,')
-    out.push('  gender          = excluded.gender,')
-    out.push('  join_date_text  = excluded.join_date_text,')
-    out.push('  join_reason     = excluded.join_reason,')
-    out.push('  lesson_level    = excluded.lesson_level,')
-    out.push('  swim_experience = excluded.swim_experience,')
-    out.push('  notes           = excluded.notes,')
-    // status and role are deliberately NOT overwritten: an admin who promoted
-    // one of these members in the app would otherwise be demoted by the next
-    // import, and a blocked member would be silently readmitted.
-    out.push('  updated_at      = now();')
+    // DO NOTHING. An earlier version overwrote real_name here, which members
+    // can edit themselves through set_my_real_name — so a re-import reverted
+    // somebody's correction of their own name to whatever the sheet had. status
+    // and role were already excluded for the same reason (an admin promotion
+    // must not be undone); the mistake was treating the other columns as if
+    // nobody owned them.
+    out.push('on conflict (lower(nickname)) do nothing;')
     out.push('')
   }
 
@@ -189,12 +203,10 @@ export function toSql(data: ClubData, options: SqlOptions = {}): string {
     out.push(activityRows.join(',\n'))
     out.push(') as v(id, kind, title, activity_date, details)')
     out.push('cross join _imp_ctx c')
-    out.push('on conflict (id) do update set')
-    out.push('  kind          = excluded.kind,')
-    out.push('  title         = excluded.title,')
-    out.push('  activity_date = excluded.activity_date,')
-    out.push('  details       = excluded.details,')
-    out.push('  updated_at    = now();')
+    // DO NOTHING. Title, date, place, start_time and capacity are all editable
+    // on the 일정 screen, and an admin who corrected a training's time would
+    // have had it reset by the next import.
+    out.push('on conflict (id) do nothing;')
     out.push('')
   }
 
@@ -241,9 +253,12 @@ export function toSql(data: ClubData, options: SqlOptions = {}): string {
     out.push(') as v(activity_id, nickname, status)')
     out.push('join public.members m on lower(m.nickname) = lower(v.nickname)')
     out.push('cross join _imp_ctx c')
-    out.push('on conflict (activity_id, member_id) do update set')
-    out.push('  status     = excluded.status,')
-    out.push('  updated_at = now();')
+    // DO NOTHING, and this is the one that mattered most. attendance.status is
+    // exactly what an admin changes on the 출석 screen — the feature the legacy
+    // app lost entirely and this rebuild exists to restore. Overwriting it from
+    // the spreadsheet on every run would undo their correction and leave the
+    // register agreeing with the paper copy rather than with the pool deck.
+    out.push('on conflict (activity_id, member_id) do nothing;')
     out.push('')
   }
 
@@ -252,9 +267,7 @@ export function toSql(data: ClubData, options: SqlOptions = {}): string {
   if (recordRows.length > 0) {
     out.push(`-- ${recordRows.length} personal results.`)
     if (dropped.length > 0) {
-      out.push(`-- ${dropped.length} row(s) collapsed here rather than at the database: two`)
-      out.push('-- results sharing records_dedup_uq inside one statement would raise')
-      out.push('-- "ON CONFLICT DO UPDATE command cannot affect row a second time".')
+      out.push(`-- ${dropped.length} row(s) collapsed here rather than at the database.`)
     }
     out.push('--')
     out.push('-- 단체전 (relay) rows are NOT here. records.member_id is NOT NULL and the')
@@ -286,14 +299,19 @@ export function toSql(data: ClubData, options: SqlOptions = {}): string {
     out.push('       event_date, result_display, result_centiseconds, metadata)')
     out.push('join public.members m on lower(m.nickname) = lower(v.nickname)')
     out.push('cross join _imp_ctx c')
+    // The column list matches records_dedup_uq as 0031 rebuilt it, category
+    // included. It has to: ON CONFLICT resolves against a unique index by
+    // column set, and naming the pre-0031 list against the post-0031 index
+    // raises 42P10 "no unique or exclusion constraint matching the ON CONFLICT
+    // specification" on the first row. These two lists change together.
     out.push(
-      'on conflict (member_id, stroke, subcategory, event_date, distance_m, result_centiseconds)',
+      'on conflict (member_id, category, stroke, subcategory, event_date, distance_m, ' +
+        'result_centiseconds)',
     )
-    out.push('do update set')
-    out.push('  category   = excluded.category,')
-    out.push('  event_name = excluded.event_name,')
-    out.push('  metadata   = excluded.metadata,')
-    out.push('  updated_at = now();')
+    // DO NOTHING: a record can be edited and re-filed through the admin 기록
+    // screen, and event_name/metadata were being reset to the sheet's wording
+    // on every run.
+    out.push('do nothing;')
     out.push('')
   }
 
@@ -328,21 +346,55 @@ export function toSql(data: ClubData, options: SqlOptions = {}): string {
   return out.join('\n') + '\n'
 }
 
+/** Thrown when two results collide on the full key. See dedupeRecords. */
+export class DuplicateRecordError extends Error {
+  // A plain field rather than a `public readonly` parameter property: Node's
+  // strip-only type stripping refuses syntax that would need emitting, and
+  // tsconfig.scripts.json's erasableSyntaxOnly catches it at check time.
+  readonly duplicates: ImportedRecord[]
+
+  constructor(duplicates: ImportedRecord[]) {
+    const describe = (r: ImportedRecord) =>
+      `${r.category}/${r.subcategory} ${r.stroke} ${r.distanceM}m ` +
+      `${r.resultDisplay} at "${r.eventName}" (${r.eventDate})`
+    super(
+      `${duplicates.length} result(s) collide on records_dedup_uq even with category ` +
+        `included, which means the sheet holds the same swim twice or the block walk ` +
+        `read one twice:\n  ` +
+        duplicates.map(describe).join('\n  ') +
+        `\nNo import was performed. Silently keeping the first would discard a real ` +
+        `result the way the pre-0031 key discarded fin swims.`,
+    )
+    this.name = 'DuplicateRecordError'
+    this.duplicates = duplicates
+  }
+}
+
 /**
  * Collapses results that would collide on records_dedup_uq.
  *
  * Postgres refuses an INSERT whose own VALUES list hits the same conflict key
- * twice — "ON CONFLICT DO UPDATE command cannot affect row a second time" — so
- * the collapse has to happen here, before the statement is built. It is not
- * hypothetical: the 핀 section repeats 2026 수원 연맹회장배 on the same date as
- * the 일반 section, and records_dedup_uq does not include category.
+ * twice — "ON CONFLICT ... cannot affect row a second time" — so the collapse
+ * has to happen here, before the statement is built.
+ *
+ * THE KEY MATCHES 0031, category included. Before 0031 it did not, and the
+ * consequence was not theoretical: the workbook names 2026 수원 연맹회장배 in
+ * both the 일반 and the 핀 section on the same date, so a member swimming the
+ * same event in the same time at both had the fin result dropped here, quietly,
+ * with a row count that looked correct because it counted rows that arrived.
+ *
+ * What survives the widened key is a different thing entirely — two results
+ * identical in member, category, stroke, subcategory, date, distance AND time.
+ * That is the sheet saying the same swim twice, or this parser reading one
+ * twice, and either way somebody should look. So it raises instead of keeping
+ * the first, which is the behaviour that hid the fin bug in the first place.
  */
 export function dedupeRecords(records: ImportedRecord[]): {
   rows: ImportedRecord[]
   dropped: ImportedRecord[]
 } {
   const rows: ImportedRecord[] = []
-  const dropped: ImportedRecord[] = []
+  const duplicates: ImportedRecord[] = []
   const seen = new Set<string>()
 
   for (const r of records) {
@@ -350,18 +402,23 @@ export function dedupeRecords(records: ImportedRecord[]): {
     // otherwise let two different keys collide.
     const key = JSON.stringify([
       r.nickname.toLowerCase(),
+      r.category,
       r.stroke,
       r.subcategory,
       r.eventDate,
       r.distanceM,
       r.resultCentiseconds,
     ])
-    if (seen.has(key)) dropped.push(r)
+    if (seen.has(key)) duplicates.push(r)
     else {
       seen.add(key)
       rows.push(r)
     }
   }
 
-  return { rows, dropped }
+  if (duplicates.length > 0) throw new DuplicateRecordError(duplicates)
+
+  // `dropped` stays in the shape for callers that report on it, and is now
+  // always empty — anything that would have filled it is thrown above.
+  return { rows, dropped: [] }
 }

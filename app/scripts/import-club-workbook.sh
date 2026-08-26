@@ -3,7 +3,14 @@
 #
 #   bash scripts/import-club-workbook.sh <workbook.xlsx>              apply
 #   bash scripts/import-club-workbook.sh <workbook.xlsx> --summary    parse only
-#   bash scripts/import-club-workbook.sh <workbook.xlsx> --print      show the SQL
+#
+# THERE IS NO --print. It existed to eyeball the generated SQL, and that SQL
+# carries every member's name and birth date in plain text — so its whole job
+# was to put personal data on stdout, one `> out.sql` away from being a tracked
+# file in a public repository. --summary answers the same question (what did the
+# parser see, and what will it write) in counts and warnings that name nobody.
+# Anyone who genuinely needs the statements can read toSql.ts, which generates
+# them from synthetic input under test.
 #
 # Safe to run twice: every statement the generator emits is an upsert, and the
 # activity ids are md5 of a stable key rather than random. The script reads the
@@ -40,7 +47,12 @@ MODE=apply
 for arg in "$@"; do
   case "$arg" in
     --summary) MODE=summary ;;
-    --print)   MODE=print ;;
+    --print)
+      echo "error: --print was removed. It wrote every member's name and birth date" >&2
+      echo "       to stdout, one redirect away from a tracked file in a public repo." >&2
+      echo "       Use --summary, which reports counts and warnings that name nobody." >&2
+      exit 2
+      ;;
     *) echo "error: unknown option $arg" >&2; exit 2 ;;
   esac
 done
@@ -50,10 +62,8 @@ case "$MODE" in
     # Parses and reports without emitting SQL, and without connecting.
     node "$SCRIPT_DIR/import/run.ts" "$WORKBOOK" --summary
     ;;
-  print)
-    node "$SCRIPT_DIR/import/run.ts" "$WORKBOOK"
-    ;;
   apply)
+    # Straight down a pipe into psql: the SQL is never a file, not even briefly.
     # pipefail is set by _env.sh, so a parser failure fails the pipeline rather
     # than feeding psql a truncated script.
     node "$SCRIPT_DIR/import/run.ts" "$WORKBOOK" | psql -v ON_ERROR_STOP=1 -X -f -

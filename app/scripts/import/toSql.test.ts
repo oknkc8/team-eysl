@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildFixtureWorkbook } from './fixture.ts'
 import { parseClubWorkbook, type ImportedRecord } from './parse.ts'
-import { dedupeRecords, toSql } from './toSql.ts'
+import { DuplicateRecordError, dedupeRecords, toSql } from './toSql.ts'
 
 const sql = () => toSql(parseClubWorkbook(buildFixtureWorkbook()))
 
@@ -22,15 +22,33 @@ const record = (over: Partial<ImportedRecord> = {}): ImportedRecord => ({
 })
 
 describe('idempotency', () => {
-  it('upserts every table it writes', () => {
+  it('handles a conflict on every table it writes, and never by updating', () => {
     const out = sql()
-    // Without these four, a second run duplicates instead of updating.
-    expect(out).toContain('on conflict (lower(nickname)) do update set')
-    expect(out).toContain('on conflict (id) do update set')
-    expect(out).toContain('on conflict (activity_id, member_id) do update set')
+    // DO NOTHING, not DO UPDATE. DO UPDATE kept the row counts identical while
+    // rewriting real_name, activity title/date and attendance status on every
+    // run — reverting edits people had made in the app. See the header comment
+    // in toSql.ts, and scripts/import/verify-idempotence.sh, which is the thing
+    // that can actually catch a regression here.
+    expect(out).toContain('on conflict (lower(nickname)) do nothing;')
+    expect(out).toContain('on conflict (id) do nothing;')
+    expect(out).toContain('on conflict (activity_id, member_id) do nothing;')
     expect(out).toContain(
-      'on conflict (member_id, stroke, subcategory, event_date, distance_m, result_centiseconds)',
+      'on conflict (member_id, category, stroke, subcategory, event_date, distance_m, ' +
+        'result_centiseconds)',
     )
+    expect(out).not.toContain('do update set')
+    // updated_at = now() on a row whose values did not change is a write that
+    // says something changed. Nothing here should emit one.
+    expect(out).not.toContain('updated_at = now()')
+  })
+
+  it('names the post-0031 conflict target for records', () => {
+    // records_dedup_uq gained `category` in 0031. ON CONFLICT resolves against a
+    // unique index by column set, so naming the old list against the new index
+    // raises 42P10 on the first row — driven and confirmed, not assumed.
+    const out = sql()
+    expect(out).toContain('on conflict (member_id, category, stroke')
+    expect(out).not.toContain('on conflict (member_id, stroke, subcategory')
   })
 
   it('derives activity ids from the thing they identify, not at random', () => {
@@ -40,16 +58,11 @@ describe('idempotency', () => {
     expect(sql()).toBe(sql())
   })
 
-  it('leaves status and role alone when a member already exists', () => {
-    const out = sql()
-    const clause = out.slice(
-      out.indexOf('on conflict (lower(nickname)) do update set'),
-      out.indexOf('updated_at      = now();'),
-    )
-    // An admin who promoted one of these members, or blocked them, must not be
-    // silently reset by the next import.
-    expect(clause).not.toContain('status')
-    expect(clause).not.toContain('role')
+  it('leaves an existing member entirely alone', () => {
+    // Stronger than the previous version, which only checked that status and
+    // role were absent from a DO UPDATE list. Nothing is updated now, so an
+    // admin promotion, a block, and a member's own real_name edit all survive.
+    expect(sql()).toContain('on conflict (lower(nickname)) do nothing;')
   })
 })
 
@@ -104,16 +117,38 @@ describe('escaping', () => {
 })
 
 describe('dedupeRecords', () => {
-  it('collapses two rows that share records_dedup_uq', () => {
-    // Postgres refuses an INSERT whose own VALUES list hits one conflict key
-    // twice, and the real workbook does exactly this: the 핀 section repeats a
-    // meet the 일반 section already holds, on the same date.
+  it('keeps a fin result that shares everything but category with a meet result', () => {
+    // THE BUG 0031 FIXED. The workbook names 2026 수원 연맹회장배 in both the
+    // 일반 and the 핀 section on one date, and the pre-0031 key had no category
+    // — so the fin swim was silently discarded in favour of the pool one, and a
+    // row count could not see it because it counted rows that arrived.
     const { rows, dropped } = dedupeRecords([
       record(),
       record({ category: 'fin', eventName: '같은 날 핀대회' }),
     ])
-    expect(rows).toHaveLength(1)
-    expect(dropped).toHaveLength(1)
+    expect(rows).toHaveLength(2)
+    expect(dropped).toHaveLength(0)
+    expect(rows.map((r) => r.category).sort()).toEqual(['fin', 'meet'])
+  })
+
+  it('raises on a collision that survives the widened key', () => {
+    // Two results identical in member, category, stroke, subcategory, date,
+    // distance AND time is the sheet stating one swim twice, or the block walk
+    // reading it twice. Keeping the first is what hid the fin bug, so this
+    // raises instead — loudly, and before anything is written.
+    expect(() => dedupeRecords([record(), record()])).toThrow(DuplicateRecordError)
+    expect(() => dedupeRecords([record(), record()])).toThrow(/collide on records_dedup_uq/)
+  })
+
+  it('names no member in the duplicate error', () => {
+    // The message reaches stderr and gets pasted into issues and PR comments.
+    try {
+      dedupeRecords([record({ nickname: '홍길동' }), record({ nickname: '홍길동' })])
+      throw new Error('expected a DuplicateRecordError')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DuplicateRecordError)
+      expect((error as Error).message).not.toContain('홍길동')
+    }
   })
 
   it('keeps rows that differ in any part of the key', () => {
