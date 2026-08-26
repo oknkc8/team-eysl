@@ -626,6 +626,24 @@ export type Database = {
           },
         ]
       }
+      pending_object_deletions: {
+        Row: {
+          requested_at: string
+          requested_by: string | null
+          storage_path: string
+        }
+        Insert: {
+          requested_at?: string
+          requested_by?: string | null
+          storage_path: string
+        }
+        Update: {
+          requested_at?: string
+          requested_by?: string | null
+          storage_path?: string
+        }
+        Relationships: []
+      }
       push_endpoint_rejections: {
         Row: {
           attempts: number
@@ -1050,6 +1068,10 @@ export type Database = {
         Returns: string
       }
       can_manage_records: { Args: never; Returns: boolean }
+      clear_object_deletions_v1: {
+        Args: { p_paths: string[] }
+        Returns: string[]
+      }
       create_board_post_v1: {
         Args: { p_body: string; p_title: string }
         Returns: {

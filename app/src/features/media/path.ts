@@ -27,6 +27,16 @@ export function safeObjectName(fileName: string | null | undefined): string {
  * colliding — the upload is issued with upsert:false, so a shared key would
  * fail the second uploader rather than quietly replacing the first one's file.
  * Both are injectable so a test can assert the whole string.
+ *
+ * THIS UNIQUENESS IS NOW LOAD-BEARING SOMEWHERE ELSE, which is worth knowing
+ * before anyone simplifies it. pending_object_deletions (0036) is keyed on the
+ * storage path alone, so a queued deletion and a later upload that reused the
+ * same key would be the same row — and the sweep would remove an object that a
+ * live media_files row legitimately claims. Reuse currently needs the same
+ * member, the same millisecond, the same nonce and the same filename, so it does
+ * not happen; but it does not happen because of this line, not because the queue
+ * defends against it. A move to a deterministic key — a content hash, a
+ * per-member counter, the bare filename — makes that race real, silently.
  */
 export function mediaObjectPath(input: {
   memberId: string

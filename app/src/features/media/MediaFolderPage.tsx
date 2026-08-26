@@ -15,6 +15,7 @@ import {
   type MediaFile,
   type MediaFolder,
 } from './api'
+import { useObjectDeletionSweep } from './useObjectDeletionSweep'
 
 const CARD = {
   padding: 14,
@@ -28,6 +29,9 @@ export function MediaFolderPage() {
   const { user } = useCurrentUser()
   const qc = useQueryClient()
   const navigate = useNavigate()
+  // The screen files are deleted from, so the one most likely to have left a
+  // queued object behind when a tab closed mid-delete.
+  useObjectDeletionSweep()
 
   const folderQuery = useQuery({
     queryKey: ['media-folder', folderId],
