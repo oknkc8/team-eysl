@@ -95,6 +95,22 @@ delete from public.records
 where created_by in (select id from pwtest_member_ids)
    or member_id in (select id from pwtest_member_ids);
 delete from public.record_uploads where uploaded_by in (select id from pwtest_member_ids);
+-- These two delete rows, not bucket objects, and that used to be a leak: an
+-- object whose media_files row is gone is invisible to every session (0036
+-- explains the mechanism), so nothing could ever remove it. The suite uploads
+-- nothing today, which is the only reason it has not been paying for one.
+--
+-- 0036 makes the leak survivable rather than silent — media_files_enqueue_object
+-- _deletion queues each storage_path as its row goes, and the queue entry keeps
+-- the object reachable — but it does not close it here. psql cannot finish the
+-- job: storage.protect_delete() refuses a direct DELETE from storage.objects,
+-- and going around it would drop the metadata and leave the bytes in S3.
+--
+-- So the objects leave the queue when a staff session next opens 미디어, not at
+-- teardown. WHOEVER ADDS A MEDIA-UPLOAD TEST should close it properly instead:
+-- sweep through the Storage API as pwtestadmin after the media_files delete and
+-- before the members delete below, because after that the only account that
+-- could have swept is gone.
 delete from public.media_files where uploader_id in (select id from pwtest_member_ids);
 delete from public.media_folders where created_by in (select id from pwtest_member_ids);
 -- Same reasoning: marked_by is the staffer who tapped, member_id is who was
