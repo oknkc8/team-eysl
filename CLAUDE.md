@@ -110,6 +110,23 @@ Two traps in reading his diffs. A whole-file re-upload makes reformatting look l
 
 **Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`.
 
+**Always branch off `dev`, never off another branch that is still in flight.** This is not style. **Every PR here is squash-merged**, so when the branch you forked from lands, its file arrives on `dev` as a *brand-new blob with no ancestry in common with your copy.* Git then sees one path created independently twice and raises an **add/add conflict** on a file neither of you may have meaningfully changed. That is what happened to `chore/ci-migration-numbers`, and it cost more time on 2026-08-26 than any other single thing.
+
+**Three things about that conflict, because the obvious reading of it is wrong in a dangerous direction.**
+
+**A two-dot diff measures staleness, not danger.** `git diff origin/dev..<branch>` compares tips, so it reports everything that landed on `dev` since you forked as *deletions* — even though a merge would never delete them. `CLAUDE.md | 14 --------------` looked like a PR about to revert someone's work; it was not. Reproduced with `git merge-tree --write-tree`, the merged `CLAUDE.md` came out **byte-identical** to `dev`'s. A three-way merge does not drop lines present on one side only. The two-dot diff fires on every branch that is behind, so as an alarm it is **all false positives** — read it as "this branch lacks things `dev` has", which is a reason to look, not a verdict.
+
+**The danger is in the resolution, not in the diff.** An add/add conflict offers whole files, not hunks. Taking "ours" is where work disappears — and it disappears **silently, having never appeared in the diff anyone reviewed**. So the fix is not a better conflict resolution; it is not having the conflict:
+
+```bash
+git switch -c fix/<thing> origin/dev
+git checkout origin/<stale-branch> -- <the one path you want>
+```
+
+The resulting file list *is* the proof. If it names one path, nothing else can have moved.
+
+**And do not infer one artifact's behaviour from a different artifact's output.** The two-dot `--stat` and the merge result are two different products of the same two commits, and reading the first to predict the second produced a confident, wrong, team-wide rule. When the question is "what will the merge do", the answer comes from `git merge-tree`, which performs the merge.
+
 **`main` is our release line** (changed 2026-08-25; it previously mirrored the president's upstream). `dev` merges into it through a `chore/release-vX.Y.Z` PR, and the merge commit gets a matching `vX.Y.Z` tag. Nothing else lands on `main`.
 
 Mirroring upstream on a local branch turned out to buy nothing: `git fetch upstream` gives `upstream/main` as a remote-tracking ref, and every comparison we actually run — `git diff origin/main..upstream/main`, `git show upstream/main:index.html` — works off that ref directly. So `main` was free to become what it is normally for.
@@ -421,7 +438,11 @@ It sits mid-way through `loadPersistentContent()`, so everything after it is dea
 
 `final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer.
 
-**It ran from `final66` to `final91` — 26 releases — and `final92-unregistered-roster` (`59a67e3`) fixed it.** At `final91` the consumer sat at `index.html:1631` while `loadPersistentContent()` destructured six slots where `final64` destructured seven, so anything downstream of that line had never executed. `final92` put the seventh slot back and gave it a source:
+**It ran from `final66` to `final91` — 19 releases — and `final92-unregistered-roster` (`59a67e3`) fixed it.**
+
+*(That number was first written here as 26, and separately guessed at as 27, both by subtracting `66` from `91`. **His release numbers are not dense.** 67, 68, 74, 82, 84, 88 and 90 never shipped, so the run is 66, 69, 70, 71, 72, 73, 75, 76, 77, 78, 79, 80, 81, 83, 85, 86, 87, 89, 91 — nineteen. Counted by walking every commit and asking each one whether `index.html` used `historicalTrainingRes` without declaring it. **Subtracting two version numbers is arithmetic about a naming scheme, not a count of releases**, and the walk costs one loop.*
+
+*The first walk filtered to commits touching `index.html` and got the same 19 — but it also silently dropped `final59`, a release that changed only `sw.js`. That filter was wrong for the question being asked: a release that ships an untouched broken file still ships the bug. **The answer surviving the removal of a bad filter is evidence; the filter agreeing with the answer would not have been.**)* At `final91` the consumer sat at `index.html:1631` while `loadPersistentContent()` destructured six slots where `final64` destructured seven, so anything downstream of that line had never executed. `final92` put the seventh slot back and gave it a source:
 
 ```diff
 - const [noticeRes,activityRes,memberRes,applicationRes,historyRes,raceHistoryRes]=await Promise.all([
