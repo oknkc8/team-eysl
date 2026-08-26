@@ -1,0 +1,48 @@
+{
+  "//": [
+    "Typechecks supabase/functions/**, which tsconfig.json deliberately does not:",
+    "its include is [src, vite.config.ts], so the Edge Function source sat outside",
+    "every gate this repo has. A type error in push-notify would have been caught",
+    "by nothing and would first appear as a failed deploy or a production runtime",
+    "error.",
+    "",
+    "Run it with: npm run typecheck:functions",
+    "",
+    "WHAT THIS CATCHES: everything about OUR code. Wrong property names, wrong",
+    "argument counts, a value of the wrong type moving between index.ts, send.ts,",
+    "payload.ts and endpoint.ts, a missing await, an unhandled null. That is the",
+    "class of mistake the gap actually exposed us to.",
+    "",
+    "WHAT IT DOES NOT CATCH: whether we are right about Deno or about web-push.",
+    "Both are declared in _shims/ because neither is installed here, so the check",
+    "agrees with our beliefs about them. supabase-js is the exception — it maps to",
+    "the real installed package below, so those types are genuine. This is not a",
+    "substitute for `deno check`; it is the part of that job available without",
+    "Deno, which is not on this machine.",
+    "",
+    "Tests beside the function are excluded: they import from src/, which the app",
+    "tsconfig governs under different settings, and vitest runs them anyway."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "types": [],
+    "paths": {
+      "npm:@supabase/supabase-js@2.112.4": ["./node_modules/@supabase/supabase-js"],
+      "npm:web-push@3.6.7": ["./supabase/functions/_shims/npm-web-push.d.ts"]
+    }
+  },
+  "include": ["supabase/functions/**/*.ts"],
+  "exclude": ["supabase/functions/**/*.test.ts"]
+}

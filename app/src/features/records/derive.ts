@@ -9,6 +9,7 @@
 // stays the only module that knows what a records row actually looks like.
 type Comparable = {
   id: string
+  category: string
   subcategory: string
   stroke: string
   distance_m: number
@@ -28,11 +29,18 @@ export type WithDelta<T> = T & {
   is_personal_best: boolean
 }
 
-// Subcategory is part of the key everywhere below. A relay leg starts from a
-// flying push worth roughly half a second, so letting one share a group with an
-// individual swim would credit a swimmer with an improvement they did not make
-// — and, in personalBests, with a best they never swam off the blocks.
-const eventKey = (r: Comparable) => `${r.subcategory}|${r.stroke}|${r.distance_m}`
+// Category and subcategory are both part of the key everywhere below, and for
+// the same reason. A relay leg starts from a flying push worth roughly half a
+// second, so letting one share a group with an individual swim would credit a
+// swimmer with an improvement they did not make — and, in personalBests, with a
+// best they never swam off the blocks. A 핀 swim is a larger version of the same
+// error: fins are worth several seconds over 50m, so a 자유형 50 with fins
+// grouped against one without would report a spectacular improvement, then a
+// spectacular regression at the next meet. The 대분류 filter added to both
+// record screens is what made this visible — a delta shown under 일반 must be
+// against another 일반 swim.
+const eventKey = (r: Comparable) =>
+  `${r.category}|${r.subcategory}|${r.stroke}|${r.distance_m}`
 
 // The order a Korean meet programme lists events in, taken from the legacy
 // screen's own option lists (index.html:2562-2566). stroke is free text on
@@ -128,4 +136,47 @@ export function relayRecords<T extends Comparable>(records: readonly T[]): T[] {
   return records
     .filter((record) => record.subcategory === 'relay')
     .sort((a, b) => compareChronological(b, a))
+}
+
+/** One meet a member swam at, however many events they swam in it. */
+export type RaceEvent = {
+  /** `event_name` and `event_date` joined — records carry no meet id. */
+  id: string
+  title: string
+  date: string
+  /** How many of their swims came from it, which is the row's whole substance. */
+  swimCount: number
+}
+
+type Attendable = {
+  category: string
+  event_name: string
+  event_date: string
+}
+
+/**
+ * The meets a member competed at, newest first, rebuilt from their results.
+ *
+ * Same source as his 대회 참가 현황 (index.html:4079-4085): a meet is not a row
+ * in this schema, so the evidence that somebody swam at one is that they have
+ * results from it. 기타 is excluded because it is not a competition, and a
+ * record with no `event_name` is skipped rather than grouped under an empty
+ * heading — it attests to a swim, not to an identifiable meet.
+ */
+export function raceEvents(records: readonly Attendable[]): RaceEvent[] {
+  const byMeet = new Map<string, RaceEvent>()
+
+  for (const record of records) {
+    if (record.category !== 'meet' && record.category !== 'fin') continue
+    const title = record.event_name.trim()
+    if (title === '') continue
+
+    const id = `${title}|${record.event_date}`
+    const existing = byMeet.get(id)
+    if (existing) existing.swimCount += 1
+    else byMeet.set(id, { id, title, date: record.event_date, swimCount: 1 })
+  }
+
+  // Same meet name on two dates is two entries, so the date decides the order.
+  return [...byMeet.values()].sort((a, b) => b.date.localeCompare(a.date))
 }

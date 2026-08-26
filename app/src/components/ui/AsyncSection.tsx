@@ -46,94 +46,58 @@ export function AsyncSection<T>({
   return <>{children(query.data)}</>
 }
 
-const CARD = {
-  padding: 14,
-  border: '1px solid #e1e5ea',
-  borderRadius: 18,
-  background: '#fff',
-} as const
-
-// Keyframes and prefers-reduced-motion cannot be expressed as inline styles, so
-// this one rule set lives in a <style> tag. React 19 hoists it and dedupes by
-// href, so rendering several sections at once still yields a single element.
-const SHIMMER_CSS = `
-@keyframes eysl-shimmer { from { background-position: 100% 50% } to { background-position: 0 50% } }
-.eysl-shimmer-bar {
-  height: 12px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #eef0f2 25%, #f7f8f9 37%, #eef0f2 63%);
-  background-size: 400% 100%;
-  animation: eysl-shimmer 1.4s ease infinite;
-}
-@media (prefers-reduced-motion: reduce) { .eysl-shimmer-bar { animation: none } }
-`
-
+// The shimmer's keyframes used to live in a <style> tag here, because inline
+// styles cannot express @keyframes or prefers-reduced-motion. Now that the app
+// has a stylesheet, both rules sit in components.css with everything else and
+// this file carries no CSS at all.
 export function Shimmer({ rows = 3 }: { rows?: number }) {
   return (
-    <div aria-busy="true" style={{ display: 'grid', gap: 9 }}>
-      <style href="eysl-shimmer" precedence="default">
-        {SHIMMER_CSS}
-      </style>
+    <div className="shimmer" aria-busy="true">
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} style={CARD}>
-          <div className="eysl-shimmer-bar" style={{ width: '44%' }} />
-          <div className="eysl-shimmer-bar" style={{ width: '72%', marginTop: 10 }} />
+        <div key={i} className="card">
+          <div className="shimmer-bar" style={{ width: '44%' }} />
+          <div className="shimmer-bar" style={{ width: '72%' }} />
         </div>
       ))}
-      <span style={SR_ONLY}>불러오는 중</span>
+      <span className="sr-only">불러오는 중</span>
     </div>
   )
 }
 
 function EmptyState({ message }: { message: ReactNode }) {
   return (
-    <div style={{ ...CARD, textAlign: 'center', padding: '32px 18px', color: '#6b7178' }}>
+    <div className="empty">
       <EmptyIcon />
-      <p style={{ margin: '10px 0 0', fontSize: 13 }}>{message}</p>
+      <p>{message}</p>
     </div>
   )
 }
 
 function ErrorState({ message, onRetry }: { message: ReactNode; onRetry: () => void }) {
   return (
-    <div
-      role="alert"
-      style={{
-        ...CARD,
-        textAlign: 'center',
-        padding: '32px 18px',
-        borderColor: '#a33',
-        background: '#fff0f0',
-        color: '#a33',
-      }}
-    >
+    <div className="errorState" role="alert">
       <ErrorIcon />
-      <p style={{ margin: '10px 0 0', fontSize: 13 }}>{message}</p>
-      <button
-        onClick={onRetry}
-        style={{
-          marginTop: 14,
-          minHeight: 44,
-          minWidth: 108,
-          padding: '0 18px',
-          borderRadius: 13,
-          border: '1px solid #a33',
-          background: '#fff',
-          color: '#a33',
-          fontSize: 13,
-        }}
-      >
+      <p>{message}</p>
+      <button onClick={onRetry} className="btn">
         다시 시도
       </button>
     </div>
   )
 }
 
+// Both icons stroke themselves in currentColor, so each one takes the tone of
+// the state it sits in — grey inside .empty, danger red inside .errorState —
+// and there is no second place to update when either colour moves.
 function EmptyIcon() {
   return (
     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="4" y="3" width="16" height="18" rx="3" stroke="#c3c9d1" strokeWidth="1.6" />
-      <path d="M8 9h8M8 13h8M8 17h5" stroke="#c3c9d1" strokeWidth="1.6" strokeLinecap="round" />
+      <rect x="4" y="3" width="16" height="18" rx="3" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M8 9h8M8 13h8M8 17h5"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
     </svg>
   )
 }
@@ -141,18 +105,9 @@ function EmptyIcon() {
 function ErrorIcon() {
   return (
     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" stroke="#a33" strokeWidth="1.6" />
-      <path d="M12 7v6" stroke="#a33" strokeWidth="1.8" strokeLinecap="round" />
-      <circle cx="12" cy="16.4" r="1.1" fill="#a33" />
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 7v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="12" cy="16.4" r="1.1" fill="currentColor" />
     </svg>
   )
 }
-
-const SR_ONLY = {
-  position: 'absolute',
-  width: 1,
-  height: 1,
-  overflow: 'hidden',
-  clip: 'rect(0 0 0 0)',
-  whiteSpace: 'nowrap',
-} as const

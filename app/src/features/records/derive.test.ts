@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { personalBests, relayRecords, withDeltas } from './derive'
+import { personalBests, raceEvents, relayRecords, withDeltas } from './derive'
 
 type Row = {
   id: string
+  category: string
   subcategory: string
   stroke: string
   distance_m: number
@@ -19,6 +20,7 @@ function row(over: Partial<Row> & { event_date: string; result_centiseconds: num
   sequence += 1
   return {
     id: `00000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`,
+    category: 'meet',
     subcategory: 'personal',
     stroke: '자유형',
     distance_m: 50,
@@ -58,6 +60,21 @@ describe('personalBests', () => {
 
     expect(best).toHaveLength(1)
     expect(best[0]?.result_centiseconds).toBe(3308)
+  })
+
+  // Fins are worth several seconds over 50m, so a finned swim standing as the
+  // best for the unfinned event would be a time the swimmer cannot reproduce.
+  it('does not let a 핀 swim become the best for the same event at a meet', () => {
+    const best = personalBests([
+      row({ event_date: '2026-03-14', result_centiseconds: 3308 }),
+      row({ event_date: '2026-05-02', category: 'fin', result_centiseconds: 2800 }),
+    ])
+
+    expect(best).toHaveLength(2)
+    expect(best.map((r) => [r.category, r.result_centiseconds])).toEqual([
+      ['meet', 3308],
+      ['fin', 2800],
+    ])
   })
 
   it('orders events the way a meet programme lists them, then by distance', () => {
@@ -146,6 +163,18 @@ describe('withDeltas', () => {
     expect(history.map((r) => r.delta_centiseconds)).toEqual([null, null])
   })
 
+  // The mirror of the personalBests case above, and the one the 대분류 filter
+  // made visible: a 27.00 finned swim after a 33.08 unfinned one is not a six
+  // second improvement, and the 일반 tab must never claim it was.
+  it('does not compare a 핀 swim against the same event at a meet', () => {
+    const history = withDeltas([
+      row({ event_date: '2026-03-14', result_centiseconds: 3308 }),
+      row({ event_date: '2026-05-02', category: 'fin', result_centiseconds: 2700 }),
+    ])
+
+    expect(history.map((r) => r.delta_centiseconds)).toEqual([null, null])
+  })
+
   it('flags a swim that beat everything before it', () => {
     const history = withDeltas([
       row({ event_date: '2026-03-14', result_centiseconds: 3308 }),
@@ -210,6 +239,53 @@ describe('withDeltas', () => {
     withDeltas(rows)
 
     expect(rows.map((r) => r.id)).toEqual(order)
+  })
+})
+
+describe('raceEvents', () => {
+  const meet = (over: { event_name: string; event_date: string; category?: string }) => ({
+    category: 'meet',
+    ...over,
+  })
+
+  it('collapses several swims at one meet into a single entry', () => {
+    const events = raceEvents([
+      meet({ event_name: '동아수영대회', event_date: '2026-05-02' }),
+      meet({ event_name: '동아수영대회', event_date: '2026-05-02' }),
+      meet({ event_name: '동아수영대회', event_date: '2026-05-02' }),
+    ])
+
+    expect(events).toHaveLength(1)
+    expect(events[0]?.swimCount).toBe(3)
+  })
+
+  it('treats the same meet name on another date as another meet, newest first', () => {
+    const events = raceEvents([
+      meet({ event_name: '동아수영대회', event_date: '2025-05-02' }),
+      meet({ event_name: '동아수영대회', event_date: '2026-05-02' }),
+    ])
+
+    expect(events.map((event) => event.date)).toEqual(['2026-05-02', '2025-05-02'])
+  })
+
+  it('counts a fin meet, since it is still a competition', () => {
+    const events = raceEvents([
+      meet({ event_name: '핀수영대회', event_date: '2026-05-02', category: 'fin' }),
+    ])
+
+    expect(events).toHaveLength(1)
+  })
+
+  // 기타 is not a competition, and a swim with no meet name attests to a swim
+  // rather than to an identifiable meet — grouping it would print a blank row.
+  it('skips 기타 rows and rows with no meet name', () => {
+    const events = raceEvents([
+      meet({ event_name: '단합대회', event_date: '2026-05-02', category: 'other' }),
+      meet({ event_name: '   ', event_date: '2026-06-20' }),
+      meet({ event_name: '', event_date: '2026-06-21' }),
+    ])
+
+    expect(events).toEqual([])
   })
 })
 

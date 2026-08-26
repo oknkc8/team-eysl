@@ -55,7 +55,8 @@ describe('parseRankings', () => {
     expect(data.year).toBe(2026)
     expect(data.attendance.lifetime).toHaveLength(2)
     expect(data.late.lifetime[0]).toEqual({ rank: 1, nickname: '가람', count: 3 })
-    expect(data.improvements.yoy_pb[0].seconds).toBe(3)
+    expect(data.improvements.yoy_pb).toHaveLength(1)
+    expect(data.improvements.yoy_pb[0]!.seconds).toBe(3)
   })
 
   // The server answers a caller who is not an approved member with a payload
@@ -102,7 +103,8 @@ describe('parseRankings', () => {
         within_year: [{ rank: 1, nickname: '가람', stroke: '자유형', distance: 50, seconds: 1.5 }],
       },
     })
-    expect(data.improvements.within_year[0].seconds).toBe(1.5)
+    expect(data.improvements.within_year).toHaveLength(1)
+    expect(data.improvements.within_year[0]!.seconds).toBe(1.5)
   })
 })
 
@@ -130,8 +132,12 @@ describe('isRankingsEmpty', () => {
 describe('countListsFor', () => {
   it('picks the lists belonging to the kind', () => {
     const data = parseRankings(FULL)
-    expect(countListsFor(data, 'attendance').lifetime[0].count).toBe(9)
-    expect(countListsFor(data, 'late').lifetime[0].count).toBe(3)
+    const attendanceLifetime = countListsFor(data, 'attendance').lifetime
+    expect(attendanceLifetime).toHaveLength(2)
+    expect(attendanceLifetime[0]!.count).toBe(9)
+    const lateLifetime = countListsFor(data, 'late').lifetime
+    expect(lateLifetime).toHaveLength(1)
+    expect(lateLifetime[0]!.count).toBe(3)
   })
 })
 
@@ -149,8 +155,10 @@ describe('groupByStroke', () => {
 
   it('files each row under its own stroke', () => {
     const groups = groupByStroke(rows)
-    expect(groups[0].rows.map((row) => row.nickname)).toEqual(['나루', '가람'])
-    expect(groups[1].rows.map((row) => row.nickname)).toEqual(['가람'])
+    // groupByStroke always returns one entry per STROKES (4), never fewer —
+    // asserted by the previous test — so indexing here can't be out of range.
+    expect(groups[0]!.rows.map((row) => row.nickname)).toEqual(['나루', '가람'])
+    expect(groups[1]!.rows.map((row) => row.nickname)).toEqual(['가람'])
   })
 
   // Empty groups are kept rather than filtered: the screen prints all four
@@ -170,7 +178,9 @@ describe('groupByStroke', () => {
       distance: 50,
       seconds: 10,
     }
-    expect(groupByStroke([finRow])[0].rows).toEqual([])
+    // Same fixed-length guarantee as above: groupByStroke([finRow]) still
+    // returns all four STROKES entries, so index 0 is never undefined.
+    expect(groupByStroke([finRow])[0]!.rows).toEqual([])
   })
 })
 

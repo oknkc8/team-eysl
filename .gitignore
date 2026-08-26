@@ -38,3 +38,12 @@ npm-debug.log*
 
 # supabase CLI scratch
 app/supabase/.temp/
+
+# Playwright. `.auth/` holds live Supabase sessions for the seeded test
+# accounts — short-lived and only ever against our dev project, but they are
+# credentials and this repository is public.
+app/e2e/.auth/
+app/playwright-report/
+app/test-results/
+app/blob-report/
+.playwright-cache/

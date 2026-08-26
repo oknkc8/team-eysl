@@ -1,0 +1,32 @@
+{
+  "//": [
+    "Typechecks e2e/** and playwright.config.ts, which tsconfig.json deliberately",
+    "does not.",
+    "",
+    "Run it with: npm run typecheck:e2e",
+    "",
+    "WHY IT IS SEPARATE. The app config sets types to [vitest/globals,",
+    "vite/client] on purpose: src/ is browser code, and adding 'node' there would",
+    "let a screen reach for `process.env` or `node:fs` and still typecheck, right",
+    "up until it failed on someone's phone. The e2e code is the opposite — it runs",
+    "in node, spawns psql, and reads process.env.CI — so it needs exactly the",
+    "types src/ must not have. Two configs is how each gets what it needs without",
+    "either getting what it must not have.",
+    "",
+    "This is the same split tsconfig.functions.json already makes for the Edge",
+    "Functions, and for the same reason.",
+    "",
+    "WHAT THIS CATCHES: a spec that drifts from the app — a fixture id renamed, a",
+    "helper whose signature changed, a Playwright API used wrongly. Without it the",
+    "only signal would be a failing run, which is slower and blames the wrong",
+    "thing.",
+    "",
+    "WHAT IT DOES NOT CATCH: whether the selectors match anything. No type says a",
+    "heading reads 공지사항; only running the suite does."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["e2e", "playwright.config.ts"]
+}

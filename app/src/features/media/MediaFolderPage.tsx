@@ -2,7 +2,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { useCurrentUser } from '../auth/useCurrentUser'
-import { isStaff } from '../auth/schema'
 import { MediaItemActions } from './MediaItemActions'
 import { MediaTile } from './MediaTile'
 import { UploadPanel } from './UploadPanel'
@@ -67,10 +66,12 @@ export function MediaFolderPage() {
         {(folder) => (
           <FolderHeader
             folder={folder}
-            // Mirrors media_folders_update / _delete (0004:232-238). RLS is what
+            // Owner only, matching media_folders_update and
+            // delete_media_folder_v1 (0021) — and matching canManageMediaOwner
+            // (upstream:2930), which is where the rule comes from. RLS is what
             // enforces it; a member who called the API anyway would match zero
             // rows, which renameFolder/deleteFolder report as a refusal.
-            canManage={folder.created_by === user?.id || isStaff(user)}
+            canManage={folder.created_by === user?.id}
             onRenamed={refresh}
             // After the folder is gone there is nothing left on this screen to
             // show, so leave rather than render a heading for a deleted row.
@@ -82,16 +83,18 @@ export function MediaFolderPage() {
         )}
       </AsyncSection>
 
-      {/* Presentation only — media_files_insert (0004) accepts any approved
-          member, so this hides the control rather than withholding the ability. */}
-      {isStaff(user) && (
-        <UploadPanel
-          folderId={folderId}
-          inputId="media-upload"
-          label="파일 올리기"
-          onUploaded={refresh}
-        />
-      )}
+      {/* Shown to everyone who can reach this screen, because everyone who can
+          reach it may upload: 미디어 is a club album that every member posts to
+          (uploadToFolder, upstream:2946, is ungated and so is the button that
+          calls it, upstream:1185). RequireAuth turns away anyone not approved
+          (guards.tsx:21) and media_files_insert (0021) refuses them again, so
+          there is no member here who would be handed a form that fails. */}
+      <UploadPanel
+        folderId={folderId}
+        inputId="media-upload"
+        label="파일 올리기"
+        onUploaded={refresh}
+      />
 
       <div style={{ marginTop: 16 }}>
         <AsyncSection
@@ -170,7 +173,9 @@ function Gallery({ files, onDone }: { files: MediaFile[]; onDone: () => Promise<
               own square with a spinner rather than putting the list skeleton
               over a gallery that is otherwise already there. */}
           <MediaTile file={file} />
-          {(file.uploader_id === user?.id || isStaff(user)) && (
+          {/* The uploader, and only the uploader — media_files_update / _delete
+              (0021), after canManageMediaOwner (upstream:2930). */}
+          {file.uploader_id === user?.id && (
             <MediaItemActions
               name={file.file_name}
               confirmMessage={`"${file.file_name}" 파일을 삭제할까요?\n\n폴더와 저장소에서 모두 지워지고 되돌릴 수 없습니다.`}
