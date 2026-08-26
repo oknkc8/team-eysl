@@ -1,5 +1,6 @@
 import { test as setup } from '@playwright/test'
 import { STATE, signIn } from './fixtures'
+import { STAMP_PATH, STAMP_VALUE } from '../playwright.config'
 
 /**
  * Signs each seeded role in once and saves its session, so the smoke suite pays
@@ -12,6 +13,40 @@ import { STATE, signIn } from './fixtures'
  * the whole suite down with it, instead of letting the one test that names the
  * bug report it.
  */
+
+/**
+ * Refuse to test a server that is not ours. This runs before every login.
+ *
+ * The derived port makes a collision unlikely and undetectable; this makes it
+ * detectable. `reuseExistingServer` adopts whatever answers on the port without
+ * running the preview command, so `--strictPort` never executes and a colliding
+ * worktree's server — or anything a developer left running — is used silently.
+ * The symptom is every test failing on catch-all timeouts, which reads as your
+ * own code being broken.
+ *
+ * The failure names the other path, because "wrong server" is not something
+ * anyone guesses from a wall of timeouts.
+ */
+setup('the server on this port is our build', async ({ baseURL }) => {
+  const response = await fetch(`${baseURL}${STAMP_PATH}`)
+  const served = response.ok ? (await response.text()).trim() : ''
+  if (served === STAMP_VALUE) return
+
+  // A single-page app answers 200 with index.html for any unknown path, so a
+  // build without the stamp looks like a successful fetch of HTML rather than a
+  // 404. Saying that plainly beats printing a doctype at somebody.
+  const describe = served.startsWith('<')
+    ? "(that server's index.html — its build predates this check, so it is not ours)"
+    : served || `(no ${STAMP_PATH}, HTTP ${response.status})`
+
+  throw new Error(
+    `${baseURL} is not serving this worktree's build.\n` +
+      `  expected: ${STAMP_VALUE}\n` +
+      `  serving : ${describe}\n` +
+      'Another worktree derived the same port, or a stale server is still up. ' +
+      'Set EYSL_E2E_PORT to something free, or stop the other server.',
+  )
+})
 
 setup('authenticate as 총관리자', async ({ page }) => {
   await signIn(page, 'pwtestadmin')

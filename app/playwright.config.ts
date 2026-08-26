@@ -48,8 +48,42 @@ const derivedPort =
   PORT_FLOOR +
   (parseInt(createHash('sha256').update(HERE).digest('hex').slice(0, 8), 16) % PORT_SPAN)
 
-export const PORT = Number(process.env.EYSL_E2E_PORT ?? derivedPort)
+/**
+ * The override, refused rather than coerced when it is not a port.
+ *
+ * `Number('')` is 0 and `Number('nope')` is NaN, and both would sail into the
+ * preview command and produce a confusing failure a long way from the typo.
+ */
+function overridePort(raw: string): number {
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value < 1024 || value > 65535) {
+    throw new Error(
+      `EYSL_E2E_PORT must be an integer between 1024 and 65535, got ${JSON.stringify(raw)}`,
+    )
+  }
+  return value
+}
+
+export const PORT =
+  process.env.EYSL_E2E_PORT === undefined ? derivedPort : overridePort(process.env.EYSL_E2E_PORT)
 export const BASE_URL = `http://localhost:${PORT}`
+
+/**
+ * Proof that the server answering on PORT is serving OUR build.
+ *
+ * The derived port makes a collision unlikely; it does not make one detectable,
+ * and `--strictPort` is no help because with `reuseExistingServer` Playwright
+ * never runs the preview command at all when the URL already answers — so the
+ * flag that was supposed to make a collision loud is not executed in the one
+ * case that matters. Any server on this port is adopted: a colliding worktree's,
+ * or something a developer left running yesterday.
+ *
+ * So the build writes this file and auth.setup.ts reads it back over HTTP. It
+ * turns "silently testing someone else's bundle" — which reads as your own code
+ * being broken — into one loud failure that names the other worktree.
+ */
+export const STAMP_PATH = '/eysl-e2e-stamp.txt'
+export const STAMP_VALUE = HERE
 
 /**
  * Browser smoke coverage for the rewrite.
@@ -103,7 +137,14 @@ export default defineConfig({
   // server with no watcher at all, so it sidesteps the limit entirely — and it
   // serves the built bundle, which is the artefact that actually ships.
   webServer: {
-    command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
+    // The stamp is written into dist/ after the build and before the server
+    // starts, so anything answering on this port either serves our stamp or is
+    // not us. Written here rather than in public/ because public/ is committed
+    // and this value is per-worktree.
+    command:
+      `npm run build` +
+      ` && node -e "require('fs').writeFileSync('dist${STAMP_PATH}', process.argv[1])" ${JSON.stringify(STAMP_VALUE)}` +
+      ` && npm run preview -- --port ${PORT} --strictPort`,
     url: BASE_URL,
     // Safe again now that PORT is ours alone: this reuses OUR server between
     // runs and can no longer inherit a sibling worktree's.
