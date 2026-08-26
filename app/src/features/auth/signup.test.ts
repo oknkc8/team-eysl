@@ -6,15 +6,24 @@ import {
   PASSWORD_MAX_BYTES,
 } from './signup'
 
-const ok = { nickname: '홍길동', password: 'swimclub2026' }
+// 홍길동 until 0032, which is the change in one line: a nickname is now
+// 이름/출생년도/성별/지역. The length and password rules below are unchanged and
+// are still what this file is about — the shape has its own file,
+// nickname.test.ts, including the proof that 영희 and 철수 still work everywhere
+// they already appear.
+const ok = { nickname: '홍길동/98/남/관악', password: 'swimclub2026' }
 
 describe('validateSignup', () => {
   it('accepts what the president’s form accepts', () => {
     expect(validateSignup(ok)).toBeNull()
   })
 
-  it('accepts a two-character nickname, the shortest his form allows', () => {
-    expect(validateSignup({ ...ok, nickname: '민수' })).toBeNull()
+  // Was '민수' — two characters, the shortest his form allowed. The format makes
+  // nine the real floor (`가/98/남/가`), so that is what the shortest acceptable
+  // nickname looks like now. The 2-character rule below still exists and still
+  // fires first; it is simply no longer reachable on its own.
+  it('accepts the shortest nickname the format allows', () => {
+    expect(validateSignup({ ...ok, nickname: '가/98/남/가' })).toBeNull()
   })
 
   it('refuses a one-character nickname', () => {
@@ -66,16 +75,20 @@ describe('readSignupResult', () => {
     expect(readSignupResult({ ok: true })).toBeNull()
   })
 
-  it('carries the server’s own sentence for a taken nickname', () => {
+  // `already_registered` covers both server arms since 0032 — a match against
+  // the club roster, and a real unique violation. They answer identically on
+  // purpose: an anonymous caller who could tell them apart could ask which
+  // people are club members.
+  it('carries the server’s own sentence for an already-registered member', () => {
     expect(
       readSignupResult({
         ok: false,
-        reason: 'nickname_taken',
-        message: '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.',
+        reason: 'already_registered',
+        message: '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.',
       }),
     ).toEqual({
-      reason: 'nickname_taken',
-      message: '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.',
+      reason: 'already_registered',
+      message: '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.',
       retryAfterSeconds: null,
     })
   })
@@ -109,9 +122,11 @@ describe('readSignupResult', () => {
 })
 
 describe('signupErrorMessage', () => {
+  // Since 0032 this no longer tells them to pick another nickname: the format
+  // leaves nothing to pick. It sends them to an admin, like the server does.
   it('names the duplicate nickname rather than the address behind it', () => {
     expect(signupErrorMessage({ message: 'User already registered', status: 422 })).toBe(
-      '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.',
+      '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.',
     )
   })
 

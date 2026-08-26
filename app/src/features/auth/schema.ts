@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { canonicalNickname } from './nickname'
 
 export const roleSchema = z.enum(['member', 'admin', 'master_admin'])
 export const memberStatusSchema = z.enum(['pending', 'approved', 'rejected', 'blocked'])
@@ -26,5 +27,14 @@ export const isMasterAdmin = (u: CurrentUser | null | undefined) => u?.role === 
 // `login-member` edge function whose source lives in the president's project, so
 // we can neither read nor deploy it; production cutover has to confirm its real
 // semantics separately.
+//
+// canonicalNickname() rather than .trim(): NFC, then lowercased. The address is
+// derived here and compared against what register_member_v1 stored, which is
+// `lower(normalize(btrim(…), nfc))`. Without the normalisation a member whose
+// IME emits decomposed jamo — visually identical Hangul — computes a DIFFERENT
+// address from their own account and simply cannot sign in. LoginPage answers
+// every failure with one deliberately vague sentence, so this would have been
+// invisible from the outside: the right password, refused, with no explanation
+// available to the person or to whoever they asked for help.
 export const emailForNickname = (nickname: string) =>
-  `${nickname.trim().toLowerCase()}@eysl.local`
+  `${canonicalNickname(nickname).toLowerCase()}@eysl.local`

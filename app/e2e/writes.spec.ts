@@ -545,7 +545,15 @@ test.describe('기록 등록', () => {
       await page.goto('/admin/records/new')
       await waitForScreen(page)
 
-      await page.getByLabel('회원', { exact: true }).selectOption({ label: 'pwtestmember2' })
+      // `닉네임 (short_name)`, not the bare nickname: AdminRecordEditPage:202
+      // appends short_name whenever the member has one, and seed.sql now gives
+      // the fixtures one because 0032's signup guard reads it. Every member the
+      // workbook importer creates has short_name equal to their nickname, so
+      // this doubled label is what an admin genuinely sees for the club's own
+      // roster today — the fixture had simply never resembled a real row before.
+      await page
+        .getByLabel('회원', { exact: true })
+        .selectOption({ label: 'pwtestmember2 (pwtestmember2)' })
       // 일반 수영대회 · 개인전 are the form's defaults; pressing them anyway would
       // test the chips rather than the write.
       await page.getByRole('button', { name: '자유형', exact: true }).click()

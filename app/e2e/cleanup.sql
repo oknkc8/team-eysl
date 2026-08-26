@@ -46,6 +46,34 @@ insert into pwtest_member_ids (id)
 select ('e0000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
 from generate_series(1, 12) as n;
 
+-- The accounts signup.spec.ts creates by pressing the button.
+--
+-- THIS BLOCK EXISTS BECAUSE THE SUITE WAS LEAKING. Those accounts are made
+-- through the real 가입 신청 flow, so their ids are random and appear in neither
+-- list above; the deletes below removed their auth.users rows on the email
+-- shape and left the members rows behind. members_auth_user_id_fkey is ON
+-- DELETE SET NULL, so each run stranded an approved-or-pending member with no
+-- login in a database that also holds the real club roster. Measured after two
+-- runs: 41 members became 55, fourteen of them orphans, two of them `approved`.
+--
+-- It also made the suite non-idempotent. A signup test using a FIXED nickname —
+-- the roster-guard test has to, because the guard matches the seeded fixture's
+-- name — got `ok:true` on the first run and `nickname_taken` on the second,
+-- from a row nothing could see.
+--
+-- OWNERSHIP IS STILL NOT INFERRED FROM A NICKNAME. It comes from the auth
+-- account, on exactly the `pwtest%@eysl.local` predicate the auth deletes below
+-- already trust — a shape only this suite produces, since the importer refuses
+-- the pwtest prefix outright (scripts/import/parse.ts, ReservedNicknameError).
+-- Joining through auth_user_id rather than matching members.nickname is what
+-- keeps the safety property #10 established: a real member is never named here.
+insert into pwtest_member_ids (id)
+select m.id
+  from public.members m
+  join auth.users u on u.id = m.auth_user_id
+ where u.email like 'pwtest%@eysl.local'
+on conflict (id) do nothing;
+
 -- Captured before the member rows go, because auth_user_id is the only link
 -- from a seeded member to the auth.users row 0027's trigger created for it.
 create temporary table pwtest_auth_ids as

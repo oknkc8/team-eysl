@@ -72,22 +72,34 @@ begin;
 -- fixtures.ts has to name them: /members/:memberId and /chat/dm/:memberId
 -- cannot be visited without one, and a spec that queried for the id first would
 -- need database credentials in the browser process.
+-- short_name / birth_year / gender are here because 0032's signup guard reads
+-- them. The workbook importer fills those three columns for every member it
+-- creates, and they are what makes a returning member recognisable when they
+-- sign up under the 이름/출생년도/성별/지역 format — a fixture without them looks
+-- like nothing the club actually has, and the guard would have no row to catch.
+--
+-- `location` is deliberately left null, matching the import: the spreadsheet
+-- carried no region column, which is exactly why the guard ignores that segment.
 create temporary table pwtest_accounts (
   nickname   text primary key,
   status     text not null,
   role       text not null,
   member_id  uuid not null,
+  birth_year smallint not null,
+  gender     text not null,
   auth_id    uuid not null default gen_random_uuid()
 ) on commit drop;
 
-insert into pwtest_accounts (nickname, status, role, member_id) values
+insert into pwtest_accounts (nickname, status, role, member_id, birth_year, gender) values
   -- 총관리자: reaches every screen, including the three master-admin ones.
-  ('pwtestadmin',   'approved', 'master_admin', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
-  -- An ordinary approved member: the refusal case for the admin routes.
-  ('pwtestmember',  'approved', 'member',       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+  ('pwtestadmin',   'approved', 'master_admin', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1980, '남'),
+  -- An ordinary approved member: the refusal case for the admin routes, and the
+  -- roster row 0032's signup guard is tested against. 1970 so the two-digit year
+  -- in that test (`70`) is unambiguous.
+  ('pwtestmember',  'approved', 'member',       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 1970, '남'),
   -- Signed up, not yet admitted. The state a real first user meets, so it gets
   -- an account rather than being tested only as an absence.
-  ('pwtestpending', 'pending',  'member',       'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
+  ('pwtestpending', 'pending',  'member',       'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 1990, '여'),
   -- A second ordinary member, which only the write suite needs.
   --
   -- Two of the legacy app's data-loss bugs are races between two people, and a
@@ -96,7 +108,7 @@ insert into pwtest_accounts (nickname, status, role, member_id) values
   -- branches through apply_to_activity() and every RLS policy they touch. The
   -- bug the president's members actually hit is two members, so the fixture is
   -- two members.
-  ('pwtestmember2', 'approved', 'member',       'dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+  ('pwtestmember2', 'approved', 'member',       'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 1995, '여');
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
@@ -169,10 +181,16 @@ from pwtest_accounts a;
 -- id is rewritten too, so fixtures.ts can name the ids literally. Safe only
 -- because these rows are seconds old and nothing references them yet.
 update public.members m
-set id        = a.member_id,
-    real_name = a.nickname || ' 테스트',
-    status    = a.status,
-    role      = a.role
+set id         = a.member_id,
+    real_name  = a.nickname || ' 테스트',
+    status     = a.status,
+    role       = a.role,
+    -- The three the workbook importer fills, and that 0032's signup guard
+    -- matches on. short_name is the nickname because for an imported member it
+    -- is: the spreadsheet's 이름 column becomes both.
+    short_name = a.nickname,
+    birth_year = a.birth_year,
+    gender     = a.gender
 from pwtest_accounts a
 where m.auth_user_id = a.auth_id;
 
