@@ -78,6 +78,17 @@ final59-event-top5-yoy
 
 Walking `git show <sha>:sw.js | grep VERSION` across `origin/main..upstream/main` is the cheapest way to see what a batch of uploads was actually about — far faster than reading a whole-file diff, and it names his intent rather than yours.
 
+**다만 이 walk이 알려주는 것은 그가 무엇을 하려 했는지뿐이고, 그 파일이 실제로 돌아갔다는 근거는 조금도 되지 않는다.** 2026-08-26에 확인한 바로는 `sw.js`가 `final47`부터 `final83`까지 **31개 릴리스 연속으로 파싱 자체가 되지 않았다**. 원인은 3번 줄의 괄호 하나로, `e.waitUntil(`은 닫혔는데 `self.addEventListener(`가 끝내 닫히지 않았다.
+
+```
+a2afc67  final78-swimming-team-board   node --check -> SyntaxError: missing ) after argument list
+265e14d  final85-push-true-reset       node --check -> ok   (처음으로 파싱된 버전)
+```
+
+SyntaxError가 나는 서비스워커는 설치되지 않는다. 그동안 `pushManager`도, `push` 이벤트도, 캐시도 없었다는 뜻이다. 그런데도 VERSION 문자열은 그 31개 릴리스 내내 꼬박꼬박 새 이름으로 바뀌었다. 그가 `push-repair`, `push-autofix`, `push-clean-start`라고 이름 붙인 릴리스들은 **브라우저가 읽기를 거부한 파일 안에서 푸시를 고치고 있었다.**
+
+그러니 walk에서 무언가를 읽어낼 때는 한 단계를 더 거친다. 파싱 여부는 눈으로 괄호를 세서 판단하지 말고 `node --check`로 확인한다 — 파서에 대한 질문은 파서만 답할 수 있고, 실제로 돌려 보면 커밋 전체를 훑는 값이 덤으로 따라온다.
+
 Two traps in reading his diffs. A whole-file re-upload makes reformatting look like change, so separate real behaviour from churn before concluding anything. And an upload can be **truncated**: `3d1be2b` cut `index.html` to 246 lines and `954d9a7` restored it two minutes later, so a per-commit diff across that pair shows enormous phantom changes. Diff cumulatively (`origin/main..upstream/main`) unless you specifically need one commit.
 
 ## Workflow rules
