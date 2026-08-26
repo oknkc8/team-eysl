@@ -153,6 +153,13 @@ Four things that cost real time when skipped:
 - **A teammate's idle notification is not a report.** Their final message does not reach the lead automatically — ask for the full deliverable via `SendMessage` (bare name, no `@session` suffix) or it is lost.
 - **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
 - **Hand out migration numbers up front; do not let agents pick.** Checking `ls` and the ledger immediately before writing narrows the race, it does not close it — `0020` and `0024` were each claimed twice on 2026-08-25, the second collision forty-eight seconds apart, by parties who had both just checked. Resolving it afterwards means renaming a file, deleting a ledger row and re-applying, with a window where the ledger and the directory disagree. Assign `0031` to one agent and `0032` to the next in their briefs, or give only one of them the task.
+
+  **어디를 보고 번호를 나눠 주느냐가 나머지 절반이다.** 로컬 `ls`는 답이 되지 못한다 — 워크트리는 다른 워크트리의 아직 머지되지 않은 파일을 볼 수 없기 때문이다. 2026-08-26의 실패가 정확히 이것이었다: 한 워크트리에서 디렉터리 목록을 읽고 번호가 비어 있다고 판단했다. 봐야 할 곳은 두 군데다.
+
+  - `public.schema_migrations` — 이미 적용된 것은 여기 다 있다. 공유 dev DB라 모든 브랜치의 작업이 모인다.
+  - 모든 원격 브랜치의 `app/supabase/migrations/` — 아직 적용되지 않았지만 이미 누군가 이름을 잡아 둔 파일이 여기 있다.
+
+  **그리고 번호가 겹쳐도 어디서도 오류가 나지 않는다.** `schema_migrations`의 키는 번호가 아니라 파일명 전체라서, `0036_a.sql`과 `0036_b.sql`은 서로 다른 행으로 얌전히 들어간다. 적용할 때도, CI에서도, 리뷰에서도 아무 소리가 나지 않는다. 두 파일명을 나란히 놓고 읽는 것 말고는 찾아낼 방법이 없다.
 - **Never reconstruct a function body from a report.** `CREATE OR REPLACE` on an existing function is the same trap as porting the result parser: writing 0024 from a teammate's description silently dropped `p_user_agent` and changed the conflict target from `(member_id, endpoint)` to `(endpoint)` — the first would have broken the client's call, the second the device cap, and both would have applied cleanly. Read the current definition out of the migration that owns it and change only the line you came to change.
 
 ## PR review loop
