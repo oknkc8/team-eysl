@@ -1380,3 +1380,103 @@ textarea.field {
   font-weight: var(--weight-heavy);
   color: var(--ink);
 }
+
+/* ------------------------------------------------------------- 일정 캘린더
+
+   His .calendar / .day / .dot (upstream:40-58), on our tokens. Seven equal
+   columns; a blank cell is an empty <span> that occupies its slot and nothing
+   else. */
+.calendar {
+  margin-bottom: var(--space-5);
+}
+
+.calendarHead,
+.calendarDays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+
+.calendarHead {
+  margin-bottom: var(--space-2);
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+/* The first column is Sunday and the last Saturday, which is the one piece of
+   colour a Korean calendar is expected to carry. */
+.calendarHead span:first-child {
+  color: var(--danger-fg);
+}
+
+.calendarHead span:last-child {
+  color: var(--link);
+}
+
+.calDay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  /* At least a finger wide. The nav bar is 44px and so is this: a calendar is
+     the densest tap target in the app and the easiest to miss. */
+  min-height: var(--tap);
+  padding: var(--space-2) 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.calDay:active {
+  background: var(--fill);
+}
+
+/* Today is outlined; the selected day is filled. Two signals because they are
+   two different facts, and they are usually the same square. */
+.calDay.isToday {
+  border-color: var(--line);
+  font-weight: var(--weight-bold);
+}
+
+.calDay.isSelected {
+  background: var(--ink-fill);
+  border-color: var(--ink-fill);
+  color: var(--ink-inverse);
+}
+
+.calDots {
+  display: flex;
+  gap: 2px;
+  min-height: 5px;
+}
+
+.calDot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--muted);
+}
+
+/* One colour per kind, deliberately not reusing a tag palette: these are five
+   pixels wide and have to be told apart at a glance rather than read. */
+.calDot.training {
+  background: var(--ok-fg);
+}
+
+.calDot.race {
+  background: var(--link);
+}
+
+.calDot.event {
+  background: var(--amber-fg);
+}
+
+/* On the filled day the dots would otherwise disappear into the ink. */
+.calDay.isSelected .calDot {
+  background: var(--ink-inverse);
+}

@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase'
-import { shiftDays, sortUpcomingFirst, todayKey } from './order'
+import { lastDayOfMonth, monthPrefix } from './calendar'
+import { hasFinished, shiftDays, sortUpcomingFirst, todayKey } from './order'
 import { toKind, type ActivityKind } from './kinds'
 import { dedupeRaceHistory, type RaceHistoryRow } from './raceHistory'
 
@@ -21,6 +22,21 @@ export type Activity = {
   kind: ActivityKind
   title: string
   activity_date: string
+  /**
+   * The last day of a multi-day activity, or null for the single-day majority.
+   *
+   * A real column rather than a `details` key, and the reasoning belongs next to
+   * the field. His app holds this in details.endDate and reads it in seven
+   * places while writing it in none — his 일정 등록 has no end-date input at all,
+   * and registerSchedule rebuilds details from scratch, so editing a multi-day
+   * race in his app silently collapses it to one day. That is the same shape as
+   * the backfilled-attendance loss CLAUDE.md already records.
+   *
+   * Ours cannot lose it the same way: this is part of ActivityInput, so an edit
+   * that failed to carry it would not compile. `end_date >= activity_date` is a
+   * CHECK, which a jsonb key could never have been given.
+   */
+  end_date: string | null
   start_time: string | null
   end_time: string | null
   place: string | null
@@ -53,7 +69,7 @@ export type ScheduleEntry = Seats & {
 }
 
 const ACTIVITY_COLUMNS =
-  'id, kind, title, activity_date, start_time, end_time, place, capacity, created_by'
+  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by'
 const APPLICATION_COLUMNS =
   'id, activity_id, application_type, wait_order, offer_status, offer_expires_at'
 
@@ -86,6 +102,7 @@ type ActivityRow = {
   kind: string
   title: string
   activity_date: string
+  end_date: string | null
   start_time: string | null
   end_time: string | null
   place: string | null
@@ -164,6 +181,27 @@ async function getMyApplications(
   return mine
 }
 
+/**
+ * Seat counts and the viewer's own application, attached to a page of rows.
+ *
+ * Shared by the list and the calendar so the two screens cannot drift into
+ * disagreeing about whether somebody holds a seat — which is exactly the split
+ * status.ts documents between his list and his home screen.
+ */
+async function withSeatsAndMine(
+  activities: Activity[],
+  memberId: string,
+): Promise<ScheduleEntry[]> {
+  if (activities.length === 0) return []
+  const ids = activities.map((a) => a.id)
+  const [seats, mine] = await Promise.all([getSeats(ids), getMyApplications(memberId, ids)])
+  return activities.map((activity) => ({
+    activity,
+    ...(seats.get(activity.id) ?? NO_SEATS),
+    mine: mine.get(activity.id) ?? null,
+  }))
+}
+
 /** Upcoming activities first, each with its seat counts and the viewer's own status. */
 export async function listSchedule(kind?: ActivityKind): Promise<ScheduleEntry[]> {
   const today = todayKey()
@@ -184,16 +222,76 @@ export async function listSchedule(kind?: ActivityKind): Promise<ScheduleEntry[]
   // The database orders by date so the limit takes the right rows; the final
   // upcoming-then-past arrangement is a display decision and stays in JS.
   const activities = sortUpcomingFirst((data ?? []).map(toActivity), today)
-  if (activities.length === 0) return []
+  return withSeatsAndMine(activities, memberId)
+}
 
-  const ids = activities.map((a) => a.id)
-  const [seats, mine] = await Promise.all([getSeats(ids), getMyApplications(memberId, ids)])
+/**
+ * Every activity that touches one calendar month.
+ *
+ * NOT listSchedule with a different filter: that one reaches back a fixed 30
+ * days from today and forward without limit, which is the right window for
+ * "무엇을 신청하지?" and the wrong one for a month a member has paged back to.
+ *
+ * The overlap test is the part worth reading twice. A multi-day race that STARTS
+ * in March and ENDS in April belongs on April's calendar too, so filtering on
+ * activity_date alone would drop it from a month it visibly occupies:
+ *
+ *   activity_date <= last day of the month     -- starts by the end of it
+ *   AND (activity_date >= first day            -- ... and either starts inside
+ *        OR end_date  >= first day)            -- ... or runs into it
+ *
+ * end_date is null on a single-day row, so that arm evaluates to NULL rather
+ * than to false — and `false OR NULL` is NULL, which a WHERE clause discards
+ * exactly as it discards false. Those rows are therefore decided entirely by the
+ * first arm. Verified against the database rather than reasoned about: of seven
+ * synthetic rows spanning every shape, the four that touch March came back and
+ * the single-day row in February did not.
+ */
+/**
+ * The most activities one month may show.
+ *
+ * This club runs a few dozen activities a year, so the cap is not expected to
+ * bind. It exists because an unbounded month query is unbounded, and the screen
+ * has to be able to SAY when it bound — a calendar quietly missing the last
+ * three days of a month looks like an empty calendar, not a truncated one.
+ */
+const MONTH_LIMIT = 200
 
-  return activities.map((activity) => ({
-    activity,
-    ...(seats.get(activity.id) ?? NO_SEATS),
-    mine: mine.get(activity.id) ?? null,
-  }))
+export type MonthEntries = {
+  entries: ScheduleEntry[]
+  /** True when more activities exist in this month than were returned. */
+  truncated: boolean
+}
+
+export async function listActivitiesInMonth(
+  year: number,
+  month: number,
+  kind?: ActivityKind,
+): Promise<MonthEntries> {
+  const memberId = await getMyMemberId()
+  const first = `${monthPrefix(year, month)}-01`
+  const last = lastDayOfMonth(year, month)
+
+  let query = supabase
+    .from('activities')
+    .select(ACTIVITY_COLUMNS)
+    .lte('activity_date', last)
+    .or(`activity_date.gte.${first},end_date.gte.${first}`)
+    .order('activity_date', { ascending: true })
+    .order('start_time', { ascending: true, nullsFirst: true })
+    // One more than we intend to show. Asking for exactly MONTH_LIMIT and
+    // getting MONTH_LIMIT back is indistinguishable from "that is all there is"
+    // — the extra row is the only thing that tells the two apart.
+    .limit(MONTH_LIMIT + 1)
+  if (kind) query = query.eq('kind', kind)
+
+  const { data, error } = await query
+  if (error) throw error
+
+  const rows = data ?? []
+  const truncated = rows.length > MONTH_LIMIT
+  const entries = await withSeatsAndMine(rows.slice(0, MONTH_LIMIT).map(toActivity), memberId)
+  return { entries, truncated }
 }
 
 /** One activity with its seat counts and the viewer's own application. */
@@ -347,7 +445,10 @@ export async function listApplicationSummaries(
       participants: [...bucket.participants].sort((a, b) => a.nickname.localeCompare(b.nickname)),
       // The queue order is the information here, so this one is not alphabetised.
       waitlist: [...bucket.waitlist].sort((a, b) => (a.wait_order ?? 0) - (b.wait_order ?? 0)),
-      finished: activity.activity_date < today,
+      // The staff view of an activity has to agree with the member's about
+      // whether it is over, or a 취합본 reads finished while the member can
+      // still cancel.
+      finished: hasFinished(activity, today),
     }
   })
 }
@@ -426,6 +527,8 @@ export type ActivityInput = {
   kind: ActivityKind
   title: string
   activity_date: string
+  /** Null for a single-day activity. The CHECK refuses anything before the start. */
+  end_date: string | null
   start_time: string | null
   end_time: string | null
   place: string | null

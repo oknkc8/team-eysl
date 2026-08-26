@@ -13,6 +13,7 @@ import { NoticeListPage } from '../features/notices/NoticeListPage'
 import { NoticeDetailPage } from '../features/notices/NoticeDetailPage'
 import { NoticeEditPage } from '../features/notices/NoticeEditPage'
 import { ScheduleListPage } from '../features/schedule/ScheduleListPage'
+import { ScheduleCalendarPage } from '../features/schedule/ScheduleCalendarPage'
 import { ActivityDetailPage } from '../features/schedule/ActivityDetailPage'
 import { ActivityEditPage } from '../features/schedule/ActivityEditPage'
 import { MyRecordsPage } from '../features/records/MyRecordsPage'
@@ -121,6 +122,13 @@ export const router = createBrowserRouter([
           // Ranked matching puts the literal /schedule/new ahead of the sibling
           // /schedule/:activityId below, the same trap /notices/new springs.
           { path: '/schedule/new', element: <ActivityEditPage /> },
+          // 일정 캘린더. A literal sibling of /schedule/:activityId, so ranked
+          // matching is what keeps it from being read as an activity id — the
+          // same reason /schedule/new and /schedule/mine are safe beside it.
+          // Every approved member reads the same month and the rows come back
+          // under the policies that already govern activities, so RequireAuth is
+          // the whole gate this route needs.
+          { path: '/schedule/calendar', element: <ScheduleCalendarPage /> },
           // 나의 대회 신청 내역. A literal sibling of /schedule/:activityId, so
           // ranked matching is what keeps it from being read as an activity id —
           // the same reason /schedule/new above is safe next to it. Every approved
