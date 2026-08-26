@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { SaveState } from '../../components/ui/SaveState'
 import { createFolder, listFolders, type MediaFolder } from './api'
+import { useObjectDeletionSweep } from './useObjectDeletionSweep'
 
 const CARD = {
   padding: 14,
@@ -29,6 +30,9 @@ const formatCreated = (iso: string) => new Date(iso).toLocaleDateString('ko-KR')
 
 export function MediaFolderListPage() {
   const query = useQuery({ queryKey: ['media-folders'], queryFn: listFolders })
+  // Opening 미디어 is also what finishes any deletion that was interrupted, and
+  // for a staff session it is what reaches the objects stranded before 0036.
+  useObjectDeletionSweep()
 
   return (
     <div className="page">
