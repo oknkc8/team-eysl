@@ -89,6 +89,21 @@ A service worker that throws SyntaxError never installs, so for all 31 there was
 
 So put one step between the walk and any conclusion drawn from it. Do not settle whether something parses by counting brackets by eye — ask `node --check`. A question about a parser is answerable by a parser and by nothing else, and running the real one sweeps every commit in the range for free.
 
+**And the name can be wrong about the contents, not merely about whether they
+ran.** `final69-events-gender-first2026` sounds like the gender-split stroke
+ranking. It does not contain one: no `stroke_rankings`, no gender split, only an
+`openFunEventPage` that predates the feature. The ranking enters at
+`final71-event-data-rpc` and reaches its current shape at `final75-medal-rank`.
+
+So **before porting a release by name, grep the release for the thing the name
+promises.** One loop settles it:
+
+```bash
+for c in $(git log --format=%h --reverse origin/main..upstream/main); do
+  printf '%s %s\n' "$c" "$(git show "$c:index.html" | grep -c '<the identifier>')"
+done
+```
+
 Two traps in reading his diffs. A whole-file re-upload makes reformatting look like change, so separate real behaviour from churn before concluding anything. And an upload can be **truncated**: `3d1be2b` cut `index.html` to 246 lines and `954d9a7` restored it two minutes later, so a per-commit diff across that pair shows enormous phantom changes. Diff cumulatively (`origin/main..upstream/main`) unless you specifically need one commit.
 
 ## Workflow rules

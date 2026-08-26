@@ -8,6 +8,9 @@ import {
   hasHiddenRanks,
   isRankingKind,
   isRankingsEmpty,
+  isStrokeRankingsEmpty,
+  parseStrokeRankings,
+  strokeRowsFor,
   parseRankings,
   rankDisplay,
   rankToggleLabel,
@@ -261,5 +264,62 @@ describe('전체 랭킹 보기', () => {
   it('labels the button by what tapping it will do', () => {
     expect(rankToggleLabel(false)).toBe('전체 랭킹 보기')
     expect(rankToggleLabel(true)).toBe('TOP5만 보기')
+  })
+})
+
+describe('parseStrokeRankings', () => {
+  const payload = {
+    year: 2026,
+    rows: [
+      { gender: '여', stroke: '자유형', nickname: '영희', rank: 1, pb_seconds: 32.8, score: 100 },
+      { gender: '여', stroke: '자유형', nickname: '철수', rank: 2, pb_seconds: 41.0, score: 80 },
+      { gender: '남', stroke: '평영', nickname: '길동', rank: 1, pb_seconds: 35.49, score: 100 },
+    ],
+  }
+
+  it('reads the payload the RPC sends', () => {
+    const data = parseStrokeRankings(payload)
+    expect(data.year).toBe(2026)
+    expect(data.rows).toHaveLength(3)
+    // pb_seconds -> pbSeconds: the wire is snake_case, the screen is not.
+    expect(data.rows[0]).toEqual({
+      gender: '여',
+      stroke: '자유형',
+      nickname: '영희',
+      rank: 1,
+      pbSeconds: 32.8,
+      score: 100,
+    })
+  })
+
+  it('refuses the unauthorized answer instead of rendering it', () => {
+    // The RPC answers a non-member with a 200 carrying {error}, exactly as
+    // team_event_rankings_v1 does, so it arrives as success.
+    expect(() => parseStrokeRankings({ error: 'unauthorized' })).toThrow(RankingsContractError)
+  })
+
+  it('refuses a payload with no year', () => {
+    expect(() => parseStrokeRankings({ rows: [] })).toThrow(RankingsContractError)
+  })
+
+  it('treats a missing rows list as empty rather than broken', () => {
+    // A club with no meet records yet is an ordinary state and the screen has
+    // an empty view for it; only a missing `year` is a broken contract.
+    const data = parseStrokeRankings({ year: 2026 })
+    expect(data.rows).toEqual([])
+    expect(isStrokeRankingsEmpty(data)).toBe(true)
+  })
+
+  it('picks out one gender and stroke, keeping server order', () => {
+    const data = parseStrokeRankings(payload)
+    expect(strokeRowsFor(data, '여', '자유형').map((r) => r.nickname)).toEqual(['영희', '철수'])
+    expect(strokeRowsFor(data, '남', '평영').map((r) => r.nickname)).toEqual(['길동'])
+    // An empty group is empty, not absent — the screen still renders its card.
+    expect(strokeRowsFor(data, '남', '접영')).toEqual([])
+  })
+
+  it('does not confuse the two genders', () => {
+    const data = parseStrokeRankings(payload)
+    expect(strokeRowsFor(data, '남', '자유형')).toEqual([])
   })
 })
