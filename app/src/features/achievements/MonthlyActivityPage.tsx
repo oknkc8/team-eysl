@@ -2,8 +2,16 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
+import { useSession } from '../auth/SessionProvider'
 import { getMyMonthlyActivity } from './api'
-import { formatMonthLabel, monthlySentence, stepMonth, type MonthlyActivity } from './achievements'
+import {
+  formatMonthLabel,
+  monthlyActivityQueryKey,
+  monthlySentence,
+  seoulYearMonth,
+  stepMonth,
+  type MonthlyActivity,
+} from './achievements'
 
 /**
  * 월간 활동 요약 — his `#activity` page (upstream:1337), reached from 마이페이지.
@@ -19,11 +27,14 @@ import { formatMonthLabel, monthlySentence, stepMonth, type MonthlyActivity } fr
  * month here starts at today and the arrows carry across the year boundary.
  */
 export function MonthlyActivityPage() {
-  const now = new Date()
-  const [cursor, setCursor] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 })
+  const { session } = useSession()
+  // Seoul, not the device. 0034 computes its year in Asia/Seoul, and a member
+  // reading this from another timezone on the 1st of the month would otherwise
+  // open on a different month than the server considers current.
+  const [cursor, setCursor] = useState(seoulYearMonth)
 
   const query = useQuery({
-    queryKey: ['my-monthly-activity', cursor.year, cursor.month],
+    queryKey: monthlyActivityQueryKey(session?.user.id, cursor.year, cursor.month),
     queryFn: () => getMyMonthlyActivity(cursor.year, cursor.month),
   })
 

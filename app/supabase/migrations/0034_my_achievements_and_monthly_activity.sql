@@ -203,16 +203,25 @@ begin
   -- One row per event per day, holding that day's fastest swim. Collapsing the
   -- day first is what turns a heat/final pair into a single moment instead of
   -- two, and stops the slower of the pair reading as a regression.
+  --
+  -- `distinct on` rather than group-by-with-aggregates, and the difference
+  -- matters. min(result_centiseconds) and min(event_name) are computed
+  -- INDEPENDENTLY: where a member swam the same event at two meets on one day,
+  -- the fastest time would be paired with whichever meet name happened to sort
+  -- first, and the card would credit the wrong competition. Taking a whole row,
+  -- ordered by the time, keeps the name attached to the swim it describes.
+  --
+  -- event_name is the final tiebreak so the choice stays deterministic when two
+  -- rows match on everything before it.
   per_day as (
-    select stroke,
+    select distinct on (stroke, distance_m, event_date)
+           stroke,
            distance_m,
            event_date,
-           min(result_centiseconds) as result_centiseconds,
-           -- Two rows on one day can only carry different names if the data is
-           -- odd; min() picks deterministically rather than arbitrarily.
-           min(event_name)          as event_name
+           result_centiseconds,
+           event_name
       from rec
-     group by stroke, distance_m, event_date
+     order by stroke, distance_m, event_date, result_centiseconds, event_name
   ),
   with_baseline as (
     select p.*,

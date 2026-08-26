@@ -1,4 +1,4 @@
-import { STATE, expect, test, waitForScreen } from './fixtures'
+import { PASSWORD, STATE, expect, signIn, test, waitForScreen } from './fixtures'
 
 /**
  * 나의 성과·배지, 월간 활동 요약, and the medal ranking badges — the three
@@ -133,6 +133,65 @@ test.describe('메달 · 등급', () => {
     await toggle.click()
     await expect(page.getByRole('button', { name: 'TOP5만 보기' }).first()).toBeVisible()
     expect(await page.locator('ol li').count(), '펼친 뒤 행 수').toBeGreaterThan(rowsBefore)
+
+    expect(consoleWatcher.errors, '콘솔').toEqual([])
+  })
+})
+
+test.describe('세션이 바뀌었을 때', () => {
+  // No stored session: this test signs in twice inside ONE browser context,
+  // which is the only way to see the defect at all.
+  test.use({ storageState: { cookies: [], origins: [] } })
+
+  /**
+   * 마이페이지 and 월간 활동 요약 are cached per query key, and the key used to
+   * carry no member — only the fixed string, and for the month page the month.
+   * SessionProvider invalidated `['me']` on an auth change and nothing else, so
+   * everything else in the cache survived a sign-out.
+   *
+   * The consequence, on a shared phone or the club's front desk: A signs out, B
+   * signs in, B opens 마이페이지, and react-query serves A's badges out of cache
+   * without issuing a single request — for the whole 30s staleTime
+   * (queryClient.ts:5). The server was never wrong: my_achievement_v1 takes no
+   * member id and resolves the caller through current_member_id(). The leak is
+   * entirely between a correct response and how the client filed it, which is
+   * why no amount of RLS review would surface it.
+   *
+   * EVERY navigation after the first sign-in is a click, never page.goto. A
+   * full document load rebuilds the QueryClient and empties the cache, which
+   * would make this test pass against the broken code — the bug lives in one
+   * long-lived tab, so the test has to stay in one.
+   */
+  test('로그아웃 뒤 다른 회원으로 로그인하면 앞 사람의 배지가 남지 않는다', async ({
+    page,
+    consoleWatcher,
+  }) => {
+    await signIn(page, 'pwtestmember')
+
+    await page.getByRole('link', { name: '마이페이지' }).click()
+    await waitForScreen(page)
+    await expect(page.getByText(`${YEAR}년 누적 5회`), '앞 회원의 배지').toBeVisible()
+
+    await page.getByRole('button', { name: '로그아웃' }).click()
+    await page.waitForURL((url) => url.pathname.startsWith('/login'), { timeout: 20_000 })
+
+    // Filled in place rather than through signIn(), because signIn() starts with
+    // page.goto('/login') and that reload is exactly what must not happen here.
+    await page.getByLabel('닉네임').fill('pwtestmember2')
+    await page.getByLabel('비밀번호').fill(PASSWORD)
+    await page.getByRole('button', { name: '로그인' }).click()
+    await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 20_000 })
+
+    await page.getByRole('link', { name: '마이페이지' }).click()
+    await waitForScreen(page)
+
+    // The assertion the whole test exists for.
+    await expect(page.getByText(`${YEAR}년 누적 5회`), '앞 회원의 배지가 남았다').toHaveCount(0)
+
+    // Named positively as well, so the absence above means "B's own figure is
+    // shown" rather than "the section failed to render".
+    await expect(page.getByText('나의 출석 배지'), 'B 화면').toBeVisible()
+    await expect(page.getByText(/\d+년 누적 \d+회/), 'B 자신의 누적').toBeVisible()
 
     expect(consoleWatcher.errors, '콘솔').toEqual([])
   })

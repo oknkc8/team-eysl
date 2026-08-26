@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest'
+import { isIdentityChange } from '../auth/SessionProvider'
 import {
   ATTENDANCE_BADGES,
   AchievementContractError,
   LOCKED_MESSAGE,
   PB_CONGRATS,
+  achievementQueryKey,
+  monthlyActivityQueryKey,
+  seoulYearMonth,
   badgeMessage,
   badgeProgressLabel,
   badgeYearLabel,
@@ -267,5 +271,98 @@ describe('stepMonth', () => {
   it('carries more than a year at once', () => {
     expect(stepMonth(2026, 1, -13)).toEqual({ year: 2024, month: 12 })
     expect(stepMonth(2026, 12, 13)).toEqual({ year: 2028, month: 1 })
+  })
+})
+
+describe('캐시 키에 회원이 들어간다', () => {
+  /*
+   * Both RPCs take no member id and resolve the caller through
+   * current_member_id(), so two members' payloads are indistinguishable once
+   * cached. With a fixed key they land in the SAME cache entry, and on a shared
+   * phone the second member reads the first one's badges for the whole 30s
+   * staleTime without a request ever being sent.
+   *
+   * Asserted here rather than only in a browser because the browser version
+   * depends on timing: a request that happens to fail during the sign-out
+   * transition drops the query into an error state, which forces a refetch and
+   * hides the leak. This does not depend on luck.
+   */
+  it('gives two members different cache entries', () => {
+    expect(achievementQueryKey('user-a')).not.toEqual(achievementQueryKey('user-b'))
+    expect(monthlyActivityQueryKey('user-a', 2026, 3)).not.toEqual(
+      monthlyActivityQueryKey('user-b', 2026, 3),
+    )
+  })
+
+  it('keeps the member id in the key rather than beside it', () => {
+    expect(achievementQueryKey('user-a')).toEqual(['my-achievement', 'user-a'])
+    expect(monthlyActivityQueryKey('user-a', 2026, 3)).toEqual([
+      'my-monthly-activity',
+      'user-a',
+      2026,
+      3,
+    ])
+  })
+
+  // Signed out is its own entry, not a shared one — otherwise the last member's
+  // data would answer for "nobody".
+  it('does not share an entry with a signed-out reader', () => {
+    expect(achievementQueryKey(undefined)).toEqual(['my-achievement', null])
+    expect(achievementQueryKey(undefined)).not.toEqual(achievementQueryKey('user-a'))
+  })
+
+  // The month still separates entries; adding the member must not collapse them.
+  it('still separates months for one member', () => {
+    expect(monthlyActivityQueryKey('user-a', 2026, 3)).not.toEqual(
+      monthlyActivityQueryKey('user-a', 2026, 4),
+    )
+  })
+
+  // The prefix is what AdminCheckInPage and the record screens invalidate with,
+  // so it has to stay the first element for react-query's prefix match to work.
+  it('starts with the prefix the write screens invalidate', () => {
+    expect(achievementQueryKey('user-a')[0]).toBe('my-achievement')
+    expect(monthlyActivityQueryKey('user-a', 2026, 3)[0]).toBe('my-monthly-activity')
+  })
+})
+
+describe('isIdentityChange', () => {
+  // supabase-js fires INITIAL_SESSION on startup. Treating that as a change
+  // would clear a cache that was just filled, on every single page load.
+  it('is not a change on the first event', () => {
+    expect(isIdentityChange(undefined, 'user-a')).toBe(false)
+    expect(isIdentityChange(undefined, null)).toBe(false)
+  })
+
+  // TOKEN_REFRESHED keeps the same person; clearing there would throw the cache
+  // away roughly every hour for no reason.
+  it('is not a change when the same member refreshes a token', () => {
+    expect(isIdentityChange('user-a', 'user-a')).toBe(false)
+  })
+
+  it('is a change on sign-out, sign-in and account switch', () => {
+    expect(isIdentityChange('user-a', null)).toBe(true)
+    expect(isIdentityChange(null, 'user-b')).toBe(true)
+    expect(isIdentityChange('user-a', 'user-b')).toBe(true)
+  })
+})
+
+describe('seoulYearMonth', () => {
+  /*
+   * 0034 takes its year in Asia/Seoul. The instant below is 31 January in UTC
+   * and 1 February in Seoul, so a device clock would open the screen on January
+   * while the server considers February current — and the member would meet an
+   * empty month that looks like a bug.
+   */
+  it('rolls over on Seoul time, not the device', () => {
+    expect(seoulYearMonth(new Date('2026-01-31T16:00:00Z'))).toEqual({ year: 2026, month: 2 })
+  })
+
+  it('crosses the year boundary the same way', () => {
+    expect(seoulYearMonth(new Date('2025-12-31T15:30:00Z'))).toEqual({ year: 2026, month: 1 })
+  })
+
+  it('agrees with the device inside a day', () => {
+    expect(seoulYearMonth(new Date('2026-03-15T03:00:00Z'))).toEqual({ year: 2026, month: 3 })
   })
 })

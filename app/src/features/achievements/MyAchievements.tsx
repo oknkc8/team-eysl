@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
+import { useSession } from '../auth/SessionProvider'
 import { getMyAchievement } from './api'
 import {
   ATTENDANCE_BADGES,
+  achievementQueryKey,
   badgeMessage,
   badgeProgressLabel,
   badgeYearLabel,
@@ -21,7 +23,11 @@ import {
  * single request.
  */
 export function MyAchievements() {
-  const query = useQuery({ queryKey: ['my-achievement'], queryFn: () => getMyAchievement() })
+  const { session } = useSession()
+  const query = useQuery({
+    queryKey: achievementQueryKey(session?.user.id),
+    queryFn: () => getMyAchievement(),
+  })
 
   return (
     <AsyncSection

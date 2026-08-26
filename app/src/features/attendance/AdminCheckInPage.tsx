@@ -24,6 +24,12 @@ export function AdminCheckInPage() {
     onSuccess: (_d, v) => {
       setRowState((s) => ({ ...s, [v.memberId]: 'saved' }))
       void qc.invalidateQueries({ queryKey: ['roster', activityId] })
+      // 출석 배지 and 월간 활동 요약 are derived from exactly these rows, so a
+      // correction that drops somebody below a threshold has to reach them.
+      // Only this browser's cache, of course — the member's own device refetches
+      // on its next visit, which is the reason nothing is stored server-side.
+      void qc.invalidateQueries({ queryKey: ['my-achievement'] })
+      void qc.invalidateQueries({ queryKey: ['my-monthly-activity'] })
     },
     // Deliberately does not revert the row. The legacy screen had no state to
     // revert from and said nothing either way; showing the failure and letting
