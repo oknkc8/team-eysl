@@ -1,6 +1,40 @@
+import { createHash } from 'node:crypto'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig, devices } from '@playwright/test'
 
-export const BASE_URL = 'http://localhost:4173'
+/**
+ * One port per worktree, derived from where this file sits.
+ *
+ * The port used to be the literal 4173 for everyone, and `reuseExistingServer`
+ * then meant "reuse whatever is already on 4173" — which, with several agents
+ * running suites out of sibling worktrees, is somebody else's build. It cost a
+ * whole run to find: every board test failed at once against a bundle with no
+ * /board routes, `페이지를 찾을 수 없습니다` on every screen, and the identical
+ * code passed minutes later once the port was free. A suite that goes red
+ * because of who else is working is worse than no suite, because the first
+ * thing it teaches you is to distrust it.
+ *
+ * Derived rather than random, and from the path rather than the branch: the
+ * same worktree gets the same port every run, so `reuseExistingServer` keeps
+ * doing the thing it is for — skipping a 30-second rebuild between runs — while
+ * never reaching a server that is not ours. A random port would fix the
+ * collision and throw that away.
+ *
+ * EYSL_E2E_PORT overrides, for what this cannot foresee: two checkouts whose
+ * paths happen to collide, or a port already taken by something else.
+ * --strictPort on the preview command is what makes either case loud instead of
+ * silently serving on the next port up.
+ */
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const PORT_FLOOR = 4173
+const PORT_SPAN = 100
+const derivedPort =
+  PORT_FLOOR +
+  (parseInt(createHash('sha256').update(HERE).digest('hex').slice(0, 8), 16) % PORT_SPAN)
+
+export const PORT = Number(process.env.EYSL_E2E_PORT ?? derivedPort)
+export const BASE_URL = `http://localhost:${PORT}`
 
 /**
  * Browser smoke coverage for the rewrite.
@@ -54,8 +88,10 @@ export default defineConfig({
   // server with no watcher at all, so it sidesteps the limit entirely — and it
   // serves the built bundle, which is the artefact that actually ships.
   webServer: {
-    command: 'npm run build && npm run preview -- --port 4173 --strictPort',
+    command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
     url: BASE_URL,
+    // Safe again now that PORT is ours alone: this reuses OUR server between
+    // runs and can no longer inherit a sibling worktree's.
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     stdout: 'ignore',
