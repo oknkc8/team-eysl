@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { AsyncSection } from '../../components/ui/AsyncSection'
+import { personalKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
 import { getMyHistory, STATUS_LABEL, type AttendanceStatus } from './api'
 
 // 출석 / 지각 / 불참 are three different answers and were all printed in the
@@ -11,7 +13,11 @@ const STATUS_TONE: Record<AttendanceStatus, string> = {
 }
 
 export function MyAttendancePage() {
-  const query = useQuery({ queryKey: ['my-attendance'], queryFn: getMyHistory })
+  const { session } = useSession()
+  const query = useQuery({
+    queryKey: personalKey('my-attendance', session?.user.id),
+    queryFn: getMyHistory,
+  })
 
   return (
     <div className="page">

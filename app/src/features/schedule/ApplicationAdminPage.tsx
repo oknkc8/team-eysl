@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { supabase } from '../../lib/supabase'
+import { personalKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
 import {
   ACTIVITY_KINDS,
   KIND_LABEL,
@@ -33,6 +35,7 @@ const FILTERS: readonly Filter[] = ['all', ...ACTIVITY_KINDS]
 const FILTER_LABEL: Record<Filter, string> = { all: '전체', ...KIND_LABEL }
 
 export function ApplicationAdminPage() {
+  const { session } = useSession()
   const [filter, setFilter] = useState<Filter>('all')
 
   // Asked of the server rather than read off the session, for the same reason
@@ -41,7 +44,11 @@ export function ApplicationAdminPage() {
   // history as though it were the club's roster. RequireStaff decides what
   // renders; this decides what the page is willing to claim.
   const staff = useQuery({
-    queryKey: ['is-staff'],
+    // The most identity-bound key on the list: it caches whether THE VIEWER is
+    // staff, and this screen decides what to render from it. Answered out of a
+    // previous reader's cache, it is the one entry here that could show a
+    // member the club's whole application roster.
+    queryKey: personalKey('is-staff', session?.user.id),
     queryFn: async () => {
       const { data, error } = await supabase.rpc('is_staff')
       if (error) throw error
