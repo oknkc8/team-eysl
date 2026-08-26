@@ -29,15 +29,22 @@ import { STAMP_PATH, STAMP_VALUE } from '../playwright.config'
  */
 setup('the server on this port is our build', async ({ baseURL }) => {
   const response = await fetch(`${baseURL}${STAMP_PATH}`)
-  const served = response.ok ? (await response.text()).trim() : ''
+  // Strips ONLY the trailing newline the stamp is written with, where a .trim()
+  // would also eat trailing whitespace that is part of the path. A directory
+  // named with a trailing space is legal and git will happily make a worktree
+  // there, and under .trim() such a build fails to recognise itself — the check
+  // rejecting the very tree it was meant to confirm.
+  const raw = response.ok ? await response.text() : ''
+  const served = raw.replace(/\r?\n$/, '')
   if (served === STAMP_VALUE) return
 
   // A single-page app answers 200 with index.html for any unknown path, so a
   // build without the stamp looks like a successful fetch of HTML rather than a
   // 404. Saying that plainly beats printing a doctype at somebody.
-  const describe = served.startsWith('<')
+  const shown = served.trim()
+  const describe = shown.startsWith('<')
     ? "(that server's index.html — its build predates this check, so it is not ours)"
-    : served || `(no ${STAMP_PATH}, HTTP ${response.status})`
+    : shown || `(no ${STAMP_PATH}, HTTP ${response.status})`
 
   throw new Error(
     `${baseURL} is not serving this worktree's build.\n` +

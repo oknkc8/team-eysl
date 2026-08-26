@@ -84,7 +84,16 @@ const LOCK_HELD_MARKER = 'EYSL_E2E_SEED_LOCK_HELD'
  * from the next run — which holds exactly the same key.
  *
  * Only one session can hold both, because both were taken by one psql. So "the
- * backend holding our shared key AND our nonce" is an identity, not a guess.
+ * backend holding our shared key AND our nonce" identifies one session rather
+ * than guessing at one.
+ *
+ * Precisely: it is an identity up to a nonce collision. There are about 2^31
+ * candidates and randomInt is unbiased and cryptographic, so a later run drawing
+ * this same nonce just as ours expired is remote — but it is not zero, and the
+ * earlier wording ("an identity, not a guess") claimed a guarantee this does not
+ * have. The consequence of that draw is bounded: a teardown mistakes the new
+ * holder for itself, which is the pre-nonce behaviour rather than something
+ * worse.
  *
  * Not application_name: the pooler overwrites that with `Supavisor`, which is
  * how the connection-death claim above was caught being false.
@@ -127,12 +136,25 @@ async function acquireSeedLock(): Promise<void> {
       'ON_ERROR_STOP=1',
       '-c',
       `set lock_timeout = '${LOCK_WAIT_MS}ms'`,
-      '-c',
-      `select pg_advisory_lock(${LOCK_KEY})`,
-      // The identity half, in the same session and therefore the same backend.
+      // THE NONCE IS TAKEN FIRST, AND THE ORDER IS THE POINT.
+      //
+      // These are sequential -c statements on one session, so there is a window
+      // between them. Taken the other way round, a client that died in that
+      // window left the SHARED key held with no nonce, no pid file and no
+      // pg_sleep — an orphan outside the LOCK_HOLD_SECONDS bound, holding the
+      // one key every future run waits on, until the pooler happened to reap it.
+      //
+      // This way the only orphan the window can produce is a nonce with no
+      // shared key. The nonce is random and nobody waits on it, so that leak
+      // blocks nothing. The dangerous state is unreachable rather than merely
+      // unlikely.
+      //
       // No wait is possible on this one: the key is random and unheld.
       '-c',
       `select pg_advisory_lock(${nonceKey})`,
+      // The shared key, in the same session and therefore the same backend.
+      '-c',
+      `select pg_advisory_lock(${LOCK_KEY})`,
       // The BACKEND pid, not this process's. Killing the local psql does not
       // release the lock: we reach the database through the session pooler
       // (scripts/_env.sh — direct connections are IPv6-only and unreachable from
