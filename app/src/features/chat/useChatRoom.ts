@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { AsyncQuery } from '../../components/ui/AsyncSection'
+import { viewerKey } from '../../lib/queryKeys'
 import {
   listDmMessages,
   listGroupMessages,
@@ -49,7 +50,14 @@ export function useChatRoom(input: { room: Room; myMemberId: string }): ChatRoom
   const otherMemberId = room.kind === 'dm' ? room.otherMemberId : null
 
   const query = useQuery({
-    queryKey: otherMemberId ? ['chat', 'dm', otherMemberId] : ['chat', 'group'],
+    // Keyed by the viewer as well as the room. listDmMessages(other) returns
+    // the conversation between the VIEWER and `other`, so a key naming only
+    // `other` would have served a second member on the same browser somebody
+    // else's private thread. myMemberId rather than the auth id, to match
+    // ['chat','dm-threads', myMemberId] next door.
+    queryKey: otherMemberId
+      ? viewerKey(['chat', 'dm', otherMemberId], myMemberId)
+      : viewerKey(['chat', 'group'], myMemberId),
     queryFn: () => (otherMemberId ? listDmMessages(otherMemberId) : listGroupMessages()),
     // A room is a conversation people watch, not a cached page — the socket
     // keeps it current and a refocus should not repaint it from scratch.

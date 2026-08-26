@@ -7,6 +7,8 @@ import { useCurrentUser } from '../auth/useCurrentUser'
 import { canEditActivity } from './permissions'
 import { formatCountdown, msUntil } from './countdown'
 import { formatDateLabel, formatTimeRange, todayKey } from './order'
+import { viewerKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
 import {
   applyToActivity,
   cancelApplication,
@@ -49,10 +51,18 @@ const QUIET_BUTTON = {
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 export function ActivityDetailPage() {
+  const { session } = useSession()
   const { activityId = '' } = useParams()
 
   const query = useQuery({
-    queryKey: ['schedule-entry', activityId],
+    // The viewer goes LAST, after the activity id. This entry carries `mine`,
+    // so it must be per-viewer — and it must still be droppable for everyone
+    // when the activity changes. Those look like conflicting requirements and
+    // are not: react-query matches by prefix, so the five
+    // invalidateQueries({queryKey: ['schedule-entry', activityId]}) calls below
+    // reach every viewer's copy. Putting the viewer before the activity id
+    // would compile and silently narrow all five to one person.
+    queryKey: viewerKey(['schedule-entry', activityId], session?.user.id),
     queryFn: () => getScheduleEntry(activityId),
     enabled: !!activityId,
   })

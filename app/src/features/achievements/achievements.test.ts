@@ -294,13 +294,17 @@ describe('캐시 키에 회원이 들어간다', () => {
     )
   })
 
-  it('keeps the member id in the key rather than beside it', () => {
+  // The viewer goes LAST, after everything an invalidation prefix names. For the
+  // monthly key that means after the month: AdminCheckInPage invalidates with
+  // the bare ['my-monthly-activity'], and putting the viewer earlier would
+  // silently stop that reaching any keyed entry.
+  it('appends the member after the whole prefix', () => {
     expect(achievementQueryKey('user-a')).toEqual(['my-achievement', 'user-a'])
     expect(monthlyActivityQueryKey('user-a', 2026, 3)).toEqual([
       'my-monthly-activity',
-      'user-a',
       2026,
       3,
+      'user-a',
     ])
   })
 

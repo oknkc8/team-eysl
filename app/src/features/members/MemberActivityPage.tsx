@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
+import { useSession } from '../auth/SessionProvider'
+import { viewerKey } from '../../lib/queryKeys'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import {
   ACTIVITY_KIND_TITLE,
@@ -35,6 +37,7 @@ function toKind(value: string | undefined): MemberActivityKind | null {
  * screen asks the server per kind and says what it was told.
  */
 export function MemberActivityPage() {
+  const { session } = useSession()
   const { memberId = '', kind: kindParam } = useParams()
   const kind = toKind(kindParam)
 
@@ -45,7 +48,9 @@ export function MemberActivityPage() {
   })
 
   const query = useQuery({
-    queryKey: ['member-activities', memberId, kind],
+    // Same shape as member-records: what comes back depends on whether the
+    // viewer may see this member's history, not only on which member it is.
+    queryKey: viewerKey(['member-activities', memberId, kind], session?.user.id),
     // `enabled` already excludes the null case; the assertion keeps the type
     // honest rather than widening getMemberActivities to accept a null kind.
     queryFn: () => getMemberActivities(memberId, kind as MemberActivityKind),

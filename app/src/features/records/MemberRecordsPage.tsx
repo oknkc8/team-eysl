@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
+import { useSession } from '../auth/SessionProvider'
+import { viewerKey } from '../../lib/queryKeys'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { getMemberDetail } from '../members/api'
 import { FilteredRecords, useRecordFilter } from './FilteredRecords'
@@ -23,6 +25,7 @@ import { getMemberRecords, type MemberRecordsView } from './api'
  * said out loud below rather than rendered as an empty list.
  */
 export function MemberRecordsPage() {
+  const { session } = useSession()
   const { memberId = '' } = useParams()
 
   // Public fields only: this screen shows times, never a 실명. The detail page
@@ -34,7 +37,9 @@ export function MemberRecordsPage() {
   })
 
   const query = useQuery({
-    queryKey: ['member-records', memberId],
+    // getMemberRecords returns `allowed` alongside the rows, computed from who
+    // is asking — the key names the target, the answer names the reader.
+    queryKey: viewerKey(['member-records', memberId], session?.user.id),
     queryFn: () => getMemberRecords(memberId),
     enabled: memberId !== '',
   })

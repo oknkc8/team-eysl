@@ -14,6 +14,8 @@
 //     it and the server always sends it, so a payload without one is a broken
 //     contract, and "undefined년 누적 3회" is worse than an error state.
 
+import { viewerKey } from '../../lib/queryKeys'
+
 export type BadgeDef = { count: number; title: string; message: string }
 
 /** His five tiers and his exact copy (upstream:2144-2150), in order. */
@@ -71,15 +73,18 @@ export class AchievementContractError extends Error {}
 // identity change; this is the half that does not depend on remembering to.
 
 export function achievementQueryKey(userId: string | undefined) {
-  return ['my-achievement', userId ?? null] as const
+  return viewerKey(['my-achievement'], userId)
 }
 
+// The month is part of what invalidation targets — AdminCheckInPage sends the
+// bare ['my-monthly-activity'] — so the month sits in the prefix and the viewer
+// after it.
 export function monthlyActivityQueryKey(
   userId: string | undefined,
   year: number,
   month: number,
 ) {
-  return ['my-monthly-activity', userId ?? null, year, month] as const
+  return viewerKey(['my-monthly-activity', year, month], userId)
 }
 
 // ------------------------------------------------------------------ narrowing

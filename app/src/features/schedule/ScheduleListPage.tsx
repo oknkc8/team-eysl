@@ -6,6 +6,8 @@ import { useCurrentUser } from '../auth/useCurrentUser'
 import { creatableKinds } from './permissions'
 import { ActivityCard } from './ActivityCard'
 import { todayKey } from './order'
+import { viewerKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
 import {
   ACTIVITY_KINDS,
   KIND_LABEL,
@@ -23,6 +25,7 @@ const FILTERS: { value: Filter; label: string }[] = [
 
 export function ScheduleListPage() {
   const { user } = useCurrentUser()
+  const { session } = useSession()
   const [filter, setFilter] = useState<Filter>('all')
   // Since 0015 every approved member may file a 기타, so this button is no longer
   // staff-only — what changes with the role is how many kinds the form offers.
@@ -32,7 +35,10 @@ export function ScheduleListPage() {
   const soleKind = kinds.length === 1 ? kinds[0] : undefined
 
   const query = useQuery({
-    queryKey: ['schedule', filter],
+    // Carries `mine`, so it is the viewer's answer as much as the club's. The
+    // viewer goes last: every invalidation of this uses the bare ['schedule'],
+    // which still reaches every viewer's entry.
+    queryKey: viewerKey(['schedule', filter], session?.user.id),
     queryFn: () => listSchedule(filter === 'all' ? undefined : filter),
   })
 

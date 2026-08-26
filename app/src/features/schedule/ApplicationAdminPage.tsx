@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { supabase } from '../../lib/supabase'
-import { personalKey } from '../../lib/queryKeys'
+import { viewerKey } from '../../lib/queryKeys'
 import { useSession } from '../auth/SessionProvider'
 import {
   ACTIVITY_KINDS,
@@ -48,7 +48,7 @@ export function ApplicationAdminPage() {
     // staff, and this screen decides what to render from it. Answered out of a
     // previous reader's cache, it is the one entry here that could show a
     // member the club's whole application roster.
-    queryKey: personalKey('is-staff', session?.user.id),
+    queryKey: viewerKey(['is-staff'], session?.user.id),
     queryFn: async () => {
       const { data, error } = await supabase.rpc('is_staff')
       if (error) throw error

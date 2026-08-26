@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { useSession } from '../auth/SessionProvider'
-import { personalKey } from '../../lib/queryKeys'
+import { viewerKey } from '../../lib/queryKeys'
 import { isStaff } from '../auth/schema'
 import { FilteredRecords, useRecordFilter } from './FilteredRecords'
 import { RecordFilters } from './RecordFilters'
@@ -16,7 +16,7 @@ export function MyRecordsPage() {
   // filter is a re-render rather than a fetch.
   const { session } = useSession()
   const query = useQuery({
-    queryKey: personalKey('my-records', session?.user.id),
+    queryKey: viewerKey(['my-records'], session?.user.id),
     queryFn: getMyRecords,
   })
 

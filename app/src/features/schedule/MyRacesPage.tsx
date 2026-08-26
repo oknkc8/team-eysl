@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection } from '../../components/ui/AsyncSection'
-import { personalKey } from '../../lib/queryKeys'
+import { viewerKey } from '../../lib/queryKeys'
 import { useSession } from '../auth/SessionProvider'
 import { getMyRaceHistory, isFinished, isWaiting, type RaceHistoryRow } from './api'
 
@@ -37,7 +37,7 @@ export function MyRacesPage() {
   const [filter, setFilter] = useState<Filter>('all')
   const { session } = useSession()
   const query = useQuery({
-    queryKey: personalKey('my-races', session?.user.id),
+    queryKey: viewerKey(['my-races'], session?.user.id),
     queryFn: getMyRaceHistory,
   })
 

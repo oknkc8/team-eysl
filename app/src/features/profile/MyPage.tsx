@@ -7,7 +7,7 @@ import { MemberAvatar } from '../members/MemberAvatar'
 import { MyAchievements } from '../achievements/MyAchievements'
 import { ROLE_LABEL } from '../members/api'
 import { supabase } from '../../lib/supabase'
-import { personalKey } from '../../lib/queryKeys'
+import { viewerKey } from '../../lib/queryKeys'
 import { useSession } from '../auth/SessionProvider'
 import {
   getMyProfile,
@@ -23,7 +23,7 @@ type SaveKind = 'idle' | 'saving' | 'saved' | 'error'
 export function MyPage() {
   const { session } = useSession()
   const query = useQuery({
-    queryKey: personalKey('my-profile', session?.user.id),
+    queryKey: viewerKey(['my-profile'], session?.user.id),
     queryFn: getMyProfile,
   })
 

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { AsyncSection } from '../../components/ui/AsyncSection'
-import { personalKey } from '../../lib/queryKeys'
+import { viewerKey } from '../../lib/queryKeys'
 import { useSession } from '../auth/SessionProvider'
 import { getMyHistory, STATUS_LABEL, type AttendanceStatus } from './api'
 
@@ -15,7 +15,7 @@ const STATUS_TONE: Record<AttendanceStatus, string> = {
 export function MyAttendancePage() {
   const { session } = useSession()
   const query = useQuery({
-    queryKey: personalKey('my-attendance', session?.user.id),
+    queryKey: viewerKey(['my-attendance'], session?.user.id),
     queryFn: getMyHistory,
   })
 
