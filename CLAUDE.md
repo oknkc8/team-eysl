@@ -181,6 +181,10 @@ Reproducing it needs a staff session **and** two or more members at once, which 
 
 This is the most dangerous tool failure on the list, because every other one announces itself. An absent match is indistinguishable from an absence, and "I grepped and found nothing" has been offered as evidence throughout this project. **Cross-check any load-bearing negative with a second tool** — Python, `rg` directly, or reading the file — before writing "there is no X".
 
+**The same wrapper rewrites `git` and `gh`, and it invents plausible answers rather than failing.** Verified 2026-08-26: `git status --short` printed the single word `ok` in a clean tree, and `gh pr list --state open --json …` printed `[]` while PR #8 was open — `gh pr list --state all` printed `[]` too, so even "there have never been any PRs" was on offer. The GitHub API returned the PR immediately.
+
+`[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Prefix with `rtk proxy` to get the real output, or ask the GitHub API directly. Never let a wrapper's empty listing be the reason you skipped a step.
+
 **And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
 
 That makes "typecheck passes" narrower than it sounds, and it is the kind of claim that gets repeated because it was true about the part somebody happened to be looking at. **Say which tree you checked, not just that the check was green.**
