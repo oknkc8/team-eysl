@@ -483,6 +483,73 @@ from (values
 join pwtest_dummies d on d.n = v.n
 cross join (select id from public.members where nickname = 'pwtestadmin') adm;
 
+-- ---------------------------------------------------------------------------
+-- 나의 성과 · 배지 fixture (0034)
+-- ---------------------------------------------------------------------------
+-- The dummies above are ranked against each other and never sign in, so none of
+-- them can show what 마이페이지 looks like for the person reading it. This block
+-- gives pwtestmember — an account that does sign in — enough history for both
+-- halves of the achievements screen to render with content rather than with
+-- their empty states.
+--
+-- FIVE attendance marks, deliberately: the badge ladder's first tier is 5회, so
+-- four would leave every tile locked and the screen would never exercise the
+-- unlocked branch. Three of the five reuse the rank-day activities; two more
+-- activities are created here because there is nothing else in the current year
+-- to hang them on.
+--
+-- One of the five is 지각. my_achievement_v1 counts 출석 AND 지각 (0034,
+-- following 0016:86-88), so a fixture of five 출석 would pass whether or not
+-- that rule holds. With this one, 5회 is reached only if 지각 counts.
+insert into public.activities (id, kind, title, activity_date, created_by)
+select v.id::uuid, 'training', v.title, v.on_date, adm.id
+from (values
+  ('99999999-9999-4999-8999-0000000000a1', 'pwtest 성과 훈련 1',
+      make_date(extract(year from current_date)::int, 3, 9)),
+  ('99999999-9999-4999-8999-0000000000a2', 'pwtest 성과 훈련 2',
+      make_date(extract(year from current_date)::int, 3, 16))
+) as v(id, title, on_date)
+cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+
+insert into public.attendance (activity_id, member_id, status, marked_by)
+select v.activity_id::uuid, mem.id, v.status, adm.id
+from (values
+  ('99999999-9999-4999-8999-999999999991', 'present'),
+  ('99999999-9999-4999-8999-999999999992', 'present'),
+  ('99999999-9999-4999-8999-999999999993', 'late'),
+  ('99999999-9999-4999-8999-0000000000a1', 'present'),
+  ('99999999-9999-4999-8999-0000000000a2', 'present')
+) as v(activity_id, status)
+cross join (select id from public.members where nickname = 'pwtestmember') mem
+cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+
+-- Three swims of the same event across two years, so my_achievement_v1 finds
+-- exactly TWO PB moments in the current year:
+--
+--   작년      40.00   baseline, and not itself a moment — nothing precedes it
+--   올해 3/9   38.50   moment, old_pb 40.00, down 1.50
+--   올해 7/20  37.25   moment, old_pb 38.50, down 1.25
+--
+-- The second moment's old_pb is the first moment's new_pb, which is the chain
+-- that proves the baseline looks back over every earlier day rather than only
+-- at the previous calendar year.
+insert into public.records (
+  member_id, category, subcategory, stroke, distance_m,
+  event_name, event_date, result_display, result_centiseconds, created_by
+)
+select mem.id, 'meet', 'personal', '자유형', 50,
+       v.event_name, v.event_date, v.result_display, v.result_centiseconds, adm.id
+from (values
+  ('pwtest 작년 대회',
+      make_date(extract(year from current_date)::int - 1, 6, 15), '40.00', 4000),
+  ('pwtest 봄 대회',
+      make_date(extract(year from current_date)::int, 3, 9), '38.50', 3850),
+  ('pwtest 여름 대회',
+      make_date(extract(year from current_date)::int, 7, 20), '37.25', 3725)
+) as v(event_name, event_date, result_display, result_centiseconds)
+cross join (select id from public.members where nickname = 'pwtestmember') mem
+cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+
 commit;
 
 select nickname, status, role from public.members where nickname like 'pwtest%' order by nickname;
