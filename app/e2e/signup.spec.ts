@@ -30,7 +30,7 @@ test.use({ storageState: { cookies: [], origins: [] } })
  */
 
 /**
- * A nickname no other run is using.
+ * A nickname no other run is using, in the format 0032 requires.
  *
  * The suite is fullyParallel and reruns against a shared dev database, so a
  * fixed nickname would collide with its own previous run and the failure would
@@ -38,10 +38,35 @@ test.use({ storageState: { cookies: [], origins: [] } })
  * on, and lowercase keeps the derived address (`lower(nickname)@eysl.local`)
  * equal to the nickname, which is what makes cleanup's `email like
  * 'pwtest%@eysl.local'` match it too.
+ *
+ * SINCE 0032 THE SHAPE IS PART OF THE CONTRACT: 이름/출생년도/성별/지역. Only the
+ * name segment carries the unique part, because that is the segment the format
+ * leaves free — the other three are constrained, and putting the entropy in the
+ * region would work equally well but would move the `pwtest` prefix off the
+ * front of the derived address and break cleanup's LIKE.
  */
 function freshNickname(tag: string) {
-  return `pwtest${tag}${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`.toLowerCase()
+  const unique = `pwtest${tag}${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`
+  return `${unique.toLowerCase()}/98/남/관악`
 }
+
+/**
+ * What seed.sql gives pwtestmember, restated because the guard reads it.
+ *
+ * These four values have to agree with `pwtest_accounts` in seed.sql — the
+ * fixture there is `('pwtestmember', …, 1970, '남')` — and there is no way to
+ * ask the database for them from inside a browser, since `anon` holds no SELECT
+ * on members and that is the whole reason the guard lives server-side. So they
+ * are duplicated deliberately and named in one place rather than inlined into
+ * four assertions.
+ */
+const SEEDED = {
+  nickname: 'pwtestmember',
+  birthYY: '70',
+  gender: '남',
+  /** Any year but the seeded one: a namesake, and therefore a different person. */
+  otherBirthYY: '71',
+} as const
 
 /** Fill in the form and press 가입 신청. */
 async function submitSignup(page: Page, nickname: string, password = PASSWORD) {
@@ -171,7 +196,7 @@ test('이미 쓰는 닉네임은 한국어로 거절한다', async ({ page }) =>
   // that a second signup could slip between.
   await submitSignup(page, nickname)
   await expect(page.getByRole('alert')).toHaveText(
-    '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.',
+    '이미 같은 닉네임으로 등록된 회원이 있습니다. 관리자에게 문의해주세요.',
     { timeout: 20_000 },
   )
 
@@ -193,7 +218,7 @@ test('대소문자만 다른 닉네임도 같은 닉네임으로 본다', async 
   // lowercased, so these must not be allowed to become two people.
   await submitSignup(page, nickname.toUpperCase())
   await expect(page.getByRole('alert')).toHaveText(
-    '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.',
+    '이미 같은 닉네임으로 등록된 회원이 있습니다. 관리자에게 문의해주세요.',
     { timeout: 20_000 },
   )
 })
@@ -279,6 +304,105 @@ test('너무 짧거나 긴 닉네임을 거절한다', async ({ page }) => {
 
   const short = await anonRpc(page, { p_nickname: '수', p_password: PASSWORD })
   expect(JSON.parse(short.body)).toMatchObject({ ok: false, reason: 'nickname_short' })
+})
+
+test('닉네임 형식을 화면과 서버 양쪽에서 강제한다', async ({ page }) => {
+  // The screen, which is the half that gets to explain itself. Each of these is
+  // a different wrong part, and each has to name that part rather than saying
+  // the nickname is invalid — somebody who typed their birth year in full has
+  // no way to guess which of four segments the form dislikes.
+  const onScreen: [string, string][] = [
+    ['창호/1998/남/관악', '출생년도는 뒤 두 자리만 입력해주세요. 1998년생이면 98입니다.'],
+    ['창호/98/M/관악', '성별은 남 또는 여로 입력해주세요. 예: 창호/98/남/관악'],
+    ['창호/98/남', '닉네임은 이름/출생년도/성별/지역 형식으로 입력해주세요. 예: 창호/98/남/관악'],
+    ['창호 / 98 / 남 / 관악', '닉네임에는 공백이나 보이지 않는 문자를 넣을 수 없습니다. 예: 창호/98/남/관악'],
+    ['창호/98/남/', '지역을 입력해주세요. 예: 창호/98/남/관악'],
+    ['창/호/98/남/관악', '이름과 지역에는 /를 넣을 수 없습니다. 예: 창호/98/남/관악'],
+  ]
+
+  for (const [nickname, message] of onScreen) {
+    await submitSignup(page, nickname)
+    await expect(page.getByRole('alert'), nickname).toHaveText(message)
+    // Refused without pretending otherwise — still on the form, not on the
+    // completion panel.
+    await expect(page.getByRole('button', { name: '가입 신청' })).toBeVisible()
+  }
+
+  // And the server, asked directly. THIS IS THE HALF THAT MATTERS: a rule that
+  // lives only in the form is not a rule, and this project has found that defect
+  // often enough to stop taking the form's word for anything. Every call here is
+  // anonymous and never loads the screen, so nothing above is running.
+  for (const [nickname] of onScreen) {
+    const direct = await anonRpc(page, { p_nickname: nickname, p_password: PASSWORD })
+    expect(direct.status, nickname).toBe(200)
+    const body = JSON.parse(direct.body) as { ok: boolean; message: string }
+    expect(body.ok, `${nickname} must be refused by the database`).toBe(false)
+    // The sentence is the server's own, and it is the same one the screen showed.
+    expect(body.message, nickname).toBe(onScreen.find(([n]) => n === nickname)![1])
+  }
+
+  // A short given name — what every one of the club's imported members is
+  // called — is refused at signup too. Those rows keep working everywhere else;
+  // what 0032 governs is who may newly join.
+  const plain = await anonRpc(page, { p_nickname: '철수', p_password: PASSWORD })
+  expect(JSON.parse(plain.body)).toMatchObject({ ok: false, reason: 'nickname_parts' })
+
+  // And the format is usable, not merely enforceable.
+  const good = await anonRpc(page, { p_nickname: freshNickname('fmt'), p_password: PASSWORD })
+  expect(JSON.parse(good.body)).toEqual({ ok: true })
+})
+
+test('명단에 이미 있는 회원은 새 계정을 만들지 못한다', async ({ page }) => {
+  test.slow()
+  await page.goto('/signup')
+
+  // THE GHOST ROW. Before 0032's guard this was the format rule's worst side
+  // effect: 36 of the 41 members in the dev database came from the club's
+  // spreadsheet and have no login, and they are precisely the people this form
+  // is for. A plain nickname collides with members_nickname_lower_uq and is
+  // refused loudly. The SAME PERSON typing the SAME NAME in the new format is a
+  // different string, so nothing collided — signup succeeded, and their
+  // attendance and records stayed on a row nobody was attached to.
+  //
+  // Driven through the seeded fixture rather than a real member, so this test
+  // owns the row it depends on: seed.sql gives pwtestmember short_name,
+  // birth_year and gender exactly as the workbook importer does, and leaves
+  // `location` null exactly as the importer does.
+  //
+  // The guard matches 이름 + 출생년도 + 성별 and deliberately IGNORES 지역, so two
+  // different regions have to give the same answer. If 지역 counted, a returning
+  // member who moved house would sail straight past it into a ghost row.
+  for (const region of ['관악', '서초']) {
+    const attempt = await anonRpc(page, {
+      p_nickname: `${SEEDED.nickname}/${SEEDED.birthYY}/${SEEDED.gender}/${region}`,
+      p_password: PASSWORD,
+    })
+    expect(attempt.status).toBe(200)
+    expect(JSON.parse(attempt.body), region).toMatchObject({
+      ok: false,
+      reason: 'existing_member',
+    })
+  }
+
+  // Refused, and nothing created: the whole point is that no second row appears.
+  // Asked the only way an anonymous caller can ask — `anon` holds no SELECT on
+  // members — by claiming the same nickname again and seeing the same refusal
+  // rather than nickname_taken, which is what a created row would produce.
+  const again = await anonRpc(page, {
+    p_nickname: `${SEEDED.nickname}/${SEEDED.birthYY}/${SEEDED.gender}/관악`,
+    p_password: PASSWORD,
+  })
+  expect(JSON.parse(again.body)).toMatchObject({ reason: 'existing_member' })
+
+  // And it must not defeat the format's whole purpose. A DIFFERENT person with
+  // the same given name, born in another year, is a different member and still
+  // gets in — otherwise the club could never admit a second 영희, which is the
+  // very thing the format was introduced to make possible.
+  const namesake = await anonRpc(page, {
+    p_nickname: `${SEEDED.nickname}/${SEEDED.otherBirthYY}/${SEEDED.gender}/관악`,
+    p_password: PASSWORD,
+  })
+  expect(JSON.parse(namesake.body)).toEqual({ ok: true })
 })
 
 test('가입 대기 회원은 회원 정보를 하나도 읽지 못한다', async ({ page }) => {

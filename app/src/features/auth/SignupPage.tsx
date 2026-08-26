@@ -3,6 +3,7 @@ import { Link, Navigate } from 'react-router'
 import { SaveState } from '../../components/ui/SaveState'
 import { registerMember } from './api'
 import { AuthCard, AuthIntro, AuthTabs } from './AuthCard'
+import { NICKNAME_FORMAT_EXAMPLE } from './nickname'
 import { NICKNAME_MAX, signupErrorMessage, validateSignup } from './signup'
 import { useSession } from './SessionProvider'
 
@@ -69,10 +70,13 @@ export function SignupPage() {
       <AuthTabs active="signup" />
 
       <form onSubmit={onSubmit} className="authSimple">
+        {/* The example is the placeholder rather than a hint underneath,
+            because the format is not guessable from the word 닉네임 and a rule
+            discovered only after being refused is a rule taught too late. */}
         <input
           className="field"
           aria-label="닉네임"
-          placeholder="닉네임"
+          placeholder={`닉네임 (예: ${NICKNAME_FORMAT_EXAMPLE})`}
           maxLength={NICKNAME_MAX}
           autoComplete="username"
           value={nickname}
@@ -102,6 +106,11 @@ export function SignupPage() {
         )}
       </form>
 
+      <p className="authHint">
+        닉네임은 <strong>이름/출생년도 두 자리/성별/지역</strong> 순서로 적어주세요. 예를 들어 1998년생
+        남자 회원이 관악에 산다면 {NICKNAME_FORMAT_EXAMPLE}입니다. 승인 화면에서 회원을 알아보는 데
+        쓰이니 실제 이름과 지역을 적어주세요.
+      </p>
       <p className="authHint">
         닉네임은 중복 사용할 수 없습니다. 가입 때 등록한 닉네임과 비밀번호는 로그인할 때 사용됩니다.
       </p>
