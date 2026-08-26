@@ -227,6 +227,48 @@ export type Database = {
           },
         ]
       }
+      board_posts: {
+        Row: {
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          author_id: string
+          body: string
+          created_at?: string
+          id?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "board_posts_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "board_posts_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       media_files: {
         Row: {
           created_at: string
@@ -1000,8 +1042,30 @@ export type Database = {
           title: string
         }[]
       }
+      board_post_text: {
+        Args: { p_field: string; p_max: number; p_value: string }
+        Returns: string
+      }
       can_manage_records: { Args: never; Returns: boolean }
+      create_board_post_v1: {
+        Args: { p_body: string; p_title: string }
+        Returns: {
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "board_posts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       current_member_id: { Args: never; Returns: string }
+      delete_board_post_v1: { Args: { p_post_id: string }; Returns: string }
       delete_media_folder_v1: {
         Args: { p_folder_id: string }
         Returns: string[]
@@ -1014,6 +1078,7 @@ export type Database = {
       is_master_admin: { Args: never; Returns: boolean }
       is_my_avatar_object_path: { Args: { p_path: string }; Returns: boolean }
       is_my_media_object_path: { Args: { p_path: string }; Returns: boolean }
+      is_my_team_file_path: { Args: { p_path: string }; Returns: boolean }
       is_push_endpoint: { Args: { p_endpoint: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
       media_object_is_claimed: { Args: { p_path: string }; Returns: boolean }
@@ -1309,6 +1374,29 @@ export type Database = {
       }
       signup_client_key: { Args: never; Returns: string }
       team_event_rankings_v1: { Args: never; Returns: Json }
+      team_file_is_readable: { Args: { p_path: string }; Returns: boolean }
+      update_board_post_v1: {
+        Args: {
+          p_body: string
+          p_expected_updated_at: string
+          p_post_id: string
+          p_title: string
+        }
+        Returns: {
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "board_posts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       upsert_record: {
         Args: {
           p_category: string

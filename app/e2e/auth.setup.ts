@@ -32,3 +32,17 @@ setup('authenticate as 승인 대기 회원', async ({ page }) => {
   await signIn(page, 'pwtestpending')
   await page.context().storageState({ path: STATE.pending })
 })
+
+// The other two ways to hold a valid token and no membership. RequireAuth sends
+// all three to /pending, so `signIn` completes for them exactly as it does above
+// — it waits for the URL to leave /login, not for a screen the app will never
+// give them.
+setup('authenticate as 거절된 회원', async ({ page }) => {
+  await signIn(page, 'pwtestrejected')
+  await page.context().storageState({ path: STATE.rejected })
+})
+
+setup('authenticate as 내보내진 회원', async ({ page }) => {
+  await signIn(page, 'pwtestblocked')
+  await page.context().storageState({ path: STATE.blocked })
+})
