@@ -6,6 +6,7 @@ import {
   NICKNAME_FORMAT_EXAMPLE,
   NICKNAME_PATTERN,
   NICKNAME_PATTERN_SOURCE,
+  canonicalNickname,
   checkNicknameFormat,
 } from './nickname'
 import { validateSignup } from './signup'
@@ -111,13 +112,23 @@ describe('the pattern the browser and the database share', () => {
   // never answer this question — which makes the SQL the only place to pin it.
   it('refuses an applicant who is already on the roster, and does not link them', () => {
     expect(sql).toContain("'reason', 'existing_member'")
-    expect(sql).toContain('lower(m.short_name) = lower(v_parts[1])')
-    expect(sql).toContain('m.birth_year % 100  = v_parts[2]::int')
-    expect(sql).toContain("m.gender            = v_parts[3]")
+    expect(sql).toContain('lower(normalize(m.short_name, nfc)) = lower(v_parts[1])')
+    expect(sql).toContain('m.birth_year % 100                  = v_parts[2]::int')
+    expect(sql).toContain('m.gender                            = v_parts[3]')
 
     // `exists`, never an update: matching a name, a birth year and a gender must
     // not be enough to take over somebody's account and history.
     expect(sql).not.toContain('update public.members')
+  })
+
+  // NFC normalisation, which is what makes the guard above comparable at all.
+  // Without it the guard reads a precomposed short_name against a possibly
+  // decomposed submission and misses — proven live: precomposed refused
+  // `existing_member`, the identical-looking decomposed form returned ok:true.
+  it('normalises the nickname to NFC before judging or storing it', () => {
+    expect(sql).toContain("v_nickname := normalize(btrim(coalesce(p_nickname, '')), nfc)")
+    // Bare btrim would be the regression, and it is what was there before.
+    expect(sql).not.toContain("v_nickname := btrim(coalesce(p_nickname, ''))")
   })
 })
 
@@ -252,6 +263,55 @@ describe('checkNicknameFormat', () => {
       expect(lookalike).not.toBe(NICKNAME_FORMAT_EXAMPLE)
       expect(checkNicknameFormat(lookalike)?.reason).toBe('nickname_invisible')
     }
+  })
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // DECOMPOSED HANGUL. Read this before deleting it as a duplicate of the
+  // invisible-character list above — it is a DIFFERENT problem that happens to
+  // look the same from the outside.
+  //
+  // The list above is about characters that cannot be SEEN. This is about the
+  // SAME characters in a different encoding: `창호` as two precomposed
+  // syllables or as five conjoining jamo. Jamo are printable and legitimate —
+  // they are how Hangul is typed — so `\p{C}` and `[^[:print:]]` correctly have
+  // nothing to say about them, and rejecting them would be wrong.
+  //
+  // The fix is therefore normalisation, not rejection, and it lives in
+  // canonicalNickname() rather than in NICKNAME_FORBIDDEN. Deleting either one
+  // reopens a hole the other never covered.
+  // ─────────────────────────────────────────────────────────────────────────
+  it('folds decomposed Hangul onto its precomposed form', () => {
+    const decomposed = NICKNAME_FORMAT_EXAMPLE.normalize('NFD')
+
+    // The premise: two strings, one rendering, and every ordinary comparison
+    // says they differ.
+    expect(decomposed).not.toBe(NICKNAME_FORMAT_EXAMPLE)
+    expect(decomposed.length).toBeGreaterThan(NICKNAME_FORMAT_EXAMPLE.length)
+    expect(decomposed.toLowerCase()).not.toBe(NICKNAME_FORMAT_EXAMPLE.toLowerCase())
+
+    // And the character gate cannot help, correctly — jamo are printable.
+    expect(NICKNAME_FORBIDDEN.test(decomposed)).toBe(false)
+
+    // canonicalNickname is what closes it: one form out, whatever went in.
+    expect(canonicalNickname(decomposed)).toBe(NICKNAME_FORMAT_EXAMPLE)
+    expect(canonicalNickname(`  ${decomposed}  `)).toBe(NICKNAME_FORMAT_EXAMPLE)
+    expect(canonicalNickname(NICKNAME_FORMAT_EXAMPLE)).toBe(NICKNAME_FORMAT_EXAMPLE)
+  })
+
+  it('accepts a decomposed nickname at signup, judging its canonical form', () => {
+    const decomposed = '창호/98/남/관악'.normalize('NFD')
+    expect(validateSignup({ nickname: decomposed, password: 'swimclub2026' })).toBeNull()
+  })
+
+  // The login half. The address is derived from the nickname and compared with
+  // what the server stored, so a decomposed nickname computed a different
+  // address than the member's own account and could not sign in — with nothing
+  // on screen to say why, since LoginPage answers every failure the same way.
+  it('derives one address whichever form the IME produced', () => {
+    expect(emailForNickname('창호/98/남/관악'.normalize('NFD'))).toBe(
+      '창호/98/남/관악@eysl.local',
+    )
+    expect(emailForNickname('영희'.normalize('NFD'))).toBe('영희@eysl.local')
   })
 
   // The other direction, which matters just as much: `\p{C}` is a wide net and

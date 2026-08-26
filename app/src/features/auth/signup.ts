@@ -1,7 +1,7 @@
 // The signup rules, kept apart from api.ts so they can be tested without the
 // Supabase client — the same split as schedule's kinds.ts against its api.ts.
 
-import { checkNicknameFormat } from './nickname'
+import { canonicalNickname, checkNicknameFormat } from './nickname'
 
 /** What the president's form asks for, and all it asks for (upstream:1064-1068). */
 export type SignupInput = { nickname: string; password: string }
@@ -34,7 +34,10 @@ const byteLength = (value: string) => new TextEncoder().encode(value).length
  * would have people fixing one problem and being handed another.
  */
 export function validateSignup(input: SignupInput): string | null {
-  const nickname = input.nickname.trim()
+  // Trim AND normalise. A decomposed nickname renders identically to its
+  // precomposed twin and would otherwise be judged here, sent, stored, and
+  // compared against a precomposed roster — see nickname.ts's header.
+  const nickname = canonicalNickname(input.nickname)
 
   if (nickname.length < 2) return '닉네임은 2자 이상 입력해주세요.'
   if (nickname.length > NICKNAME_MAX) return `닉네임은 ${NICKNAME_MAX}자 이하로 입력해주세요.`

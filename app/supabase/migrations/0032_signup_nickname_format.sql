@@ -98,7 +98,42 @@ declare
   v_retry    int;
   v_auth_id  uuid := gen_random_uuid();
 begin
-  v_nickname := btrim(coalesce(p_nickname, ''));
+  -- ============================================================================
+  -- NORMALISE FIRST. This line is a security control, not tidiness.
+  -- ============================================================================
+  --
+  -- Hangul has two encodings that RENDER IDENTICALLY: precomposed syllables
+  -- (NFC) and conjoining jamo (NFD). A Korean IME can emit either, and nothing
+  -- downstream could tell them apart — measured on this database:
+  --
+  --   nfc_len 2   nfd_len 5   nfc = nfd  false   lower(nfc) = lower(nfd)  false
+  --   both match '^[^/]+$' ....... the pattern has no opinion about encoding
+  --   nfd ~ '[^[:print:]]' FALSE .. jamo are printable, and must stay allowed:
+  --                                 they are how Hangul is typed
+  --
+  -- So all three defences around this function were blind at once. The unique
+  -- index does not normalise, so both forms can sit in members as two rows. The
+  -- roster guard below compares against a precomposed short_name, so a
+  -- decomposed submission misses and the member is treated as a newcomer. And
+  -- the invisible-character gate correctly has nothing to say.
+  --
+  -- PROVEN, with the roster row picked by the database and rolled back:
+  --
+  --   guard sees precomposed name  ->  existing_member
+  --   guard sees DECOMPOSED name   ->  ok:true          <- a second row for a
+  --                                                        real member, holding
+  --                                                        the login while the
+  --                                                        original held eleven
+  --                                                        years of attendance
+  --
+  -- The two nicknames render the same, so no screen can tell them apart; it
+  -- takes `nickname <> normalize(nickname, nfc)` to see it at all.
+  --
+  -- Normalising HERE means the format check, the invisible check, the roster
+  -- guard, the derived address and the stored row all see one form. Storing the
+  -- normalised value is the part that matters most: once a decomposed nickname
+  -- is in members.nickname, no index can protect it afterwards.
+  v_nickname := normalize(btrim(coalesce(p_nickname, '')), nfc);
 
   -- The screen checks all of these too (signup.ts, nickname.ts). They are
   -- restated here because a direct RPC call never sees the screen, and "the
@@ -277,11 +312,22 @@ begin
   -- Not indexed on purpose: this is a sequential scan over a table that holds a
   -- swimming club, and an index maintained on three columns to serve one query
   -- per signup would cost more than it saves.
+  -- BOTH SIDES NORMALISED, and the right-hand side already is — v_nickname was
+  -- put through normalize() above, so v_parts inherits it. The left-hand side is
+  -- normalised too even though it does not need to be today: measured just
+  -- before writing this, `count(*) where short_name <> normalize(short_name,
+  -- nfc)` is 0 across all 41 rows, and the same is true of nickname and
+  -- real_name. But that is a fact about the workbook that has been imported so
+  -- far, not a property of the column. The importer reads a spreadsheet, and the
+  -- next one could carry decomposed jamo without anybody noticing — at which
+  -- point the guard would silently miss that member. Making it true by
+  -- construction costs a function call per row on a table that holds a swimming
+  -- club.
   if exists (
     select 1 from public.members m
-     where lower(m.short_name) = lower(v_parts[1])
-       and m.birth_year % 100  = v_parts[2]::int
-       and m.gender            = v_parts[3]
+     where lower(normalize(m.short_name, nfc)) = lower(v_parts[1])
+       and m.birth_year % 100                  = v_parts[2]::int
+       and m.gender                            = v_parts[3]
   ) then
     return jsonb_build_object('ok', false, 'reason', 'existing_member',
       'message', '이미 클럽 명단에 있는 회원입니다. 새로 가입하지 마시고 관리자에게 계정 연결을 요청해주세요.');

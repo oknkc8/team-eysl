@@ -48,6 +48,50 @@
 export const NICKNAME_FORMAT_EXAMPLE = '창호/98/남/관악'
 
 /**
+ * The one canonical form of a nickname: trimmed, then NFC.
+ *
+ * ============================================================================
+ * WHY NORMALISATION IS A SECURITY CONTROL HERE AND NOT A TIDINESS HABIT
+ * ============================================================================
+ *
+ * Hangul has two encodings that render IDENTICALLY. `창호` can be two
+ * precomposed syllables (NFC) or five conjoining jamo (NFD), and a Korean IME
+ * can emit either. Nothing in this file could tell them apart, and neither
+ * could the database:
+ *
+ *   nfc_len 2   nfd_len 5   equal false   lower(nfc)=lower(nfd) false
+ *   both match ^[^/]+$ ................. the pattern has no opinion
+ *   nfd caught by [^[:print:]] .. FALSE . jamo are legitimate printable
+ *                                          characters and must not be refused
+ *
+ * So all three of the defences around this rule were blind to it at once:
+ *
+ *   - members_nickname_lower_uq  — `lower()` does not normalise, so both forms
+ *     can sit in the table as separate rows.
+ *   - the roster guard in 0032   — `short_name` is precomposed, the submitted
+ *     name was not, the comparison missed, and a member with eleven years of
+ *     attendance was treated as a newcomer.
+ *   - NICKNAME_FORBIDDEN below   — jamo are printable, correctly.
+ *
+ * Proven against the deployed function, with the roster row chosen by the
+ * database: the precomposed name was refused `existing_member`, and the same
+ * name decomposed returned `ok:true` — a second row for a real member, holding
+ * the login while the original held the history. The two render the same, so no
+ * screen could show which was which; it takes `nickname <> normalize(nickname,
+ * NFC)` to see it at all.
+ *
+ * THIS IS ALSO A LOGIN FIX, not only a signup one. emailForNickname() derives
+ * the address from the nickname, so before this a member whose IME produced NFD
+ * would compute a different address from the one stored and simply fail to sign
+ * in, with nothing on screen to explain why.
+ *
+ * Trim first, then normalise — the same order as `normalize(btrim(…), nfc)` in
+ * 0032, so the client and the server cannot disagree about a nickname that has
+ * both leading space and decomposed jamo.
+ */
+export const canonicalNickname = (value: string) => value.trim().normalize('NFC')
+
+/**
  * The shape, as one string shared with the server.
  *
  * Deliberately written to mean the same thing in both engines: `[^/]`, `{2}`,
@@ -136,8 +180,11 @@ export type NicknameRefusal = {
  * which `anon` cannot read and this module never sees. register_member_v1 (0032)
  * asks it, and the browser only ever renders the sentence it gets back.
  *
- * Expects a nickname that has already been trimmed at both ends — validateSignup
- * and register_member_v1 both btrim before calling, matching emailForNickname().
+ * Expects a nickname already put through canonicalNickname() — trimmed and NFC.
+ * validateSignup does that, and register_member_v1 does the same thing in SQL.
+ * Passing a decomposed string straight in would be checked correctly but would
+ * then be compared against a precomposed roster, which is the bypass this
+ * module's header describes.
  */
 export function checkNicknameFormat(nickname: string): NicknameRefusal | null {
   if (NICKNAME_FORBIDDEN.test(nickname))
