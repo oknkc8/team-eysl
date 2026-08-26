@@ -84,6 +84,12 @@ select m.auth_user_id as id
 
 delete from public.notice_comments where member_id in (select id from pwtest_member_ids);
 delete from public.notices where created_by in (select id from pwtest_member_ids);
+-- board_posts.author_id is NOT NULL and carries no cascade (0033), so a post a
+-- pwtest member wrote raises 23503 on the members delete below and wedges the
+-- whole teardown — including the auth.users rows, whose email is UNIQUE, so the
+-- next run would then fail to seed at all. One statement, and it has to be here
+-- rather than "when the board suite runs": teardown is shared.
+delete from public.board_posts where author_id in (select id from pwtest_member_ids);
 delete from public.messages
 where sender_id in (select id from pwtest_member_ids)
    or recipient_id in (select id from pwtest_member_ids);
