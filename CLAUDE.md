@@ -279,7 +279,54 @@ This form is the one to use because it **refuses** when it is wrong. `git rev-pa
 
 The guard fired for real while this paragraph was being written, stopping a commit from landing in `feat/admin-claim`. Separately, the worktree directory itself came back on another agent's branch; what saved the work then was not the guard but **committing and pushing after every edit**. The guard protects where a commit lands, not whether the checkout is still yours.
 
+**`ps` is the worst of these, and the reason is that its lie is the answer you wanted.** `git status` printing `ok` is obviously not git's output. `gh pr list` printing `[]` at least looks odd for a repo with open PRs. But `ps | grep <anything>` returning nothing looks exactly like *"that program is not running"* — so it **confirms rather than contradicts**, and an investigation stops. Every "I checked, nothing was running" in this project's history was produced this way.
+
+**Read `/proc` instead.** `ls -d /proc/[0-9]* | wc -l` for a count, `/proc/<pid>/comm` and `/proc/<pid>/cmdline` for what a process is. Nothing sits between those files and the truth. `rtk proxy ps` also works, but it puts a wrapper in the path and wrappers are the subject.
+
+**And the interception depends on how the command is invoked, which is why two people measuring the same thing disagree.** Measured on 2026-08-26, same shell, seconds apart:
+
+```
+bare      ps -e | wc -l        31        <- wrong
+$( )      ps -e | wc -l      1100        correct
+          ls -d /proc/[0-9]* | wc -l
+                             1100        ground truth
+
+bare      wc -l < file          0        <- wrong
+$( )      wc -l < file         31        correct
+bare      wc -l   file         31        correct
+```
+
+**The wrapper intercepts the command as typed; it does not reach inside `$( )` command substitution.** So the same query gives two different answers depending on where you put it, and the bare form — the one you type when you are checking something quickly — is the one that lies.
+
+That has a cheap consequence worth using: **run it bare and substituted, and if they disagree, the bare one is wrong.** It also means a verification that happens to wrap everything in `$( )` will fail to reproduce a real bug and can talk you into telling a colleague their correct finding is mistaken. That nearly happened while this paragraph was being written.
+
+Two more from the same session. **`cat` fabricated a truncation count**: a 31-line file printed with `... (1065 lines truncated)` appended, and 31 + 1065 is 1096 against a real 1080 — **the invented number nearly reconciled the two figures being compared**, which is worse than an obvious lie because it manufactures exactly the reassurance that ends an investigation. And the standing rule about `pwtest` rows still holds — **a row count means nothing without a paired "is a runner active" check** — but `ps` cannot supply that second half, so pair it with `/proc`.
+
+**`| tail -N` on a test summary is a false-green generator.** `vitest` prints the file tally and the test tally on adjacent lines, and `tail` keeps the wrong one:
+
+```
+$ vitest run 2>&1 | tail -4
+      Tests  532 passed (532)          <- reads as a clean run
+
+what tail dropped, one line above:
+ Test Files  2 failed | 30 passed (32)
+```
+
+Every other trap in this section is a tool answering about the wrong input. This one is different and worse: **the tool answered correctly and the reader was handed the wrong half.** Nothing was broken, nothing was wrapped, and the output was true.
+
+Grep for what you mean — `vitest run 2>&1 | grep -E "Test Files|Tests "` — and never take the last N lines of a summary whose failure line comes first.
+
+**And the thing that actually caught it was arithmetic, not output.** 532 was lower than the 555 from before the merge, and a merge that adds a migration cannot remove tests. Had the numbers happened to line up, the run would have been reported green. So: **a count that moved the wrong way is a failure to investigate, not a curiosity.** Three separate agents arrived at that habit on 2026-08-26 — a test tally, a column count going 9 to 10, and this — which makes it the most reliable check any of us has, and it is not a check at all. It is noticing.
+
 **A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
+
+**Do not read that as being about one file.** The door is not `endpoint.rule.test.ts`; it is **any test whose import graph reaches `src/lib/env.ts`**, however indirectly. On 2026-08-26 there were two — `achievements.test.ts` joined it through the achievements feature — and the number grows with every feature that imports from `src/lib`. A reader who checks the one filename named here, on a tree where the other one is the problem, concludes this section does not apply to them.
+
+The way to find today's set is to make the condition and look, not to grep for a name:
+
+```
+mv app/.env app/.env.off && npx vitest run; mv app/.env.off app/.env
+```
 
 The local pass is therefore not evidence about CI, and the failure direction is the awkward one: it is green for everyone who could notice and red only in the place nobody watches until a PR is already open. Reading the workflow would never have found it. It took copying the tree without `.env` and running the suite there, which is the general move — **to predict a fresh checkout, make one.**
 
