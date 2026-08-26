@@ -41,6 +41,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Before node, because it needs none and a collision should redden the
+      # run in seconds rather than after an npm install. It is also the only
+      # step here that checks the migrations directory at all — the four
+      # typechecks and the build never open it.
+      #
+      # It catches nothing today, which is the argument for adding it now: the
+      # two collisions this project has had (0020 and 0024, both on 2026-08-25)
+      # were each found by a person reading two filenames, and both times only
+      # after the fact. Nothing in Postgres objects — schema_migrations is keyed
+      # on the whole filename, so two files sharing a number are two ordinary
+      # rows.
+      - name: Migration numbers are unique
+        run: ./scripts/check-migration-numbers.sh
+
       - uses: actions/setup-node@v4
         with:
           # Matches the version this project is developed on (v24.14.1). There is
