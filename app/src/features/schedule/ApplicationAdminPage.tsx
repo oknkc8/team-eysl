@@ -14,6 +14,7 @@ import {
   type ApplicantName,
   type ApplicationSummary,
 } from './api'
+import { explainEnrolFailure } from './enrolment'
 import { formatDateLabel, formatTimeRange } from './order'
 
 const CARD = {
@@ -197,28 +198,18 @@ function EnrolPanel({ activityId }: { activityId: string }) {
     void qc.invalidateQueries({ queryKey: ['application-summaries'] })
   }
 
-  // Branched on the SQLSTATE the RPC raises, never on the message text: the
-  // messages are English and belong to the database, while what a staffer needs
-  // to read is Korean and belongs here.
-  const explain = (error: unknown): string => {
-    const code = (error as { code?: string } | null)?.code
-    if (code === '22023') return '정원이 찼습니다. 정원을 늘린 뒤 다시 시도해 주세요.'
-    if (code === '42501') return '권한이 없거나, 직접 신청할 수 있는 회원입니다.'
-    return '처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'
-  }
-
   const add = useMutation({
     mutationFn: (memberId: string) => enrolMember(activityId, memberId),
     onMutate: () => setFailure(null),
     onSuccess: refresh,
-    onError: (error) => setFailure(explain(error)),
+    onError: (error) => setFailure(explainEnrolFailure(error)),
   })
 
   const remove = useMutation({
     mutationFn: (memberId: string) => unenrolMember(activityId, memberId),
     onMutate: () => setFailure(null),
     onSuccess: refresh,
-    onError: (error) => setFailure(explain(error)),
+    onError: (error) => setFailure(explainEnrolFailure(error)),
   })
 
   const busy = add.isPending || remove.isPending

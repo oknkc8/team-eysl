@@ -381,11 +381,23 @@ It sits mid-way through `loadPersistentContent()`, so everything after it is dea
 
 `final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer.
 
-**Still live at `final91` (verified 2026-08-26), which makes it 26 releases and counting.** The consumer has moved to `index.html:1631` and `loadPersistentContent()` now destructures six slots where `final64` destructured seven; a Python scan of the whole file finds the identifier on that one line and nowhere else. So **anything downstream of 1631 in his app has never run**, and none of it can be treated as reference behaviour when we port it.
+**It ran from `final66` to `final91` — 26 releases — and `final92-unregistered-roster` (`59a67e3`) fixed it.** At `final91` the consumer sat at `index.html:1631` while `loadPersistentContent()` destructured six slots where `final64` destructured seven, so anything downstream of that line had never executed. `final92` put the seventh slot back and gave it a source:
+
+```diff
+- const [noticeRes,activityRes,memberRes,applicationRes,historyRes,raceHistoryRes]=await Promise.all([
++ const [noticeRes,activityRes,memberRes,applicationRes,historyRes,raceHistoryRes,historicalTrainingRes]=await Promise.all([
++  dbClient.rpc('team_attendance_canonical_v1')
+```
+
+Declared at `1572`, used at `1632`, and the same at the tip (`final93-owner-time`, `4475128`).
+
+**So the question below has a version boundary, and it is the whole of its meaning.** It applies to **`final66` through `final91`**. From `final92` on, `loadPersistentContent()` runs to completion and downstream code is observed behaviour again — porting from it under the old rule would throw away a working reference and re-decide semantics he has already settled.
+
+That boundary is the point worth keeping. **A rule derived from a bug expires when the bug is fixed, and nothing announces it** — this one was written on 2026-08-26 and was already false the same day. Any rule of this shape needs the version it was measured at written beside it, so the next reader can check whether it still holds instead of inheriting it.
 
 The lesson for us is narrow and important: **a feature we are porting may never have run in his app.** `final62-history-all-participants` and `final64-canonical-training-attendance` are both downstream of this, so reconstruct them from the `bc3523d` snapshot and do not assume he has validated their semantics against real data. Reported to the president separately; his own breakage, not exploitable, so naming the line here is safe.
 
-**So ask this before porting anything of his, and ask it first: is the feature's read path downstream of `index.html:1631`?** It is a mechanical question, not a judgement — find where the screen gets its data and see whether that runs inside `loadPersistentContent()` after the throwing line, or from somewhere else.
+**So, when porting from a release between `final66` and `final91`, ask this first: is the feature's read path downstream of `index.html:1631`?** It is a mechanical question, not a judgement — find where the screen gets its data and see whether that runs inside `loadPersistentContent()` after the throwing line, or from somewhere else. (At `final92` and later the line no longer throws, so the answer is always "not downstream".)
 
 | answer | what you are porting from |
 |---|---|
@@ -434,7 +446,18 @@ Two things to know before implementing it. His client sends `created_by` from th
 
 **`activities.details` now carries canonical data, which revises the rule above it.** `historical_participants` (nickname array) and `historical_attendance` (nickname → status map) hold the club's paper attendance registers for trainings that predate the app. Unlike `participants`/`waitlist`/`offer` — still dead data, still rebuilt from `activity_applications` every load — these are **read-only canonical**: `index.html` reads them at `upstream:1300-1301` and writes them nowhere, so he backfills through the dashboard or SQL.
 
-Our schema cannot hold them. `attendance.member_id` is a FK to `members` (`0001:104`), so a past participant who never had an account cannot be stored at all, and `attendance_for_activity_v1` (`0001:258-269`) builds its roster solely from `activity_applications` participant rows, so a past training with no applications shows an empty list. Supporting this needs a decision on whether an attendance row may exist without a member row — not just an import script.
+**Our schema holds them already, and the sentence that used to stand here was wrong.** It said "our schema cannot hold them — `attendance.member_id` is a FK to `members`, so a past participant who never had an account cannot be stored at all." The FK asks for a **member row**, not an account, and a member row needs no `auth_user_id`. Measured 2026-08-26:
+
+```
+members | no_login | with_login        attendance | for_no_login
+     41 |       36 |          5               249 |          198
+```
+
+**79% of every attendance row we hold belongs to somebody who has never logged in** — the 36 whose rows came from the club spreadsheet, the same population `0035` counted in its own header. They reach the roster too: `0030` widened it to `activity_applications ∪ attendance`, and on the activity with the most attendance that returns 19 people of whom 17 have no login.
+
+Two lessons, and the second is the transferable one. `attendance_for_activity_v1`'s owner is **`0030`**, not the `0001:258-269` this file used to cite — **a `create or replace` leaves the old line reference looking valid**, so re-find a function by name before trusting a line number attached to it. And the claim itself had been repeated for two days without anybody running `select count(*) filter (where auth_user_id is null)`, which is the whole check. **A schema claim is answerable by the schema; ask it before writing the claim down.**
+
+What was genuinely missing was narrower: staff could *mark attended* a member who cannot sign in (`attendance_mark_v1` takes `p_member_id`) but could not *enrol* one, because `apply_to_activity` derives the member from the session and there was no staff-side path. `0042` adds one, and refuses to waitlist such a member — `offer_seat_to_next_waitlister()` picks by `wait_order` without asking whether the person can answer, so queueing an unreachable member parks a live seat for 12 hours per turn at everyone else's expense.
 
 **He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. **Closed in `0021`** — `media_folders_update`, `media_files_update` and `media_files_delete` are owner-only, `media_folders` has no DELETE policy at all (deletion goes through `delete_media_folder_v1`, which checks ownership), and the screens no longer offer staff a control the database would refuse. The cost is real and is his to revisit: no admin can take down another member's folder or file from inside the app any more.
 
