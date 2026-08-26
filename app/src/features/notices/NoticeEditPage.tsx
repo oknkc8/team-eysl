@@ -7,6 +7,7 @@ import {
   deleteNotice,
   getNotice,
   listAttachments,
+  NoticeConflictError,
   saveNotice,
   type Notice,
   type NoticeAttachment,
@@ -102,13 +103,26 @@ function EditExisting({ noticeId }: { noticeId: string }) {
         loading={<Shimmer rows={2} />}
         error="공지를 불러오지 못했습니다"
       >
-        {(notice) =>
-          attachmentsQuery.isPending ? (
-            <Shimmer rows={2} />
-          ) : (
-            <NoticeForm notice={notice} initialAttachments={attachmentsQuery.data ?? []} />
-          )
-        }
+        {(notice) => {
+          // THE FORM DOES NOT MOUNT UNTIL THE ATTACHMENTS ARE REALLY HERE, and
+          // an error is not "here". An earlier version checked isPending and
+          // then passed `data ?? []`, which means a failed query seeded the form
+          // with an EMPTY list — and because save_notice_v1 takes the desired
+          // final set, saving a typo fix would then have deleted every
+          // attachment and queued every object. It would not have looked like a
+          // failure to anybody: the screen renders, the save succeeds, the files
+          // are gone.
+          if (attachmentsQuery.isPending) return <Shimmer rows={2} />
+          if (attachmentsQuery.isError || !attachmentsQuery.data) {
+            return (
+              <p style={{ ...CARD, fontSize: 13, color: '#a33', lineHeight: 1.6 }}>
+                첨부파일 목록을 불러오지 못해 수정할 수 없습니다. 이대로 저장하면 기존 첨부파일이
+                지워질 수 있어 화면을 잠갔습니다. 새로고침해 주세요.
+              </p>
+            )
+          }
+          return <NoticeForm notice={notice} initialAttachments={attachmentsQuery.data} />
+        }}
       </AsyncSection>
     </Page>
   )
@@ -135,6 +149,15 @@ function NoticeForm({
 }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  // The notice as the SERVER last confirmed it, not as it arrived in props.
+  //
+  // Two findings share this one piece of state. A retry after a partial upload
+  // used to send noticeId = null again and create a SECOND notice; and every
+  // save has to carry the version it is replacing. Adopting the RPC's answer
+  // here settles both: the next call updates the row that was just created, and
+  // compares against the updated_at that call returned.
+  const [saved, setSaved] = useState<Notice | undefined>(notice)
+  const [conflict, setConflict] = useState<string | null>(null)
   const [title, setTitle] = useState(notice?.title ?? '')
   const [body, setBody] = useState(notice?.body ?? '')
   // Existing rows the save will keep. Removing one here deletes nothing until
@@ -152,17 +175,22 @@ function NoticeForm({
   const save = useMutation({
     mutationFn: () =>
       saveNotice({
-        noticeId: notice?.id,
+        noticeId: saved?.id,
         title: title.trim(),
         body,
         keepAttachmentIds: kept.map((row) => row.id),
         files,
+        expectedUpdatedAt: saved?.updated_at ?? null,
       }),
     onMutate: () => {
       setUploadFailures([])
+      setConflict(null)
       setSaveState('saving')
     },
     onSuccess: async (result) => {
+      // Adopted before anything else can return early: from here on this form
+      // is editing a row that exists, at the version the server just wrote.
+      setSaved(result.notice)
       await qc.invalidateQueries({ queryKey: ['notices'] })
       await qc.invalidateQueries({ queryKey: ['notice', result.notice.id] })
       await qc.invalidateQueries({ queryKey: ['notice-attachments', result.notice.id] })
@@ -185,7 +213,16 @@ function NoticeForm({
       setSaveState('saved')
       void navigate(`/notices/${result.notice.id}`, { replace: true })
     },
-    onError: () => setSaveState('error'),
+    onError: (error) => {
+      if (error instanceof NoticeConflictError) {
+        setConflict(
+          error.current
+            ? `다른 곳에서 먼저 수정됐습니다. 현재 제목은 "${error.current.title}"입니다. 새로고침한 뒤 다시 수정해 주세요.`
+            : '다른 곳에서 먼저 수정됐습니다. 새로고침한 뒤 다시 수정해 주세요.',
+        )
+      }
+      setSaveState('error')
+    },
   })
 
   const remove = useMutation({
@@ -325,6 +362,22 @@ function NoticeForm({
         </p>
       </div>
 
+      {conflict && (
+        <p
+          style={{
+            ...CARD,
+            marginTop: 14,
+            background: '#fff0d6',
+            borderColor: '#fff0d6',
+            color: '#925900',
+            fontSize: 13,
+            lineHeight: 1.6,
+          }}
+        >
+          {conflict}
+        </p>
+      )}
+
       {uploadFailures.length > 0 && (
         <div
           style={{
@@ -376,11 +429,11 @@ function NoticeForm({
         </button>
       </div>
 
-      {notice && (
+      {saved && (
         <button
           onClick={() => {
             if (window.confirm('이 공지를 삭제할까요? 댓글과 첨부파일도 함께 사라집니다.')) {
-              remove.mutate(notice.id)
+              remove.mutate(saved.id)
             }
           }}
           disabled={saveState === 'saving'}

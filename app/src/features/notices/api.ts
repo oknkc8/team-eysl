@@ -264,12 +264,39 @@ function toSavedAttachment(value: unknown): SavedAttachment | null {
  * parameter for it to arrive in — and why no sanitising rule here has to be
  * right about `../`, a null byte, or a name that is entirely dots.
  */
+/**
+ * Thrown when the notice moved under the editor.
+ *
+ * PT409 is save_notice_v1's own errcode, distinct from 42704 ("gone") on
+ * purpose: the two ask opposite things of the person editing, and the client
+ * keys off PostgREST's `code` rather than the HTTP status. `current` carries
+ * the row the comparison was made against, so the screen can show what is there
+ * now from this same answer instead of a refetch that could land after a third
+ * edit.
+ */
+export class NoticeConflictError extends Error {
+  readonly current: { title: string; body: string; updated_at: string } | null
+  constructor(current: NoticeConflictError['current']) {
+    super('notice changed elsewhere')
+    this.name = 'NoticeConflictError'
+    this.current = current
+  }
+}
+
 export async function saveNotice(input: {
   noticeId?: string
   title: string
   body: string
   keepAttachmentIds: string[]
   files: File[]
+  /**
+   * The updated_at of the version being edited, or null when creating.
+   *
+   * Required by the RPC for an edit and refused for a create, so this is not a
+   * field a caller can forget its way past — the database answers 22023 either
+   * way round.
+   */
+  expectedUpdatedAt: string | null
 }): Promise<SaveNoticeResult> {
   const payload: AttachmentPayload[] = [
     ...input.keepAttachmentIds.map((id) => ({ id })),
@@ -290,8 +317,24 @@ export async function saveNotice(input: {
     p_title: input.title,
     p_body: input.body,
     p_attachments: payload as unknown as Json,
+    p_expected_updated_at: input.expectedUpdatedAt,
   })
-  if (error) throw error
+  if (error) {
+    // Narrowed to the one code the screen can act on. Everything else is
+    // rethrown untouched rather than flattened into a generic failure.
+    if (error.code === 'PT409') {
+      let current: NoticeConflictError['current'] = null
+      try {
+        current = JSON.parse(error.details ?? 'null')
+      } catch {
+        // DETAIL is built by the RPC, so this should not happen — but a
+        // conflict reported without its payload is still a conflict, and
+        // losing the whole error to a parse would be the worse outcome.
+      }
+      throw new NoticeConflictError(current)
+    }
+    throw error
+  }
 
   const result = (data ?? {}) as Record<string, unknown>
   const notice = result.notice as Notice
