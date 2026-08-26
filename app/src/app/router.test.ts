@@ -242,6 +242,23 @@ describe('member routes are guarded by tree position', () => {
     expect(guardsFor('/members/approval')).not.toContain('/members/:memberId')
     expect(guardsFor('/members/roles')).not.toContain('/members/:memberId')
     expect(guardsFor('/members/blocked')).not.toContain('/members/:memberId')
+    // The newest literal sibling, and the one with the most to lose if ranked
+    // matching ever went the other way: an admin typing this URL would land on a
+    // member detail page for an id reading "link" instead of on the guard.
+    expect(guardsFor('/members/link')).not.toContain('/members/:memberId')
+  })
+
+  // 회원 연결, and it belongs with its three neighbours for a stricter reason
+  // than any of them. link_member_login_v1 moves an auth account from one member
+  // row to another and deletes the row it came from: approval decides whether
+  // somebody is let in, blocking decides whether they stay, and this decides
+  // WHOSE HISTORY AN ACCOUNT OWNS. There is no undo inside the app. Both RPCs
+  // behind the screen check is_master_admin() themselves and raise 42501 —
+  // verified against the dev database, where an `admin` who is not the master
+  // was refused — so this guard keeps nobody off a screen the server would have
+  // answered for them.
+  it('puts 회원 연결 behind RequireMasterAdmin', () => {
+    expect(guardsFor('/members/link')).toEqual(['auth', 'staff', 'master', '/members/link'])
   })
 
   // The two drill-downs deliberately do NOT sit behind RequireStaff, and the
