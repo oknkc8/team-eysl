@@ -43,7 +43,14 @@ import-output*.sql
 app/scripts/import/*.sql
 
 # Dependencies / build output
-node_modules/
+#
+# No trailing slash on node_modules. A trailing slash matches directories only,
+# and in a worktree node_modules is often a symlink to the shared checkout — a
+# symlink is not a directory, so it stayed tracked. Checking in the shared
+# checkout proves nothing: there it is a real directory and looks correctly
+# ignored. Verify with `git check-ignore -v app/node_modules` in a worktree
+# where it is a symlink.
+node_modules
 dist/
 build/
 .vite/
