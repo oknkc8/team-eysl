@@ -146,8 +146,16 @@ function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null) {
   // hold can lapse in that gap and the pooler can hand the backend to somebody
   // else, so the bare form could kill a stranger's work using a pid that was
   // ours a moment ago. Selecting the pid and terminating it in ONE statement
-  // makes both halves read the same snapshot: if it stopped being ours, the
-  // select matches nothing and nothing is killed.
+  // collapses that gap: a backend that has stopped holding both our keys is not
+  // selected, so it is not signalled.
+  //
+  // NOT ZERO, AND WORTH SAYING SO. pg_locks reads live shared memory rather than
+  // an MVCC snapshot, and the terminate runs per output row, so a backend could
+  // in principle exit and have its pid reused between the scan and the signal.
+  // What the one-statement form buys is the size of the window — from a round
+  // trip across two connections down to the inside of a single statement — not
+  // its elimination. The honest claim is "narrowed to where OS pid reuse would
+  // have to land", not "closed".
   if (backendPid !== null && backendPid > 0) {
     const sql =
       'select pg_terminate_backend(l.pid) from pg_locks l' +
