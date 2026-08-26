@@ -66,23 +66,11 @@ function readSeedLock(): SeedLock | null {
  * somebody is running has to mean "do not delete", or this reintroduces the bug
  * it was added to close.
  */
-function sharedKeyHeldByAnyone(): boolean {
-  const sql =
-    'select count(*) from pg_locks l' +
-    " where l.locktype = 'advisory' and l.classid = 0 and l.objsubid = 1 and l.granted" +
-    `   and l.objid = ${LOCK_KEY}`
-  try {
-    const out = execFileSync('bash', ['scripts/psql.sh', '-q', '-tAX', '-c', sql], {
-      cwd: appDir,
-      stdio: 'pipe',
-      encoding: 'utf8',
-    }).trim()
-    const n = Number(out)
-    return !Number.isInteger(n) || n > 0
-  } catch {
-    return true
-  }
-}
+// Deliberately gone: `sharedKeyHeldByAnyone()` used to answer "is anybody
+// running" for the no-pid-file case. Asking it at all was the defect — the
+// answer arrived on one connection and the delete went out on another, so it
+// could only ever be true when it was read, not when it was acted on. The
+// refusal in globalTeardown replaces it and needs no query.
 
 /**
  * The backend holding BOTH our keys, or null if we no longer hold the lock.
@@ -176,7 +164,19 @@ function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null) {
     }
   }
 
-  if (Number.isInteger(localPid) && localPid > 0) {
+  // THE SAME RULE AS THE BACKEND, WHICH THIS DID NOT USED TO FOLLOW. A null
+  // verifiedBackendPid means we could not prove the lock is still ours — and if
+  // the backend is not ours, the local pid recorded beside it is no better. Our
+  // psql exits when its pg_sleep returns, which is precisely how the hold lapses,
+  // so on that path the recorded pid usually belongs to a process that ended and
+  // an id the OS is free to have reused. Killing it was a coin flip on somebody
+  // else's process, taken on the one path that had already concluded it knows
+  // nothing.
+  //
+  // Format validation cannot help here: 12345 is a well-formed pid whoever owns
+  // it. Only the lock answers ownership, and when it declines to, the answer is
+  // to do nothing.
+  if (backendPid !== null && Number.isInteger(localPid) && localPid > 0) {
     try {
       process.kill(localPid)
     } catch {
@@ -306,16 +306,26 @@ export default function globalTeardown() {
   // when global setup threw. So the run that lost the race would delete the
   // fixtures of the run that won it, mid-suite.
   //
-  // Without a nonce we cannot ask "is it ours", so we ask the weaker question
-  // that is still sound: is anybody holding the shared key? If somebody is, the
-  // rows are theirs by construction — we never seeded.
-  if (!lock && sharedKeyHeldByAnyone()) {
+  // AND THE ANSWER IS NOT "ASK WHETHER ANYONE ELSE HOLDS IT". That was the first
+  // fix here, and it kept the defect in a smaller shape: the question ran on one
+  // connection and the delete on another, so a run that answered "nobody" and
+  // then lost the race deleted the winner's fixtures anyway — with the
+  // after-the-fact check disabled on that very path, because it was written as
+  // `lock !== null && …`. It deleted and could not even tell you.
+  //
+  // There is no case where a run that does not hold the lock should delete. If we
+  // never acquired, we never seeded, so nothing here is ours whether or not
+  // anybody else is running right now. Refusing outright removes the gap rather
+  // than narrowing it — the same move as taking the nonce before the shared key,
+  // and for the same reason: a state that cannot be reached needs no argument
+  // about how likely it is.
+  if (!lock) {
     throw new Error(
-      'e2e: this run never recorded a seed lock, and another run holds it now, so nothing was ' +
-        'removed.\n' +
-        'That normally means this run failed to acquire the lock and never seeded — in which ' +
-        'case it has no fixtures here and the rows belong to the run still going.\n' +
-        'If you are certain nothing is running: npm run db:psql -- -f e2e/cleanup.sql',
+      'e2e: this run cannot prove it holds the seed lock, so nothing was removed.\n' +
+        'No lock was recorded, which means setup never acquired one — so this run never seeded ' +
+        'and no rows here are its own to delete.\n' +
+        'Any pwtest rows belong to a run that is still going, or are a leak from an older one.\n' +
+        'Once you are certain nothing is running: npm run db:psql -- -f e2e/cleanup.sql',
     )
   }
 
@@ -336,7 +346,10 @@ export default function globalTeardown() {
       ['scripts/psql.sh', '-v', 'ON_ERROR_STOP=1', '-q', '-f', 'e2e/cleanup.sql'],
       { cwd: appDir, stdio: 'pipe', encoding: 'utf8' },
     )
-    lostLockDuringCleanup = lock !== null && heldBackendPid(lock) === null
+    // No `lock !== null` guard: the refusal above makes that unreachable. It used
+    // to be here, and it was the reason the one path that wrongly deleted was
+    // also the one path that could not report it.
+    lostLockDuringCleanup = heldBackendPid(lock) === null
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string }
     throw new Error(
@@ -355,7 +368,7 @@ export default function globalTeardown() {
     // heldPid is the pre-cleanup answer and may be stale by now. That is safe
     // only because the terminate carries its own predicate: a backend that
     // stopped being ours matches nothing and is left alone.
-    if (lock) releaseSeedLock(lock, heldPid)
+    releaseSeedLock(lock, heldPid)
   }
 
   if (lostLockDuringCleanup) {

@@ -29,11 +29,17 @@ import { STAMP_PATH, STAMP_VALUE } from '../playwright.config'
  */
 setup('the server on this port is our build', async ({ baseURL }) => {
   const response = await fetch(`${baseURL}${STAMP_PATH}`)
-  // Strips ONLY the trailing newline the stamp is written with, where a .trim()
-  // would also eat trailing whitespace that is part of the path. A directory
-  // named with a trailing space is legal and git will happily make a worktree
-  // there, and under .trim() such a build fails to recognise itself — the check
-  // rejecting the very tree it was meant to confirm.
+  // Strips at most ONE trailing newline, where a .trim() would also eat trailing
+  // whitespace that is part of the path. A directory named with a trailing space
+  // is legal and git will happily make a worktree there, and under .trim() such a
+  // build fails to recognise itself — the check rejecting the very tree it was
+  // meant to confirm.
+  //
+  // The writer does not add that newline (playwright.config.ts writes the value
+  // raw), so this is tolerance for whatever sits in between — a static server, an
+  // editor, a shell that helpfully terminates a line — and not the other half of
+  // a convention we control. Worth stating, because a comment claiming the writer
+  // adds it would send the next person to delete one side of a matched pair.
   const raw = response.ok ? await response.text() : ''
   const served = raw.replace(/\r?\n$/, '')
   if (served === STAMP_VALUE) return

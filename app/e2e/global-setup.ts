@@ -145,9 +145,16 @@ async function acquireSeedLock(): Promise<void> {
       // one key every future run waits on, until the pooler happened to reap it.
       //
       // This way the only orphan the window can produce is a nonce with no
-      // shared key. The nonce is random and nobody waits on it, so that leak
-      // blocks nothing. The dangerous state is unreachable rather than merely
+      // shared key. The dangerous state is unreachable rather than merely
       // unlikely.
+      //
+      // "Nobody waits on a nonce" is the right expectation but not a theorem: a
+      // later run that happens to draw the same 31-bit value would wait out
+      // LOCK_WAIT_MS on it and fail. That is the same remote collision Low 5
+      // names, and the comparison that matters is with what this replaced — an
+      // orphaned SHARED key blocks every subsequent run, with certainty, until
+      // the pooler reaps it. Trading a certainty for a one-in-two-billion is the
+      // whole of the argument.
       //
       // No wait is possible on this one: the key is random and unheld.
       '-c',
