@@ -983,6 +983,39 @@ export type Database = {
       }
     }
     Functions: {
+      activity_enrol_member_v1: {
+        Args: { p_activity_id: string; p_member_id: string }
+        Returns: {
+          activity_id: string
+          application_type: string
+          created_at: string
+          details: Json
+          id: string
+          member_id: string
+          offer_expires_at: string | null
+          offer_status: string
+          updated_at: string
+          wait_order: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_applications"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      activity_enrollable_members_v1: {
+        Args: { p_activity_id: string }
+        Returns: {
+          already_enrolled: boolean
+          member_id: string
+          nickname: string
+        }[]
+      }
+      activity_unenrol_member_v1: {
+        Args: { p_activity_id: string; p_member_id: string }
+        Returns: boolean
+      }
       append_notice_comment: {
         Args: { p_body: string; p_notice_id: string }
         Returns: {
