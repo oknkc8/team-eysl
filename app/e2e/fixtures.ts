@@ -13,6 +13,13 @@ export const STATE = {
   member: path.join(here, '.auth', 'member.json'),
   member2: path.join(here, '.auth', 'member2.json'),
   pending: path.join(here, '.auth', 'pending.json'),
+  // Sessions for two people the app will not let in. They authenticate fine —
+  // Supabase Auth knows nothing about members.status — and land on /pending,
+  // which is exactly what makes them useful: a real token with no membership
+  // behind it, so a request they make is refused by the database rather than by
+  // the absence of credentials.
+  rejected: path.join(here, '.auth', 'rejected.json'),
+  blocked: path.join(here, '.auth', 'blocked.json'),
 }
 
 /**

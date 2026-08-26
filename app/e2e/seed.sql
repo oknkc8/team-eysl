@@ -108,7 +108,14 @@ insert into pwtest_accounts (nickname, status, role, member_id, birth_year, gend
   -- branches through apply_to_activity() and every RLS policy they touch. The
   -- bug the president's members actually hit is two members, so the fixture is
   -- two members.
-  ('pwtestmember2', 'approved', 'member',       'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 1995, '여');
+  ('pwtestmember2', 'approved', 'member',       'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 1995, '여'),
+  -- Turned away, and shown the door after being let in. Neither is a variant of
+  -- 'pending': all three are simply "not approved", and that is the point —
+  -- current_member_id() is the single predicate every RPC in this schema leans
+  -- on, and this repository has lost it once already (restored in 0010). Three
+  -- rows here is what lets a test say so in three states rather than one.
+  ('pwtestrejected','rejected', 'member',       'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 1988, '남'),
+  ('pwtestblocked', 'blocked',  'member',       'ffffffff-ffff-4fff-8fff-ffffffffffff', 1992, '여');
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
