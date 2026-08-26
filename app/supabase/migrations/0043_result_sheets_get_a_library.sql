@@ -166,11 +166,42 @@ comment on function public.team_file_library_allows_me(text) is
 
 -- ------------------------------------------------------------- grants
 --
--- All three are STABLE SECURITY DEFINER helpers called from storage policies
--- and from each other, never by a browser. CREATE OR REPLACE preserves the
--- existing ACL, so this restates rather than changes it -- 0026 is why the
--- grant belongs in the migration that last touched the function rather than
--- only in the one that created it.
-revoke all on function public.is_my_media_object_path(text)      from public, anon, authenticated;
-revoke all on function public.media_object_is_claimed(text)      from public, anon, authenticated;
-revoke all on function public.team_file_library_allows_me(text)  from public, anon, authenticated;
+-- THESE THREE MUST KEEP authenticated=X, AND THE FIRST DRAFT OF THIS MIGRATION
+-- TOOK IT AWAY. Recording it because the reasoning was plausible and wrong.
+--
+-- The draft revoked from `public, anon, authenticated` and granted nothing,
+-- on the reasoning that "these are helpers called from storage policies and
+-- from each other, never by a browser". The second half is true and the
+-- conclusion does not follow. **An RLS policy expression is evaluated as the
+-- CALLING role**, so when a member uploads a file, it is `authenticated` that
+-- executes is_my_media_object_path() inside team_files_insert's WITH CHECK.
+-- SECURITY DEFINER decides whose privileges the BODY runs with; it does not
+-- excuse the caller from needing EXECUTE.
+--
+-- Applying that draft broke every upload in the app — media, 자료실 and notice
+-- attachments, not merely the new library — with `permission denied for
+-- function is_my_media_object_path`. It was caught by reading the live ACL and
+-- noticing the three touched functions had lost a grant their untouched peers
+-- still had:
+--
+--    is_my_avatar_object_path     postgres=X | service_role=X | authenticated=X
+--    is_my_team_file_path         postgres=X | service_role=X | authenticated=X
+--    team_file_is_readable        postgres=X | service_role=X | authenticated=X
+--    is_my_media_object_path      postgres=X | service_role=X            <- mine
+--    media_object_is_claimed      postgres=X | service_role=X            <- mine
+--    team_file_library_allows_me  postgres=X | service_role=X            <- mine
+--
+-- Comparing a changed object against its unchanged siblings is what made it
+-- obvious; the migration text alone read as correct, and so did the diff.
+--
+-- CREATE OR REPLACE preserves an ACL, so the honest thing here is to touch it
+-- as little as possible: revoke the two roles that must never hold it, and
+-- restate the one grant that must survive. 0026 is why the grant is written in
+-- the migration that last touched the function rather than left implicit.
+revoke all on function public.is_my_media_object_path(text)      from public, anon;
+revoke all on function public.media_object_is_claimed(text)      from public, anon;
+revoke all on function public.team_file_library_allows_me(text)  from public, anon;
+
+grant execute on function public.is_my_media_object_path(text)     to authenticated;
+grant execute on function public.media_object_is_claimed(text)     to authenticated;
+grant execute on function public.team_file_library_allows_me(text) to authenticated;
