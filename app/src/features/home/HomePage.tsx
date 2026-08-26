@@ -6,6 +6,8 @@ import { isStaff } from '../auth/schema'
 import { getLatestNotice, type Notice } from '../notices/api'
 import { ActivityCard } from '../schedule/ActivityCard'
 import { hasFinished, todayKey } from '../schedule/order'
+import { viewerKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
 import { listSchedule, type ScheduleEntry } from '../schedule/api'
 
 /** How many of the club's next activities the home screen previews — his three. */
@@ -39,6 +41,7 @@ const UPCOMING_SHOWN = 3
  */
 export function HomePage() {
   const { user } = useCurrentUser()
+  const { session } = useSession()
   const staff = isStaff(user)
 
   const noticeQuery = useQuery({ queryKey: ['notice-latest'], queryFn: getLatestNotice })
@@ -46,7 +49,12 @@ export function HomePage() {
   // The same query key 일정's 전체 tab uses, deliberately: whichever screen a
   // member opens first pays for the fetch and the other is instant, and the two
   // can never disagree about who holds a seat.
-  const scheduleQuery = useQuery({ queryKey: ['schedule', 'all'], queryFn: () => listSchedule() })
+  // Carries `mine`, so it is the viewer's answer too. Viewer last, because
+  // every invalidation of this uses the bare ['schedule'].
+  const scheduleQuery = useQuery({
+    queryKey: viewerKey(['schedule', 'all'], session?.user.id),
+    queryFn: () => listSchedule(),
+  })
 
   // listSchedule returns a 30-day tail of past activities after the upcoming
   // ones (sortUpcomingFirst), and neither section here wants them: "다가오는"
