@@ -272,21 +272,34 @@ export async function renameMediaFile(input: { fileId: string; fileName: string 
  * Removing a row does not remove the object — they are separate systems, and
  * the storage policy answers separately. So a delete reports how many objects
  * it could not remove instead of pretending the bucket is clean, and the screen
- * says so. An orphan is invisible (nothing in this app lists a bucket) but it
- * still occupies the quota somebody pays for.
+ * says so.
+ *
+ * The number means something different since 0036, and better. It used to count
+ * objects lost for good: the row was gone, and with it the only thing that made
+ * the object visible, so nothing could ever remove it. Now every one of these is
+ * a row in pending_object_deletions, and any session that can act on it finishes
+ * the job on its next sweep. So this counts work outstanding, not damage done.
  */
 export type DeleteOutcome = {
-  /** Objects the bucket refused to drop. Rows are gone either way. */
+  /** Objects still queued for removal. Rows are gone either way. */
   orphanedObjects: number
 }
 
 /**
  * Delete one file: the row first, then its object.
  *
- * Row-first is deliberate. The other order destroys the object and then finds
- * out RLS will not let the row go, leaving a row that points at nothing — a
- * broken tile rather than an invisible orphan. This way the worst case is a
- * bucket object nobody references, which is recoverable and reported.
+ * Row-first stays, and 0036 is what makes it safe. The row was the only thing
+ * granting anybody sight of the object — team_files_read (0029) admits an object
+ * only where a row claims its path — so deleting it first made the object
+ * invisible, and an invisible object cannot be deleted either: storage-api
+ * removes with `delete ... returning *`, and a DELETE that reads columns has the
+ * SELECT policy applied on top of the DELETE policy. The call answered 200 with
+ * an empty array, having removed nothing, every single time.
+ *
+ * An AFTER DELETE trigger now queues the path before the row is gone, and the
+ * queue entry is itself a claim, so the object stays reachable to whoever can
+ * remove it. Sweeping is a separate step precisely so an interrupted delete is
+ * finished later instead of being lost.
  */
 export async function deleteMediaFile(input: {
   fileId: string
@@ -300,7 +313,7 @@ export async function deleteMediaFile(input: {
   if (error) throw error
   if ((data ?? []).length === 0) throw new Error('파일을 삭제할 권한이 없습니다')
 
-  return { orphanedObjects: await removeObjects([input.storagePath]) }
+  return { orphanedObjects: await sweepPaths([input.storagePath]) }
 }
 
 /**
@@ -328,23 +341,123 @@ export async function deleteFolder(folderId: string): Promise<DeleteOutcome> {
   // there is nothing to inspect afterwards — 42501 arrives here as an error.
   if (error) throw new Error('폴더를 삭제할 권한이 없습니다')
 
-  return { orphanedObjects: await removeObjects(data ?? []) }
+  return { orphanedObjects: await sweepPaths(data ?? []) }
+}
+
+// ------------------------------------------------------------------- sweeping
+
+/**
+ * How many queued objects one sweep will attempt.
+ *
+ * Bounded because the queue is drained on a screen somebody is waiting to see,
+ * and because remove() takes the whole batch in one request — a backlog should
+ * cost several quick sweeps rather than one slow screen.
+ */
+const SWEEP_BATCH = 50
+
+/**
+ * Finish every queued deletion this session is allowed to finish.
+ *
+ * The queue is drained by whoever can act on it: the member whose prefix the
+ * object sits under, or any staff member — the same predicate team_files_delete
+ * uses, because it is the same question. There is no server-side sweeper and
+ * 0036 explains at length why there cannot be one — a pg_cron job can delete the
+ * storage.objects row but not the bytes behind it, and Supabase installs a
+ * trigger that refuses the attempt for exactly that reason.
+ *
+ * Never throws, and that is safe here in a way it would not be elsewhere in this
+ * codebase. A swallowed query error normally hides behind a spinner that spins
+ * forever; this renders nothing at all, so there is no screen for it to wedge,
+ * and housekeeping that could break 미디어 for everyone would be a worse bug
+ * than the one it cleans up after. What it returns is how many it could not
+ * finish, so a caller that wants to say something has the number.
+ */
+export async function sweepPendingObjectDeletions(): Promise<number> {
+  const { data, error } = await supabase
+    .from('pending_object_deletions')
+    .select('storage_path')
+    .order('requested_at', { ascending: true })
+    .limit(SWEEP_BATCH)
+  if (error) return 0
+
+  return sweepPaths((data ?? []).map((row) => row.storage_path))
 }
 
 /**
- * Best effort removal from the bucket; returns how many objects survived.
+ * Remove these objects and clear the queue entries that named them.
  *
- * Never throws. By the time this is called the rows are already gone, so
- * failing here would report a completed delete as an error and invite a retry
- * that has nothing left to delete.
+ * Returns how many are still outstanding. Never throws: by the time this runs
+ * the rows are already gone, so failing here would report a completed delete as
+ * an error and invite a retry that has nothing left to delete.
+ *
+ * The queue entry is cleared only for a path confirmed gone from the bucket,
+ * never merely because remove() was called. Clearing early is the one move that
+ * would recreate the original defect — the entry is the object's last claim, and
+ * dropping it while the object stands is how it becomes unreachable.
  */
-async function removeObjects(paths: string[]): Promise<number> {
+async function sweepPaths(paths: string[]): Promise<number> {
   if (paths.length === 0) return 0
-  try {
-    const { data, error } = await supabase.storage.from(MEDIA_BUCKET).remove(paths)
-    if (error) return paths.length
-    return paths.length - (data ?? []).length
-  } catch {
-    return paths.length
+
+  const gone = await removeObjects(paths)
+  if (gone.length > 0) {
+    // Best effort, like everything after the row is gone. A failure here leaves
+    // an entry for an object that no longer exists, which the next sweep
+    // resolves through confirmAbsent rather than by deleting anything twice.
+    await supabase.from('pending_object_deletions').delete().in('storage_path', gone)
   }
+  return paths.length - gone.length
+}
+
+/**
+ * The paths that are no longer in the bucket, whether this call removed them or
+ * they were already absent.
+ *
+ * The second half is not defensive padding. An upload that fails after its row
+ * lands makes uploadMediaFiles delete that row, which queues a path whose object
+ * never arrived; and remove() answers `[]` for a path that is not there just as
+ * it does for one it was refused. Without an existence check those two are
+ * indistinguishable and the first kind of entry could never be cleared — the
+ * queue would fill with paths naming nothing.
+ */
+async function removeObjects(paths: string[]): Promise<string[]> {
+  try {
+    const { data } = await supabase.storage.from(MEDIA_BUCKET).remove(paths)
+    const removed = (data ?? []).map((object) => object.name)
+
+    const unresolved = paths.filter((path) => !removed.includes(path))
+    if (unresolved.length === 0) return removed
+
+    return [...removed, ...(await confirmAbsent(unresolved))]
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Which of these paths the bucket does not hold.
+ *
+ * Only ever asked about the residue of a remove(), which is normally empty, so
+ * the per-path request costs nothing on the ordinary delete. A listing that
+ * errors — including the refusal a member gets for somebody else's prefix —
+ * counts as "still there", because the entry must survive anything short of
+ * proof that the object is gone.
+ */
+async function confirmAbsent(paths: string[]): Promise<string[]> {
+  const absent: string[] = []
+  for (const path of paths) {
+    const cut = path.lastIndexOf('/')
+    // A path with no separator cannot be one of ours — 0021 pins the shape to
+    // `<member id>/(media|resources)/<name>` — and asking about it would list
+    // the bucket root. Leave it queued for somebody to look at.
+    if (cut < 0) continue
+    const folder = path.slice(0, cut)
+    const fileName = path.slice(cut + 1)
+
+    const { data, error } = await supabase.storage
+      .from(MEDIA_BUCKET)
+      .list(folder, { limit: 100, search: fileName })
+    if (error) continue
+    if (!(data ?? []).some((object) => object.name === fileName)) absent.push(path)
+  }
+  return absent
 }

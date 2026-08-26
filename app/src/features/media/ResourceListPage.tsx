@@ -12,6 +12,7 @@ import {
   renameMediaFile,
   type MediaFile,
 } from './api'
+import { useObjectDeletionSweep } from './useObjectDeletionSweep'
 
 const CARD = {
   padding: 14,
@@ -43,6 +44,8 @@ export function ResourceListPage() {
   const qc = useQueryClient()
   const { user } = useCurrentUser()
   const query = useQuery({ queryKey: ['resource-files'], queryFn: listResourceFiles })
+  // Same reason as 미디어: the screens are the only sweeper this project can have.
+  useObjectDeletionSweep()
 
   const refresh = async () => {
     await qc.invalidateQueries({ queryKey: ['resource-files'] })
