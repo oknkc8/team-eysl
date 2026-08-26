@@ -24,6 +24,7 @@ import { MemberActivityPage } from '../features/members/MemberActivityPage'
 import { MemberApprovalPage } from '../features/members/MemberApprovalPage'
 import { MemberRolesPage } from '../features/members/MemberRolesPage'
 import { MemberAccessPage } from '../features/members/MemberAccessPage'
+import { MemberLinkPage } from '../features/members/MemberLinkPage'
 import { MediaFolderListPage } from '../features/media/MediaFolderListPage'
 import { MediaFolderPage } from '../features/media/MediaFolderPage'
 import { ResourceListPage } from '../features/media/ResourceListPage'
@@ -239,6 +240,17 @@ export const router = createBrowserRouter([
                   // 내보내기·권한 지정/해제는 총관리자만 (index.html:1127) — and
                   // set_member_blocked_v1 refuses anyone else in the database.
                   { path: '/members/blocked', element: <MemberAccessPage /> },
+                  // 회원 연결. Master-admin for the strictest reason on this
+                  // branch of the tree: link_member_login_v1 moves an auth
+                  // account between member rows and deletes the row it came
+                  // from. Its neighbours end or grant access; this one decides
+                  // whose history an account owns, and there is no undo inside
+                  // the app. Both RPCs behind the screen check
+                  // is_master_admin() themselves and raise 42501 — verified
+                  // against the dev database, where an `admin` who is not a
+                  // master was refused — so this guard only keeps people off a
+                  // screen whose every button the server would reject.
+                  { path: '/members/link', element: <MemberLinkPage /> },
                 ],
               },
             ],
