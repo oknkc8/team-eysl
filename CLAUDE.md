@@ -203,6 +203,19 @@ This is the most dangerous tool failure on the list, because every other one ann
 
 `[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Prefix with `rtk proxy` to get the real output, or ask the GitHub API directly. Never let a wrapper's empty listing be the reason you skipped a step.
 
+**아무것도 찾지 못한 뒤 통과를 선언하는 검사는 검사가 없는 것보다 나쁘다.** 위의 두 항목은 이 한 가지 고장의 사례이고, 이 저장소는 2026-08-26 하루에만 여섯 가지 모습으로 이것을 만났다.
+
+- `grep`이 12개 중 11개만 반환했다. 다른 경우에는 19개가 든 파일들에 대해 0개를 반환했다.
+- `gh pr list`가 열려 있는 PR을 두고 `[]`를 출력했다. `--state all`도 `[]`였다.
+- `git show`를 `sha256sum`에 물렸더니 `e3b0c442…`가 나왔다 — **빈 문자열의 해시다.** 파일을 비교한 것이 아니라 아무것도 비교하지 않은 것이다.
+- `cd`가 실패해 0바이트 파일이 남았고, 그 파일을 스캔한 결과는 "Edge Function이 하나도 없다"로 읽혔다.
+- 스키마 추출기가 파일 앞부분의 stub에 매칭되어 `Tables: 0`을 출력한 다음 `UNION PRESERVED`를 선언했다.
+- 충돌 마커 스캔이 `-- =========` 주석 배너 세 개를 충돌로 신고했다. 이건 반대 방향의 같은 고장이다 — 없는 것을 찾아내는 검사도, 멀쩡한 파일을 "해결"하게 만들어 한 시간을 태운다.
+
+공통점은 **결과가 "찾을 것이 없었다"와 구분되지 않는다**는 것이다. 그래서 규칙은 하나다: 검사가 0을 반환하면 **그 검사가 실제로 무언가를 본 적이 있는지 먼저 확인한다.** 입력이 비어 있지 않은지, 패턴이 알려진 양성 사례에 걸리는지, 도구가 정말 실행됐는지.
+
+특히 **`e3b0c442…`로 시작하는 해시는 어떤 검증 파이프라인에서도 자동 실패로 취급한다.** 그것은 "두 쪽이 같다"가 아니라 "읽은 것이 없다"는 뜻이며, 같다는 결론과 생김새가 똑같다.
+
 **And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
 
 That makes "typecheck passes" narrower than it sounds, and it is the kind of claim that gets repeated because it was true about the part somebody happened to be looking at. **Say which tree you checked, not just that the check was green.**
