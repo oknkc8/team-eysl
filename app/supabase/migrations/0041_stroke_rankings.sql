@@ -37,6 +37,36 @@
 -- That fixes the anchor (best in group = 100), the direction (relative to it),
 -- and one explicit exclusion (no combined score across strokes). Everything
 -- below that the sentence does not settle is **ours**, and is marked as such.
+--
+-- OURS, FIFTH: a member with no eligible result does not appear in that group at
+-- all — not as a row with a null time or a zero score. `eligible` is built from
+-- `records`, so somebody with no 50M meet swim simply produces no row, and the
+-- screen renders the group without them. A member with a gender and no records
+-- anywhere is therefore absent from all eight groups. Verified deliberately
+-- rather than assumed: a synthetic member with a gender and no records does not
+-- appear in the payload.
+--
+-- MEASURED ON THE LIVE DEV DATA, so nobody has to wonder whether the feature has
+-- anything to show. 191 eligible records collapse to 65 ranked rows:
+--
+--   여 자유형 11   남 자유형 12
+--   여 평영   10   남 평영    9
+--   여 접영    7   남 접영    7
+--   여 배영    5   남 배영    4
+--
+-- Every group has at least four swimmers, so no section is a screen with two
+-- names on it.
+--
+-- THE TIE RULE WAS PROVED BY BUILDING A TIE. The live data contains **no tie in
+-- any group**, which means correct handling and a `dense_rank` bug produce
+-- identical output on it. Two synthetic members were given the same 50M 접영
+-- time and the group came back:
+--
+--   rank  1   36.00  100.0   <- both fixtures share rank 1, both score 100
+--   rank  3   38.26   94.1   <- rank 2 is SKIPPED, which is what rank() does
+--   rank  4   40.00   90.0
+--
+-- `dense_rank()` would have emitted 2 there. The fixtures were removed.
 
 create or replace function public.stroke_rankings_v1()
 returns jsonb
