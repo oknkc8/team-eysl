@@ -1020,6 +1020,10 @@ export type Database = {
       }
       can_manage_records: { Args: never; Returns: boolean }
       current_member_id: { Args: never; Returns: string }
+      clear_object_deletions_v1: {
+        Args: { p_paths: string[] }
+        Returns: string[]
+      }
       delete_media_folder_v1: {
         Args: { p_folder_id: string }
         Returns: string[]

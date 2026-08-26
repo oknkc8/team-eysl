@@ -398,66 +398,37 @@ export async function sweepPendingObjectDeletions(): Promise<number> {
 async function sweepPaths(paths: string[]): Promise<number> {
   if (paths.length === 0) return 0
 
-  const gone = await removeObjects(paths)
-  if (gone.length > 0) {
-    // Best effort, like everything after the row is gone. A failure here leaves
-    // an entry for an object that no longer exists, which the next sweep
-    // resolves through confirmAbsent rather than by deleting anything twice.
-    await supabase.from('pending_object_deletions').delete().in('storage_path', gone)
-  }
-  return paths.length - gone.length
-}
-
-/**
- * The paths that are no longer in the bucket, whether this call removed them or
- * they were already absent.
- *
- * The second half is not defensive padding. An upload that fails after its row
- * lands makes uploadMediaFiles delete that row, which queues a path whose object
- * never arrived; and remove() answers `[]` for a path that is not there just as
- * it does for one it was refused. Without an existence check those two are
- * indistinguishable and the first kind of entry could never be cleared — the
- * queue would fill with paths naming nothing.
- */
-async function removeObjects(paths: string[]): Promise<string[]> {
   try {
-    const { data } = await supabase.storage.from(MEDIA_BUCKET).remove(paths)
-    const removed = (data ?? []).map((object) => object.name)
+    // Remove first, then ask the database what actually left the bucket. The
+    // response to remove() is deliberately not consulted: it answers `[]` both
+    // for a path it was refused and for one that was never there, and this
+    // client is in no position to tell those apart — a list() of somebody else's
+    // prefix comes back empty rather than forbidden, so "I cannot see it" reads
+    // as "it is gone". That confusion is the whole defect this file is fixing.
+    await supabase.storage.from(MEDIA_BUCKET).remove(paths)
 
-    const unresolved = paths.filter((path) => !removed.includes(path))
-    if (unresolved.length === 0) return removed
-
-    return [...removed, ...(await confirmAbsent(unresolved))]
+    // clear_object_deletions_v1 (0036) checks storage.objects as owner and clears
+    // only the entries whose object is genuinely gone, so what comes back is a
+    // measurement rather than the client's opinion.
+    const { data, error } = await supabase.rpc('clear_object_deletions_v1', { p_paths: paths })
+    if (error) return paths.length
+    return paths.length - (data ?? []).length
   } catch {
-    return []
+    return paths.length
   }
 }
 
-/**
- * Which of these paths the bucket does not hold.
- *
- * Only ever asked about the residue of a remove(), which is normally empty, so
- * the per-path request costs nothing on the ordinary delete. A listing that
- * errors — including the refusal a member gets for somebody else's prefix —
- * counts as "still there", because the entry must survive anything short of
- * proof that the object is gone.
- */
-async function confirmAbsent(paths: string[]): Promise<string[]> {
-  const absent: string[] = []
-  for (const path of paths) {
-    const cut = path.lastIndexOf('/')
-    // A path with no separator cannot be one of ours — 0021 pins the shape to
-    // `<member id>/(media|resources)/<name>` — and asking about it would list
-    // the bucket root. Leave it queued for somebody to look at.
-    if (cut < 0) continue
-    const folder = path.slice(0, cut)
-    const fileName = path.slice(cut + 1)
-
-    const { data, error } = await supabase.storage
-      .from(MEDIA_BUCKET)
-      .list(folder, { limit: 100, search: fileName })
-    if (error) continue
-    if (!(data ?? []).some((object) => object.name === fileName)) absent.push(path)
-  }
-  return absent
-}
+// There is deliberately no `removeObjects` helper and no client-side
+// "is it still there?" check any more.
+//
+// An earlier version listed the object's folder and treated an empty listing as
+// proof of absence. That is wrong in a way worth naming, because this project
+// has now been bitten by it in three disguises: storage list() applies the
+// SELECT policy and answers with an empty array rather than an error, so a
+// member asking about another member's prefix is told "nothing here" and cannot
+// tell that apart from "it is gone". A folder deletion sweeps exactly those
+// paths, so it was the case most likely to be wrong — and what it got wrong was
+// the count shown to the person who had just deleted the folder.
+//
+// Absence is now established where absence is knowable: inside
+// clear_object_deletions_v1, which reads storage.objects as the table owner.

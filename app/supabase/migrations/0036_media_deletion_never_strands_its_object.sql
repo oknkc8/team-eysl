@@ -126,13 +126,27 @@ create policy pending_object_deletions_read on public.pending_object_deletions
     or public.is_staff()
   );
 
+-- NO DELETE POLICY EITHER, and this is a correction to the first draft of this
+-- migration rather than an original thought. That draft granted DELETE to
+-- `authenticated` behind the same predicate as SELECT, on the reasoning that
+-- reading an entry and clearing it are the same question. They are not.
+--
+-- The database never checked that the object had actually gone, so clearing was
+-- a promise the client made and the server took on trust. One statement —
+-- `DELETE /rest/v1/pending_object_deletions?storage_path=eq.<path>` — put the
+-- object back into exactly the unreachable state this migration exists to fix,
+-- and a staff session could do it to anybody's object. The people the fix was
+-- written for were the people who could undo it.
+--
+-- clear_object_deletions_v1 below is the only way an entry leaves the queue, and
+-- it clears one only when storage.objects no longer holds that path.
+--
+-- The drop is not decoration. This migration was applied to the dev project in
+-- its first form, which created that policy, and a create-less file would have
+-- left it standing there — correct on a fresh database and wrong on the one
+-- database that actually had the hole. Removing a grant means naming the thing
+-- being removed.
 drop policy if exists pending_object_deletions_delete on public.pending_object_deletions;
-create policy pending_object_deletions_delete on public.pending_object_deletions
-  for delete to authenticated
-  using (
-    split_part(storage_path, '/', 1) = public.current_member_id()::text
-    or public.is_staff()
-  );
 
 -- NO INSERT POLICY, AND THIS IS THE LOAD-BEARING PART. An entry here grants read
 -- access to an object, so a client that could write one could name somebody
@@ -152,7 +166,54 @@ create policy pending_object_deletions_delete on public.pending_object_deletions
 -- and the grant is the layer that survives somebody adding a policy later
 -- without thinking about this comment.
 revoke all on public.pending_object_deletions from public, anon, authenticated;
-grant select, delete on public.pending_object_deletions to authenticated;
+grant select on public.pending_object_deletions to authenticated;
+
+-- ------------------------------------------------- clearing an entry
+
+-- The only way a queue entry is removed, and the whole of its authority is the
+-- one condition a client could not be trusted to check: the object is actually
+-- gone from the bucket.
+--
+-- SECURITY DEFINER because storage.objects is behind team_files_read, and the
+-- question here is not "may this caller see the object" but "does it exist" —
+-- which is a fact about the bucket, not about the caller. A caller-evaluated
+-- version answers "not visible to me" and calls it "absent", and that confusion
+-- is the exact family of mistake this project keeps paying for: grep's missing
+-- matches, `gh pr list`'s empty array, and an orphan no session could name are
+-- all one bug wearing different clothes. Asked as the owner, the answer is the
+-- truth rather than a projection of it.
+--
+-- Authorisation is still the caller's: same predicate the SELECT policy uses, so
+-- a member clears their own prefix and staff clear anything, and neither can
+-- clear an entry whose object still stands.
+--
+-- Takes an array and returns what it cleared, so one sweep is one round trip and
+-- the caller can count the difference rather than assume it.
+create or replace function public.clear_object_deletions_v1(p_paths text[])
+returns setof text
+language plpgsql volatile security definer set search_path = public
+as $$
+declare
+  v_me    uuid    := public.current_member_id();
+  v_staff boolean := public.is_staff();
+begin
+  if v_me is null then
+    raise exception 'not an approved member' using errcode = '42501';
+  end if;
+
+  return query
+  delete from public.pending_object_deletions q
+   where q.storage_path = any(p_paths)
+     and (split_part(q.storage_path, '/', 1) = v_me::text or v_staff)
+     and not exists (
+       select 1 from storage.objects o
+        where o.bucket_id = 'team-files' and o.name = q.storage_path
+     )
+  returning q.storage_path;
+end $$;
+
+comment on function public.clear_object_deletions_v1(text[]) is
+  '객체가 실제로 사라진 대기열 항목만 지우고, 지운 경로를 돌려준다. 대기열에서 항목을 빼는 유일한 경로.';
 
 -- ------------------------------------------------- the claim changes hands
 
@@ -172,7 +233,8 @@ begin
   -- shape of a path is a convention rather than a constraint, so the question is
   -- asked rather than assumed.
   if exists (select 1 from public.notice_attachments where storage_path = old.storage_path)
-     or exists (select 1 from public.messages where attachment_path = old.storage_path) then
+     or exists (select 1 from public.messages where attachment_path = old.storage_path)
+     or exists (select 1 from public.record_uploads where storage_path = old.storage_path) then
     return null;
   end if;
 
@@ -223,6 +285,31 @@ create trigger media_files_release_object_deletion
 -- about who may see what: the queue's own RLS answers, exactly as media_files'
 -- and messages' do for theirs. An object being deleted is readable by the
 -- people who can finish deleting it, and by nobody else.
+-- record_uploads is the fourth claim table and 0029 did not list it. Its
+-- storage_path (0004:53) is a legitimate team-files reference — 결과지, the meet
+-- result sheets the record importer reads — and every place in this file that
+-- asks "does any row claim this path?" has to know about it or the answer is
+-- wrong in the direction that deletes things.
+--
+-- NOTHING IS AT RISK TODAY, and saying so is the point rather than a hedge:
+-- `select count(*) from public.record_uploads` is 0, the rebuild has no upload
+-- feature (record_uploads appears in app/src only in the generated types), and
+-- media_object_is_claimed (0021) checks media_files alone, so team_files_insert
+-- would refuse such an object anyway. This is a landmine, not a live defect.
+--
+-- WHY IT WAS INVISIBLE, which is the part worth remembering: the table is empty
+-- on dev, so every test of the adoption clause passes whether or not it knows
+-- about record_uploads. An empty table cannot fail a test about non-empty ones.
+--
+-- FOR WHOEVER BUILDS 결과지 UPLOAD: widening media_object_is_claimed is not
+-- enough on its own. Widen it, and this predicate, and the adoption select
+-- below, together — widening only the insert gate means the first result sheet
+-- uploaded is classified as debris by the very next sweep.
+--
+-- The arm stays narrow on its own account: record_uploads_read is
+-- can_manage_records() (0004:208), and this function is SECURITY INVOKER, so a
+-- result sheet is readable by the people who may manage records and by nobody
+-- else. Adding it widens the bucket for staff, not for the club.
 create or replace function public.team_file_is_readable(p_path text)
 returns boolean
 language sql stable security invoker set search_path = public
@@ -235,6 +322,8 @@ as $$
                    where storage_path = p_path)
        or exists (select 1 from public.messages
                    where attachment_path = p_path)
+       or exists (select 1 from public.record_uploads
+                   where storage_path = p_path)
        or exists (select 1 from public.pending_object_deletions
                    where storage_path = p_path)
      )
@@ -307,6 +396,9 @@ comment on function public.delete_media_folder_v1(uuid) is
 -- cannot be anything but debris. Idempotent, and a no-op on a fresh database.
 --
 -- requested_by is null — nobody asked for these, they are the bill for a defect.
+-- All four claim tables, not three. record_uploads is the one 0029 forgot, and
+-- an adoption select that forgets it does not merely fail to help — it queues a
+-- live 결과지 for deletion. See the note on team_file_is_readable above.
 insert into public.pending_object_deletions (storage_path, requested_by)
 select o.name, null
   from storage.objects o
@@ -314,6 +406,7 @@ select o.name, null
    and not exists (select 1 from public.media_files        f where f.storage_path    = o.name)
    and not exists (select 1 from public.notice_attachments a where a.storage_path    = o.name)
    and not exists (select 1 from public.messages           m where m.attachment_path = o.name)
+   and not exists (select 1 from public.record_uploads     r where r.storage_path    = o.name)
 on conflict (storage_path) do nothing;
 
 -- ------------------------------------------------------------- execute rights
@@ -328,6 +421,9 @@ on conflict (storage_path) do nothing;
 -- otherwise forge the read capability the queue confers.
 revoke all on function public.enqueue_object_deletion() from public, anon, authenticated;
 revoke all on function public.release_object_deletion() from public, anon, authenticated;
+
+revoke all on function public.clear_object_deletions_v1(text[]) from public, anon, authenticated;
+grant execute on function public.clear_object_deletions_v1(text[]) to authenticated;
 
 -- Unchanged from 0029/0021, restated because CREATE OR REPLACE keeps the
 -- existing ACL and a reader should not have to know that to be sure.
