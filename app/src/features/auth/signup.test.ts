@@ -75,16 +75,20 @@ describe('readSignupResult', () => {
     expect(readSignupResult({ ok: true })).toBeNull()
   })
 
-  it('carries the server’s own sentence for a taken nickname', () => {
+  // `already_registered` covers both server arms since 0032 — a match against
+  // the club roster, and a real unique violation. They answer identically on
+  // purpose: an anonymous caller who could tell them apart could ask which
+  // people are club members.
+  it('carries the server’s own sentence for an already-registered member', () => {
     expect(
       readSignupResult({
         ok: false,
-        reason: 'nickname_taken',
-        message: '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.',
+        reason: 'already_registered',
+        message: '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.',
       }),
     ).toEqual({
-      reason: 'nickname_taken',
-      message: '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.',
+      reason: 'already_registered',
+      message: '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.',
       retryAfterSeconds: null,
     })
   })
@@ -122,7 +126,7 @@ describe('signupErrorMessage', () => {
   // leaves nothing to pick. It sends them to an admin, like the server does.
   it('names the duplicate nickname rather than the address behind it', () => {
     expect(signupErrorMessage({ message: 'User already registered', status: 422 })).toBe(
-      '이미 같은 닉네임으로 등록된 회원이 있습니다. 관리자에게 문의해주세요.',
+      '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.',
     )
   })
 

@@ -198,7 +198,9 @@ begin
   -- wrong. A parity test between them passed on all six characters above.
   -- nickname.test.ts therefore pins an explicit codepoint list rather than
   -- asserting the implementations match each other.
-  if v_nickname ~ '[[:space:]]' or v_nickname ~ '[^[:print:]]' then
+  if v_nickname ~ '[[:space:]]'
+     or v_nickname ~ '[^[:print:]]'
+     or v_nickname ~ U&'[\+0000ad\+00034f\+00061c\+00115f-\+001160\+0017b4-\+0017b5\+00180b-\+00180f\+00200b-\+00200f\+00202a-\+00202e\+002060-\+00206f\+003164\+00fe00-\+00fe0f\+00feff\+00ffa0\+00fff0-\+00fff8\+01bca0-\+01bca3\+01d173-\+01d17a\+0e0000-\+0e0fff]' then
     return jsonb_build_object('ok', false, 'reason', 'nickname_invisible',
       'message', '닉네임에는 공백이나 보이지 않는 문자를 넣을 수 없습니다. 예: 창호/98/남/관악');
   end if;
@@ -245,8 +247,110 @@ begin
       'message', '닉네임은 이름/출생년도/성별/지역 형식으로 입력해주세요. 예: 창호/98/남/관악');
   end if;
 
+  if length(coalesce(p_password, '')) < 8 then
+    return jsonb_build_object('ok', false, 'reason', 'password_short',
+      'message', '비밀번호는 8자 이상으로 설정해주세요.');
+  end if;
+  -- Bytes, not characters: bcrypt silently truncates at 72 and a Korean
+  -- character is three bytes, so 25 Korean characters is already past the limit
+  -- while reading as a short password. Refusing beats storing a password whose
+  -- tail quietly does not count.
+  if octet_length(coalesce(p_password, '')) > 72 then
+    return jsonb_build_object('ok', false, 'reason', 'password_long',
+      'message', '비밀번호가 너무 깁니다. 조금 짧게 설정해주세요.');
+  end if;
+
+  v_key := public.signup_client_key();
+
+  -- Bounded retention. A key nobody has used for two windows is not evidence of
+  -- anything, and this table would otherwise accumulate an IP address per
+  -- visitor forever — an IP address is personal data, and keeping one for an
+  -- hour to count with is a very different thing from keeping it indefinitely.
+  --
+  -- SKIP LOCKED and a bound are what keep this from becoming a global
+  -- bottleneck. Written as a plain DELETE, two signups from different addresses
+  -- would both try to remove the same stale rows: one blocks on the other, every
+  -- signup in the club serialises behind whichever ran first, and rows locked in
+  -- different scan orders can deadlock outright. Skipping a row another caller
+  -- already holds costs nothing — it is being deleted either way — and the LIMIT
+  -- stops a long-idle table from making one unlucky applicant pay to clean it.
+  --
+  -- Never the caller's own row, so the lock below always finds the row the
+  -- insert above guaranteed.
+  delete from public.signup_attempt_quota
+   where client_key in (
+     select q.client_key from public.signup_attempt_quota q
+      where q.client_key <> v_key
+        and coalesce(q.last_attempt_at, q.window_started_at) < now() - (v_window * 2)
+      for update skip locked
+      limit 100
+   );
+
+  insert into public.signup_attempt_quota (client_key)
+  values (v_key)
+  on conflict (client_key) do nothing;
+
+  -- FOR UPDATE so two requests from one address queue rather than both reading
+  -- the same count and both deciding they are under the cap.
+  select * into v_row from public.signup_attempt_quota
+   where client_key = v_key for update;
+
+  v_started  := v_row.window_started_at;
+  v_attempts := v_row.attempts_in_window;
+
+  -- A window older than an hour is not a window any more.
+  if v_started + v_window <= now() then
+    v_started  := now();
+    v_attempts := 0;
+  end if;
+
+  if v_attempts >= v_max then
+    v_retry := ceil(extract(epoch from (v_started + v_window - now())))::int;
+    return jsonb_build_object('ok', false, 'reason', 'rate_limited',
+      'retry_after_seconds', greatest(v_retry, 1),
+      'message', '가입 신청이 너무 많습니다. '
+                 || greatest(ceil(v_retry / 60.0)::int, 1)
+                 || '분 후에 다시 시도해주세요.');
+  end if;
+
+  -- Counted on the attempt, not on a success. A signup that fails on a taken
+  -- nickname still cost a request, and nickname probing is precisely the thing
+  -- an attacker would do with the successes thrown away.
+  update public.signup_attempt_quota
+     set window_started_at  = v_started,
+         attempts_in_window = v_attempts + 1,
+         last_attempt_at    = now()
+   where client_key = v_key;
+
   -- ============================================================================
   -- THE GHOST ROW. This block is why the format rule is safe to ship.
+  --
+  -- ITS POSITION IS PART OF THE FIX AND MUST NOT MOVE BACK UP. It sits after the
+  -- password rules and after the quota increment on purpose. When it sat before
+  -- them it was a free anonymous membership oracle: a one-character password
+  -- guarantees no account is ever created, so a stranger could ask "is there a
+  -- member called X, born in YY, of gender Z" for nothing. Measured against the
+  -- deployed function:
+  --
+  --   a name that IS on the roster     -> existing_member
+  --   a name that is NOT on the roster -> password_short
+  --   70 consecutive asks              -> { password_short: 70 }, no rate_limited
+  --   accounts created                 -> none
+  --
+  -- The club's roster — names, birth years, genders — was enumerable from the
+  -- internet by anyone holding the publishable key, which ships in every page
+  -- load. That is worse than nickname_taken and the difference matters:
+  -- nickname_taken needs the exact full nickname INCLUDING region and only
+  -- answers after the quota is charged, while this tests a three-field identity
+  -- and answered for free. 0028's header accepted the nickname_taken disclosure
+  -- WITH the quota as its mitigation; sitting above the quota, this had the
+  -- disclosure without the mitigation.
+  --
+  -- Below the quota, every ask costs one of 60 an hour per address, which is the
+  -- same price 0028 already set for the same class of question. Below the
+  -- password rules, an ask cannot be made with a password that guarantees
+  -- nothing is created — the caller has to send something that would really
+  -- register an account.
   -- ============================================================================
   --
   -- WHAT THE FORMAT BREAKS IF THIS IS NOT HERE. 36 of the 41 members in this
@@ -329,84 +433,15 @@ begin
        and m.birth_year % 100                  = v_parts[2]::int
        and m.gender                            = v_parts[3]
   ) then
-    return jsonb_build_object('ok', false, 'reason', 'existing_member',
-      'message', '이미 클럽 명단에 있는 회원입니다. 새로 가입하지 마시고 관리자에게 계정 연결을 요청해주세요.');
+    -- ONE REASON AND ONE SENTENCE, shared with the unique-violation arm below.
+    -- An anonymous caller has no business learning WHICH of the two fired: that
+    -- distinction is the difference between "this person is on the club roster"
+    -- and "this exact nickname is registered", and answering it would hand back
+    -- the oracle the position above just closed. The member does not need it
+    -- either — the action is the same either way, and it is the sentence.
+    return jsonb_build_object('ok', false, 'reason', 'already_registered',
+      'message', '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.');
   end if;
-
-  if length(coalesce(p_password, '')) < 8 then
-    return jsonb_build_object('ok', false, 'reason', 'password_short',
-      'message', '비밀번호는 8자 이상으로 설정해주세요.');
-  end if;
-  -- Bytes, not characters: bcrypt silently truncates at 72 and a Korean
-  -- character is three bytes, so 25 Korean characters is already past the limit
-  -- while reading as a short password. Refusing beats storing a password whose
-  -- tail quietly does not count.
-  if octet_length(coalesce(p_password, '')) > 72 then
-    return jsonb_build_object('ok', false, 'reason', 'password_long',
-      'message', '비밀번호가 너무 깁니다. 조금 짧게 설정해주세요.');
-  end if;
-
-  v_key := public.signup_client_key();
-
-  -- Bounded retention. A key nobody has used for two windows is not evidence of
-  -- anything, and this table would otherwise accumulate an IP address per
-  -- visitor forever — an IP address is personal data, and keeping one for an
-  -- hour to count with is a very different thing from keeping it indefinitely.
-  --
-  -- SKIP LOCKED and a bound are what keep this from becoming a global
-  -- bottleneck. Written as a plain DELETE, two signups from different addresses
-  -- would both try to remove the same stale rows: one blocks on the other, every
-  -- signup in the club serialises behind whichever ran first, and rows locked in
-  -- different scan orders can deadlock outright. Skipping a row another caller
-  -- already holds costs nothing — it is being deleted either way — and the LIMIT
-  -- stops a long-idle table from making one unlucky applicant pay to clean it.
-  --
-  -- Never the caller's own row, so the lock below always finds the row the
-  -- insert above guaranteed.
-  delete from public.signup_attempt_quota
-   where client_key in (
-     select q.client_key from public.signup_attempt_quota q
-      where q.client_key <> v_key
-        and coalesce(q.last_attempt_at, q.window_started_at) < now() - (v_window * 2)
-      for update skip locked
-      limit 100
-   );
-
-  insert into public.signup_attempt_quota (client_key)
-  values (v_key)
-  on conflict (client_key) do nothing;
-
-  -- FOR UPDATE so two requests from one address queue rather than both reading
-  -- the same count and both deciding they are under the cap.
-  select * into v_row from public.signup_attempt_quota
-   where client_key = v_key for update;
-
-  v_started  := v_row.window_started_at;
-  v_attempts := v_row.attempts_in_window;
-
-  -- A window older than an hour is not a window any more.
-  if v_started + v_window <= now() then
-    v_started  := now();
-    v_attempts := 0;
-  end if;
-
-  if v_attempts >= v_max then
-    v_retry := ceil(extract(epoch from (v_started + v_window - now())))::int;
-    return jsonb_build_object('ok', false, 'reason', 'rate_limited',
-      'retry_after_seconds', greatest(v_retry, 1),
-      'message', '가입 신청이 너무 많습니다. '
-                 || greatest(ceil(v_retry / 60.0)::int, 1)
-                 || '분 후에 다시 시도해주세요.');
-  end if;
-
-  -- Counted on the attempt, not on a success. A signup that fails on a taken
-  -- nickname still cost a request, and nickname probing is precisely the thing
-  -- an attacker would do with the successes thrown away.
-  update public.signup_attempt_quota
-     set window_started_at  = v_started,
-         attempts_in_window = v_attempts + 1,
-         last_attempt_at    = now()
-   where client_key = v_key;
 
   -- lower(), matching emailForNickname() in the browser (auth/schema.ts) and the
   -- case-insensitive members_nickname_lower_uq. The nickname keeps the case the
@@ -482,9 +517,14 @@ begin
     -- live in order to get past a collision. Whoever is on the other side of
     -- this refusal is either the same person twice or a genuine namesake, and
     -- both of those are an admin's to sort out.
+    -- The same answer the roster guard gives, byte for byte, and deliberately
+    -- so. These two arms mean different things internally — one is "somebody on
+    -- the club roster matches you", the other is "this exact nickname is
+    -- registered" — and telling an anonymous caller which one fired is a
+    -- distinction they can only use to enumerate the club.
     when unique_violation then
-      return jsonb_build_object('ok', false, 'reason', 'nickname_taken',
-        'message', '이미 같은 닉네임으로 등록된 회원이 있습니다. 관리자에게 문의해주세요.');
+      return jsonb_build_object('ok', false, 'reason', 'already_registered',
+        'message', '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.');
   end;
 
   -- Nothing about the created row is returned. The caller already knows the

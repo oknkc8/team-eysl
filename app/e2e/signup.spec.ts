@@ -196,7 +196,7 @@ test('이미 쓰는 닉네임은 한국어로 거절한다', async ({ page }) =>
   // that a second signup could slip between.
   await submitSignup(page, nickname)
   await expect(page.getByRole('alert')).toHaveText(
-    '이미 같은 닉네임으로 등록된 회원이 있습니다. 관리자에게 문의해주세요.',
+    '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.',
     { timeout: 20_000 },
   )
 
@@ -218,7 +218,7 @@ test('대소문자만 다른 닉네임도 같은 닉네임으로 본다', async 
   // lowercased, so these must not be allowed to become two people.
   await submitSignup(page, nickname.toUpperCase())
   await expect(page.getByRole('alert')).toHaveText(
-    '이미 같은 닉네임으로 등록된 회원이 있습니다. 관리자에게 문의해주세요.',
+    '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.',
     { timeout: 20_000 },
   )
 })
@@ -380,19 +380,23 @@ test('명단에 이미 있는 회원은 새 계정을 만들지 못한다', asyn
     expect(attempt.status).toBe(200)
     expect(JSON.parse(attempt.body), region).toMatchObject({
       ok: false,
-      reason: 'existing_member',
+      reason: 'already_registered',
     })
   }
 
   // Refused, and nothing created: the whole point is that no second row appears.
   // Asked the only way an anonymous caller can ask — `anon` holds no SELECT on
-  // members — by claiming the same nickname again and seeing the same refusal
-  // rather than nickname_taken, which is what a created row would produce.
+  // members — by claiming the same nickname again and seeing the same refusal.
+  //
+  // The reason is `already_registered` for BOTH the roster match and a real
+  // unique violation, on purpose: telling an anonymous caller which one fired
+  // would distinguish "on the club roster" from "this nickname is registered",
+  // and that distinction is the membership oracle 0032 moved the guard to close.
   const again = await anonRpc(page, {
     p_nickname: `${SEEDED.nickname}/${SEEDED.birthYY}/${SEEDED.gender}/관악`,
     p_password: PASSWORD,
   })
-  expect(JSON.parse(again.body)).toMatchObject({ reason: 'existing_member' })
+  expect(JSON.parse(again.body)).toMatchObject({ reason: 'already_registered' })
 
   // And it must not defeat the format's whole purpose. A DIFFERENT person with
   // the same given name, born in another year, is a different member and still

@@ -57,7 +57,7 @@ export function validateSignup(input: SignupInput): string | null {
 
 /** Why a signup was turned down, in a form the screen can show as-is. */
 export type SignupRefusal = {
-  /** Machine-readable: `nickname_taken`, `password_short`, `rate_limited`, … */
+  /** Machine-readable: `already_registered`, `password_short`, `rate_limited`, … */
   reason: string
   /** The Korean sentence to display. Always non-empty. */
   message: string
@@ -127,9 +127,11 @@ export function signupErrorMessage(error: { message?: string; status?: number })
   //
   // No longer says "다른 닉네임을 입력해주세요": since 0032 the nickname is
   // 이름/출생년도/성별/지역, so there is nothing for the applicant to change
-  // except where they claim to live. Matches register_member_v1's own sentence.
+  // except where they claim to live. Byte-identical to register_member_v1's own
+  // sentence, which it shares with the roster-guard refusal — the server gives
+  // one answer for "already registered" however it worked that out.
   if (message.includes('already registered') || message.includes('already been registered'))
-    return '이미 같은 닉네임으로 등록된 회원이 있습니다. 관리자에게 문의해주세요.'
+    return '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.'
 
   // handle_new_auth_user() raising inside GoTrue's transaction — a nickname
   // collision our unique index caught. GoTrue flattens it to this one string,

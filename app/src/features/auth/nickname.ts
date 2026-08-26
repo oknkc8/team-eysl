@@ -116,45 +116,56 @@ export const NICKNAME_PATTERN = new RegExp(NICKNAME_PATTERN_SOURCE, 'u')
  * string with one meaning. Hence a separate gate, spelled in each engine's own
  * idiom, for the one set defined here.
  *
- * WHY `\p{C}` AND NOT AN ENUMERATION. Because an enumeration was tried and it
- * was wrong. The first version of this rule listed the invisible characters it
- * knew about — the BOM, the zero-width family, the word joiners — and the list
- * looked complete. Driven against the deployed function with a name chosen so
- * nothing else could refuse it, SIX still got through:
+ * IT TOOK FOUR ROUNDS TO GET THIS RIGHT, AND THE SHAPE OF THE MISTAKE REPEATED
+ * EACH TIME. Every version was a set that CONTAINED most invisible characters
+ * rather than a set that MEANT "invisible":
  *
- *   U+061C ALM    U+202A LRE    U+202E RTLO
- *   U+2066 LRI    U+2069 PDI    U+FFF9 IAA
+ *   1. U+FEFF alone            — the BOM has relatives
+ *   2. + a hand-written range  — missed U+061C, U+202A, U+202E, U+2066, U+2069,
+ *                                U+FFF9, all category Cf
+ *   3. `\p{C}` / `[^[:print:]]`— missed U+034F and the variation selectors
+ *                                U+FE00-FE0F, which are category Mn
+ *   4. + Default_Ignorable_Code_Point ....... the property that is actually
+ *                                             ABOUT invisibility
  *
- * The bidi controls and the isolates are category Cf, so `[[:cntrl:]]` and
- * `\p{Cc}` both miss them, and they were simply absent from the hand-written
- * range. U+202E is the worst of them: it reverses the display order of
- * everything after it, so it does not merely hide, it rearranges.
+ * Each round the fix was "use a class, not a list", and each round the class was
+ * narrower than the thing being described. `Default_Ignorable_Code_Point` is
+ * Unicode's own answer to "characters that should not be visible": 4174
+ * codepoints in 17 ranges, covering the zero-width family, the bidi controls and
+ * isolates, U+034F COMBINING GRAPHEME JOINER, the variation selectors, the tag
+ * characters, and — worth noting for this app specifically — U+3164 HANGUL
+ * FILLER and the jamo fillers U+115F/U+1160.
  *
- * `\p{C}` is every "other" category at once — Cc control, Cf format, Co private
- * use, Cs surrogate, Cn unassigned — which is the whole family rather than the
- * members of it somebody thought of. Postgres has no `\p{}`, and its nearest
- * equivalent needs both halves of a union: `[:print:]` admits NBSP, and
- * `[:space:]` misses every zero-width character. So the SQL asks
- * `~ '[[:space:]]' or ~ '[^[:print:]]'`.
+ * `\s` and `\p{C}` are kept alongside it because the property does NOT subsume
+ * them: it contains no ordinary whitespace and not the C0 controls.
  *
- * MEASURED, 32 codepoints, zero disagreements: both sides catch U+0001, NBSP,
- * SHY, ALM, the figure and ideographic spaces, U+200B-200F, U+2028, U+202A-202E,
- * U+2060, U+2066-2069, U+FEFF and U+FFF9-FFFB; both pass Hangul, Latin, digits,
- * `/`, `€` and emoji. Emoji passing is deliberate — this rule is about
- * characters that cannot be SEEN, not about narrowing the alphabet.
+ * THE SQL SIDE ENUMERATES, because Postgres has no `\p{}` — but it enumerates a
+ * NAMED PROPERTY generated from the engine, not characters somebody recalled.
+ * Its three arms are `[[:space:]]`, `[^[:print:]]` and an explicit 17-range
+ * bracket expression. Both halves of the first two are load-bearing: `[:print:]`
+ * admits NBSP and `[:space:]` misses every zero-width character.
  *
- * AND THE PART WORTH KEEPING: those two implementations already AGREED once,
- * and were both wrong. A parity test between client and server passed on all
- * six of the characters above. That is why nickname.test.ts pins an explicit
- * codepoint list rather than asserting the two sides match — agreement is not
- * correctness when both sides inherited the same blind spot.
+ * MEASURED at every one of the 17 range boundaries plus one codepoint either
+ * side — 62 in all, zero disagreements. Hangul, Latin, digits, `/` and `€` pass.
  *
- * The earlier White_Space measurement still stands and is why `\s` is kept
- * alongside: across the 26 White_Space codepoints, JavaScript `\s` and Postgres
+ * ONE DELIBERATE COST: an emoji carrying a variation selector (❤️ is U+2764
+ * U+FE0F) is now REFUSED, where a bare emoji (😀) still passes. VS16 is exactly
+ * the kind of invisible modifier this rule exists to stop, and a nickname is
+ * 이름/출생년도/성별/지역 rather than a place for decorated emoji, so the trade is
+ * worth naming rather than discovering.
+ *
+ * AND THE PART WORTH KEEPING: at round 2 the two implementations AGREED and were
+ * both wrong — a parity test between client and server passed on all six leaks.
+ * That is why nickname.test.ts pins explicit codepoints rather than asserting
+ * the two sides match. Agreement is not correctness when both sides inherited
+ * the same blind spot.
+ *
+ * The earlier White_Space measurement still stands and is why `\s` is kept:
+ * across the 26 White_Space codepoints, JavaScript `\s` and Postgres
  * `[[:space:]]` disagree on exactly two — U+0085 NEL (Postgres only) and U+FEFF
- * (JavaScript only). Both are now covered twice over.
+ * (JavaScript only). Both are now covered several times over.
  */
-export const NICKNAME_FORBIDDEN = /[\s\p{C}]/u
+export const NICKNAME_FORBIDDEN = /[\s\p{C}\p{Default_Ignorable_Code_Point}]/u
 
 /** Why a nickname was turned down, in the same shape register_member_v1 returns. */
 export type NicknameRefusal = {
