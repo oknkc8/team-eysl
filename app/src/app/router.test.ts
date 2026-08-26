@@ -23,15 +23,26 @@ const ACTIVITY_ID = '00000000-0000-4000-8000-000000000002'
 const MEMBER_ID = '00000000-0000-4000-8000-000000000003'
 const FOLDER_ID = '00000000-0000-4000-8000-000000000004'
 
+/**
+ * The guards and the screen a path lands on, in order.
+ *
+ * The pathless <ScrollFrame> root that every route now hangs from is dropped:
+ * it decides scroll position and nothing else, so it is not part of what these
+ * tests are about, and leaving it in would put a meaningless entry at the head
+ * of all forty expectations. Every real leaf in this tree declares a path, so
+ * the only thing this filter can remove is a layout route.
+ */
 function guardsFor(pathname: string) {
   const matches = matchRoutes(router.routes as RouteObject[], pathname) ?? []
-  return matches.map((m) => {
-    const element = m.route.element as { type?: unknown } | undefined
-    if (element?.type === RequireMasterAdmin) return 'master'
-    if (element?.type === RequireStaff) return 'staff'
-    if (element?.type === RequireAuth) return 'auth'
-    return m.route.path ?? 'screen'
-  })
+  return matches
+    .map((m) => {
+      const element = m.route.element as { type?: unknown } | undefined
+      if (element?.type === RequireMasterAdmin) return 'master'
+      if (element?.type === RequireStaff) return 'staff'
+      if (element?.type === RequireAuth) return 'auth'
+      return m.route.path ?? 'layout'
+    })
+    .filter((label) => label !== 'layout')
 }
 
 describe('signup is reachable without a session', () => {

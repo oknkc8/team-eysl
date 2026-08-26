@@ -240,6 +240,11 @@ from public.members m where m.nickname = 'pwtestadmin';
 -- with neither shows 신청자가 없습니다 and there is nothing to check anyone in
 -- against. Exactly one member applies below, and the write test marks that same
 -- member, which is why the roster it reads back is one row and not two.
+--
+-- That covers the applied-and-marked path only. The walk-in path — marked
+-- without ever applying, which is the case 0030 exists for — has its own
+-- activity further down, because keeping this roster at one row is the whole
+-- point of it.
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
   '55555555-5555-4555-8555-555555555555',
@@ -255,6 +260,35 @@ from public.members m where m.nickname = 'pwtestadmin';
 insert into public.activity_applications (activity_id, member_id, application_type)
 select
   '55555555-5555-4555-8555-555555555555',
+  m.id,
+  'participant'
+from public.members m where m.nickname = 'pwtestmember';
+
+-- The walk-in roster. Since 0030, attendance_for_activity_v1 returns the union
+-- of the participant list and everyone already marked — two arms that can break
+-- independently, so this fixture seeds one member into each.
+--
+-- pwtestmember applies here and the test never marks them: the application arm.
+-- pwtestmember2 is deliberately left out of activity_applications and the test
+-- marks them: the attendance arm, and the row the pre-0030 function dropped.
+--
+-- Its own activity rather than 출석 훈련 above, whose roster has to stay at one
+-- row for the test that owns it.
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  '77777777-7777-4777-8777-777777777777',
+  'training',
+  'pwtest 워크인 훈련',
+  current_date + 10,
+  '22:00',
+  'pwtest 수영장',
+  10,
+  m.id
+from public.members m where m.nickname = 'pwtestadmin';
+
+insert into public.activity_applications (activity_id, member_id, application_type)
+select
+  '77777777-7777-4777-8777-777777777777',
   m.id,
   'participant'
 from public.members m where m.nickname = 'pwtestmember';

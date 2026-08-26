@@ -4,8 +4,8 @@ import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { creatableKinds } from './permissions'
-import { msUntil } from './countdown'
-import { formatDateLabel, formatTimeRange, todayKey } from './order'
+import { ActivityCard } from './ActivityCard'
+import { todayKey } from './order'
 import {
   ACTIVITY_KINDS,
   KIND_LABEL,
@@ -99,58 +99,3 @@ function ScheduleList({ rows }: { rows: ScheduleEntry[] }) {
   )
 }
 
-/**
- * Reads the viewer's own row, never the counts beside it. Whether they hold a
- * seat was decided by apply_to_activity() under a row lock; recomputing it here
- * from participant_count against capacity is exactly the legacy defect.
- *
- * Returns the tag's modifier class rather than a colour pair, so the palette
- * lives in one place and this function decides only which state is true.
- */
-function myStatusTag(mine: ScheduleEntry['mine']): { label: string; tone: string } | null {
-  if (!mine) return null
-
-  if (mine.offer_status === 'offered' && msUntil(mine.offer_expires_at) > 0)
-    return { label: '자리 났어요', tone: 'offer' }
-
-  if (mine.application_type === 'participant') return { label: '참가확정', tone: 'ok' }
-
-  return {
-    label: mine.wait_order === null ? '대기 중' : `대기 ${mine.wait_order}번째`,
-    tone: 'wait',
-  }
-}
-
-function ActivityCard({ entry, dimmed }: { entry: ScheduleEntry; dimmed: boolean }) {
-  const { activity } = entry
-  const tag = myStatusTag(entry.mine)
-  const time = formatTimeRange(activity.start_time, activity.end_time)
-
-  // A null capacity means the activity is uncapped, not that it holds zero.
-  const seats =
-    activity.capacity === null
-      ? `신청 ${entry.participant_count}명`
-      : `신청 ${entry.participant_count}/${activity.capacity}`
-
-  return (
-    <Link
-      to={`/schedule/${activity.id}`}
-      className={`card activityCard${dimmed ? ' isPast' : ''}`}
-    >
-      <div className="activityHead">
-        <span className="tag idle">{KIND_LABEL[activity.kind]}</span>
-        <b className="grow">{activity.title}</b>
-        {tag && <span className={`tag ${tag.tone}`}>{tag.label}</span>}
-      </div>
-
-      <p className="activityMeta">
-        <span>{formatDateLabel(activity.activity_date)}</span>
-        {time && <span>{time}</span>}
-        {activity.place && <span>{activity.place}</span>}
-        <span aria-hidden="true">·</span>
-        <span>{seats}</span>
-        {entry.waitlist_count > 0 && <span>대기 {entry.waitlist_count}</span>}
-      </p>
-    </Link>
-  )
-}

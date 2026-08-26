@@ -37,7 +37,7 @@ export function ChatPage() {
   if (!user) return null
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
+    <div className="page">
       <h1 style={{ fontSize: 26, letterSpacing: -1.2, margin: 0 }}>채팅</h1>
 
       <div style={{ display: 'flex', gap: 8, margin: '14px 0 16px' }}>

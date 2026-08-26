@@ -36,7 +36,7 @@ export function MyRacesPage() {
   const query = useQuery({ queryKey: ['my-races'], queryFn: getMyRaceHistory })
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
+    <div className="page">
       <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: 0, color: '#111317' }}>
         나의 대회 신청 내역
       </h1>
@@ -100,11 +100,14 @@ export function MyRacesPage() {
         </AsyncSection>
       </div>
 
-      <p style={{ marginTop: 16, fontSize: 12 }}>
-        <Link to="/records" style={{ color: '#11805b' }}>
-          대회 기록 보기 →
+      {/* The screen's one onward action, so it is shaped like one. As 12px text
+          it measured 88x14 — a third of a thumb — and it is the only way from a
+          member's race history to the times those races produced. */}
+      <div className="actions">
+        <Link to="/records" className="btn outline block">
+          대회 기록 보기
         </Link>
-      </p>
+      </div>
     </div>
   )
 }

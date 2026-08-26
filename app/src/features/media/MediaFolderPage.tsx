@@ -51,8 +51,8 @@ export function MediaFolderPage() {
   }
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
-      <Link to="/media" style={{ fontSize: 12, color: '#6b7178', textDecoration: 'none' }}>
+    <div className="page">
+      <Link to="/media" className="backLink">
         ← 미디어
       </Link>
 
