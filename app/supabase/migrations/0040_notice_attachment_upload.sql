@@ -200,3 +200,172 @@ grant execute on function public.media_object_is_claimed(text) to authenticated;
 -- calling enqueue directly is the one way it could queue somebody else's file.
 revoke all on function public.enqueue_object_deletion() from public, anon, authenticated;
 revoke all on function public.release_object_deletion() from public, anon, authenticated;
+
+-- ============================================================================
+-- SAVING A NOTICE AND ITS ATTACHMENTS TOGETHER
+-- ============================================================================
+--
+-- THE UX DECISION, AND WHY THE OTHER ONE WAS REJECTED.
+--
+-- The claim gate forces the row before the object, and notice_id is NOT NULL,
+-- so something has to exist before an attachment can. The obvious reading is
+-- "save the notice, then come back and attach" — and it was rejected.
+--
+-- A two-step flow makes the member responsible for returning. Somebody writes a
+-- notice, submits it, and the attachment simply never happens; nothing is
+-- broken, nothing is reported, the file is just missing. It also puts the
+-- database's ordering constraint in front of the member as an instruction,
+-- which is the thing the constraint should have spared them.
+--
+-- Single screen instead: 등록 creates the notice AND its attachment rows in one
+-- transaction, then the client uploads the objects. That is the shape
+-- uploadMediaFiles already uses (media/api.ts) and it accepts the same failure —
+-- a row whose object never arrived. That failure is the better one on purpose:
+-- it is VISIBLE, as an attachment the uploader can see and delete, whereas an
+-- object with no row is unreachable debris nobody can find. The president's app
+-- attaches during composition too, so this is also what members expect.
+--
+-- THE CLIENT DOES NOT CHOOSE THE PATH. It sends file names and types; this
+-- function derives `<caller's member id>/notices/<uuid>` itself. Two things
+-- fall out of that. A caller cannot name a path under somebody else's member id
+-- — not because a check refuses it, but because there is no parameter to say it
+-- in. And the member-supplied file name never reaches the object path, so no
+-- sanitising rule has to be right: `../`, a null byte, a name that is entirely
+-- dots, none of them are in a position to matter. The name is stored in
+-- file_name for display, which is a rendering problem and is solved where
+-- rendering happens.
+--
+-- NO EXTENSION ON THE OBJECT. mime_type is on the row and file_name carries the
+-- name a member sees; putting an extension in the path would mean deriving one
+-- from member input, which is the sanitising problem this design just avoided.
+--
+-- THE ATTACHMENT LIST IS THE DESIRED FINAL SET, not a delta. Rows not named in
+-- it are deleted, which routes their objects through the enqueue trigger above
+-- rather than through anything the client has to remember. Passing a delta
+-- would mean the client and the server each holding half of the truth about
+-- what a notice has.
+create or replace function public.save_notice_v1(
+  p_notice_id   uuid,
+  p_title       text,
+  p_body        text,
+  p_attachments jsonb
+)
+returns jsonb
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_me       uuid;
+  v_notice   public.notices;
+  v_title    text;
+  v_body     text;
+  v_keep     uuid[];
+  v_item     jsonb;
+  v_kept     jsonb;
+  v_path     text;
+  v_new_id   uuid;
+  v_name     text;
+  v_mime     text;
+  v_result   jsonb := '[]'::jsonb;
+begin
+  -- SECURITY DEFINER means notices_write and notice_attachments_write are not
+  -- consulted, so this line is the whole of the enforcement. Same gate they
+  -- carry: is_staff().
+  if not public.is_staff() then
+    raise exception 'only staff may write a notice' using errcode = '42501';
+  end if;
+
+  v_me := public.current_member_id();
+
+  v_title := btrim(coalesce(p_title, ''));
+  v_body  := coalesce(p_body, '');
+  if v_title = '' then
+    raise exception '제목을 입력해주세요' using errcode = '22023';
+  end if;
+
+  -- A cap, not a guess: notice_attachments has no constraint of its own and a
+  -- client loop with a bug should meet a number rather than fill the bucket.
+  if jsonb_array_length(coalesce(p_attachments, '[]'::jsonb)) > 10 then
+    raise exception '첨부파일은 한 번에 10개까지 올릴 수 있습니다' using errcode = '22023';
+  end if;
+
+  if p_notice_id is null then
+    insert into public.notices (title, body, created_by)
+    values (v_title, v_body, v_me)
+    returning * into v_notice;
+  else
+    update public.notices
+       set title = v_title, body = v_body, updated_at = now()
+     where id = p_notice_id
+    returning * into v_notice;
+    if not found then
+      raise exception 'no such notice' using errcode = '23503';
+    end if;
+  end if;
+
+  -- Existing rows the caller is keeping. Anything else on this notice goes, and
+  -- its object is queued by the trigger rather than by the client.
+  select coalesce(array_agg((e->>'id')::uuid), '{}')
+    into v_keep
+    from jsonb_array_elements(coalesce(p_attachments, '[]'::jsonb)) e
+   where e->>'id' is not null;
+
+  delete from public.notice_attachments
+   where notice_id = v_notice.id
+     and not (id = any (v_keep));
+
+  for v_item in
+    select e from jsonb_array_elements(coalesce(p_attachments, '[]'::jsonb)) e
+  loop
+    if v_item->>'id' is not null then
+      -- Kept as it stands. file_name and mime_type are not re-read from the
+      -- client: renaming an existing attachment is not something this screen
+      -- offers, and accepting the fields anyway would let a caller rewrite a
+      -- row it only meant to keep.
+      select jsonb_build_object(
+               'id', a.id, 'storage_path', a.storage_path,
+               'file_name', a.file_name, 'mime_type', a.mime_type,
+               'is_new', false)
+        into v_kept
+        from public.notice_attachments a
+       where a.id = (v_item->>'id')::uuid and a.notice_id = v_notice.id;
+      if v_kept is null then
+        raise exception 'attachment does not belong to this notice' using errcode = '42501';
+      end if;
+      v_result := v_result || jsonb_build_array(v_kept);
+    else
+      -- The path is built here, from the caller's identity and a fresh uuid.
+      v_new_id := gen_random_uuid();
+      v_path   := v_me::text || '/notices/' || v_new_id::text;
+      -- Trimmed and bounded; stored for display only. It is never part of the
+      -- object path, so this is a tidiness rule rather than a safety one.
+      v_name   := left(btrim(coalesce(nullif(v_item->>'file_name', ''), '파일')), 200);
+      v_mime   := coalesce(nullif(v_item->>'mime_type', ''), 'application/octet-stream');
+
+      insert into public.notice_attachments
+        (id, notice_id, storage_path, file_name, mime_type, sort_order)
+      values (v_new_id, v_notice.id, v_path, v_name, v_mime,
+              coalesce((v_item->>'sort_order')::int, 0));
+
+      v_result := v_result || jsonb_build_array(jsonb_build_object(
+        'id', v_new_id, 'storage_path', v_path,
+        'file_name', v_name, 'mime_type', v_mime,
+        -- The client uploads exactly the entries flagged here, so it never has
+        -- to work out which of them are new by comparing lists.
+        'is_new', true));
+    end if;
+  end loop;
+
+  return jsonb_build_object(
+    'notice', jsonb_build_object(
+      'id', v_notice.id, 'title', v_notice.title, 'body', v_notice.body,
+      'created_at', v_notice.created_at, 'updated_at', v_notice.updated_at,
+      'created_by', v_notice.created_by),
+    'attachments', v_result);
+end $$;
+
+comment on function public.save_notice_v1(uuid, text, text, jsonb) is
+  '공지와 첨부 목록을 한 트랜잭션에서 저장한다. 첨부 경로는 호출자가 정하지 않고 이 함수가 <내 member id>/notices/<uuid>로 만든다. 목록에 없는 기존 첨부는 삭제되고 객체는 삭제 대기열로 간다.';
+
+revoke all on function public.save_notice_v1(uuid, text, text, jsonb) from public, anon, authenticated;
+grant execute on function public.save_notice_v1(uuid, text, text, jsonb) to authenticated;
+
