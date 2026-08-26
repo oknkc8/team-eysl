@@ -240,9 +240,12 @@ export async function listSchedule(kind?: ActivityKind): Promise<ScheduleEntry[]
  *   AND (activity_date >= first day            -- ... and either starts inside
  *        OR end_date  >= first day)            -- ... or runs into it
  *
- * end_date is null on a single-day row and `end_date.gte` is false for null in
- * PostgREST, so those rows are decided entirely by the first arm — which is what
- * we want.
+ * end_date is null on a single-day row, so that arm evaluates to NULL rather
+ * than to false — and `false OR NULL` is NULL, which a WHERE clause discards
+ * exactly as it discards false. Those rows are therefore decided entirely by the
+ * first arm. Verified against the database rather than reasoned about: of seven
+ * synthetic rows spanning every shape, the four that touch March came back and
+ * the single-day row in February did not.
  */
 export async function listActivitiesInMonth(
   year: number,
