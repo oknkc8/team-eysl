@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   formatDateLabel,
   formatTimeRange,
+  hasFinished,
+  lastDay,
   shiftDays,
   sortUpcomingFirst,
   todayKey,
@@ -104,5 +106,65 @@ describe('sortUpcomingFirst', () => {
     const rows = [row('2026-09-10'), row('2026-08-28')]
     sortUpcomingFirst(rows, TODAY)
     expect(rows.map((r) => r.activity_date)).toEqual(['2026-09-10', '2026-08-28'])
+  })
+})
+
+describe('hasFinished', () => {
+  const today = '2026-03-03'
+
+  it('is over once the single day has passed', () => {
+    expect(hasFinished({ activity_date: '2026-03-02' }, today)).toBe(true)
+    expect(hasFinished({ activity_date: '2026-03-03' }, today)).toBe(false)
+    expect(hasFinished({ activity_date: '2026-03-04' }, today)).toBe(false)
+  })
+
+  /*
+   * The case the whole finding was about.
+   *
+   * A 대회 running 2-4 March, read on the 3rd. Asking `activity_date < today`
+   * answers "finished" — and that answer hid 신청 and 취소 on the detail screen,
+   * filed the race under 지난 일정, dropped it from 다가오는 일정 on home, and told
+   * the staff 취합본 it was over, all while the calendar still drew it on all
+   * three days. Six readers, five of them wrong.
+   */
+  it('is NOT over on the middle day of a multi-day activity', () => {
+    const race = { activity_date: '2026-03-02', end_date: '2026-03-04' }
+    expect(hasFinished(race, '2026-03-02')).toBe(false)
+    expect(hasFinished(race, '2026-03-03')).toBe(false)
+    expect(hasFinished(race, '2026-03-04')).toBe(false)
+    expect(hasFinished(race, '2026-03-05')).toBe(true)
+  })
+
+  it('reads a backwards end as a single day rather than as never ending', () => {
+    const broken = { activity_date: '2026-03-04', end_date: '2026-03-02' }
+    expect(hasFinished(broken, '2026-03-05')).toBe(true)
+  })
+
+  it('is not finished when there is no date at all', () => {
+    expect(hasFinished({ activity_date: '' }, today)).toBe(false)
+  })
+})
+
+describe('lastDay', () => {
+  it('is the end date when there is one, the start otherwise', () => {
+    expect(lastDay({ activity_date: '2026-03-02', end_date: '2026-03-04' })).toBe('2026-03-04')
+    expect(lastDay({ activity_date: '2026-03-02', end_date: null })).toBe('2026-03-02')
+    expect(lastDay({ activity_date: '2026-03-02' })).toBe('2026-03-02')
+  })
+})
+
+describe('sortUpcomingFirst with a multi-day activity', () => {
+  // The sixth reader, which was not on the review list: an in-progress race was
+  // sorted into 지난 일정 because the split asked activity_date >= today.
+  it('keeps a race in progress among the upcoming rows', () => {
+    const rows = [
+      { activity_date: '2026-03-02', end_date: '2026-03-04', start_time: null },
+      { activity_date: '2026-02-01', end_date: null, start_time: null },
+      { activity_date: '2026-03-10', end_date: null, start_time: null },
+    ]
+    const sorted = sortUpcomingFirst(rows, '2026-03-03')
+    expect(sorted[0]).toMatchObject({ activity_date: '2026-03-02' })
+    expect(sorted[1]).toMatchObject({ activity_date: '2026-03-10' })
+    expect(sorted[2]).toMatchObject({ activity_date: '2026-02-01' })
   })
 })

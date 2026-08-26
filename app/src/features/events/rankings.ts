@@ -202,3 +202,75 @@ export function hasHiddenRanks(rowCount: number): boolean {
 export function rankToggleLabel(expanded: boolean): string {
   return expanded ? 'TOP5만 보기' : '전체 랭킹 보기'
 }
+
+// --------------------------------------------------------- 영법별 랭킹 (0041)
+//
+// A separate payload from a separate RPC, deliberately not folded into
+// RankingKind. The three kinds above all come out of team_event_rankings_v1 in
+// one fetch; this one is stroke_rankings_v1 and has its own shape, so sharing
+// the union would mean one query key serving two contracts.
+
+/** One member's 50M PB in one gender × stroke group. */
+export type StrokeRankingRow = {
+  rank: number
+  nickname: string
+  gender: string
+  stroke: string
+  /** Already seconds — the server divides, as it does for ImprovementRow. */
+  pbSeconds: number
+  /** 100.0 for the fastest in the group, lower for everyone else. */
+  score: number
+}
+
+export type StrokeRankings = { year: number; rows: StrokeRankingRow[] }
+
+/**
+ * 여 first, then 남 — the order his screen renders them in
+ * (final92:index.html:5013), not alphabetical and not our preference.
+ */
+export const GENDERS = ['여', '남'] as const
+
+export const GENDER_LABEL: Readonly<Record<string, string>> = { 여: '여자', 남: '남자' }
+
+export const STROKE_RANKING_TITLE = '영법별 랭킹'
+
+export function parseStrokeRankings(value: unknown): StrokeRankings {
+  if (!isRecord(value)) throw new RankingsContractError('랭킹 응답이 객체가 아닙니다')
+  if (typeof value.error === 'string') throw new RankingsContractError(value.error)
+  if (typeof value.year !== 'number' || !Number.isFinite(value.year))
+    throw new RankingsContractError('랭킹 응답에 연도가 없습니다')
+
+  return {
+    year: value.year,
+    rows: asArray(value.rows)
+      .filter(isRecord)
+      .map((row) => ({
+        rank: asNumber(row.rank),
+        nickname: asString(row.nickname),
+        gender: asString(row.gender),
+        stroke: asString(row.stroke),
+        pbSeconds: asNumber(row.pb_seconds),
+        score: asNumber(row.score),
+      })),
+  }
+}
+
+/**
+ * The rows for one gender × stroke, already in rank order from the server.
+ *
+ * Filtered here rather than grouped once into a nested object because the
+ * screen asks for exactly eight combinations and every one of them may be
+ * empty — a club with no women's 접영 times is an ordinary state, not a hole in
+ * the payload.
+ */
+export function strokeRowsFor(
+  data: StrokeRankings,
+  gender: string,
+  stroke: string,
+): StrokeRankingRow[] {
+  return data.rows.filter((row) => row.gender === gender && row.stroke === stroke)
+}
+
+export function isStrokeRankingsEmpty(data: StrokeRankings): boolean {
+  return data.rows.length === 0
+}
