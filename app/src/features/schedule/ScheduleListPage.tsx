@@ -40,6 +40,9 @@ export function ScheduleListPage() {
     <div className="page">
       <div className="titleRow">
         <h1 className="title">일정</h1>
+        <Link to="/schedule/calendar" className="btn outline">
+          캘린더
+        </Link>
         {/* Presentation only, as before: activities_member_event_insert is what
             refuses a member's 훈련, and the label just avoids offering one. */}
         {kinds.length > 0 && (

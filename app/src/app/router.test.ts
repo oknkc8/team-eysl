@@ -429,3 +429,25 @@ describe('월간 활동 요약 is guarded by tree position', () => {
     expect(guardsFor('/activity')).not.toContain('*')
   })
 })
+
+describe('일정 캘린더 is guarded by tree position', () => {
+  // A literal beside /schedule/:activityId. Ranked matching has to prefer the
+  // literal, or the calendar is read as an activity id and the member lands on a
+  // detail page for an activity that does not exist — the same trap
+  // /schedule/new and /schedule/mine already sit next to.
+  it('sends /schedule/calendar to the calendar, not the detail route', () => {
+    expect(guardsFor('/schedule/calendar')).toEqual(['auth', '/schedule/calendar'])
+  })
+
+  it('keeps it on RequireAuth only', () => {
+    expect(guardsFor('/schedule/calendar')).not.toContain('staff')
+    expect(guardsFor('/schedule/calendar')).not.toContain('master')
+  })
+
+  // The neighbours it must not have displaced.
+  it('leaves the sibling schedule routes matching as before', () => {
+    expect(guardsFor('/schedule/new')).toEqual(['auth', '/schedule/new'])
+    expect(guardsFor('/schedule/mine')).toEqual(['auth', '/schedule/mine'])
+    expect(guardsFor(`/schedule/${ACTIVITY_ID}`)).toEqual(['auth', '/schedule/:activityId'])
+  })
+})
