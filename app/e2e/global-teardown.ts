@@ -184,6 +184,23 @@ function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null) {
     }
   }
 
+  // THE FILE OUTLIVES A FAILED RELEASE, ON PURPOSE. Removing it unconditionally
+  // was the sharper half of the same defect as the local kill above: on the path
+  // where ownership could not be verified — a lapsed hold, but equally a
+  // transient query error, since heldBackendPid() collapses both to null — we
+  // would terminate nothing, correctly, and then throw away the only record of
+  // the backend that may still be holding the lock. A pooled backend outlives
+  // its client, which this file proved the hard way; forgetting its pid leaves it
+  // holding the shared key with nobody able to name it, and the next run waits
+  // out LOCK_WAIT_MS for a holder it can no longer identify.
+  //
+  // Keeping it is safe because identity is checked, not assumed: a later
+  // teardown reading a stale file asks heldBackendPid() for a backend holding
+  // BOTH keys, and a stale nonce matches no current holder, so it refuses rather
+  // than acting on the old pid. The cost of keeping it is a file to delete by
+  // hand; the cost of removing it is an unnameable lock.
+  if (backendPid === null) return
+
   try {
     fs.rmSync(SEED_LOCK_PID_FILE)
   } catch {
