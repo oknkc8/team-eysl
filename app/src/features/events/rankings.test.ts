@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import {
   RankingsContractError,
+  TOP_RANK_LIMIT,
   countListsFor,
   formatSeconds,
   groupByStroke,
+  hasHiddenRanks,
   isRankingKind,
   isRankingsEmpty,
   parseRankings,
+  rankDisplay,
+  rankToggleLabel,
   type ImprovementRow,
 } from './rankings'
 
@@ -202,5 +206,60 @@ describe('isRankingKind', () => {
   it('rejects anything else, so a typed URL gets its own answer', () => {
     expect(isRankingKind('improvements')).toBe(false)
     expect(isRankingKind(undefined)).toBe(false)
+  })
+})
+
+describe('메달·등급', () => {
+  it('puts 금·은·동 on the podium and a number everywhere else', () => {
+    expect(rankDisplay(1)).toBe('🥇')
+    expect(rankDisplay(2)).toBe('🥈')
+    expect(rankDisplay(3)).toBe('🥉')
+    expect(rankDisplay(4)).toBe('4')
+    expect(rankDisplay(11)).toBe('11')
+  })
+
+  /*
+   * The case a fixture of all-distinct counts cannot see.
+   *
+   * team_event_rankings_v1 ranks with rank(), so tied members share a rank and
+   * the next distinct count skips the numbers they used up. A list whose top two
+   * are tied is therefore ranked 1, 1, 3 — and the screen shows two 🥇 followed
+   * by a 🥉 with NO 🥈 anywhere on it.
+   *
+   * That is correct: a real podium with two golds has no silver. But it looks
+   * exactly like a bug, and a lookup written as `MEDALS[index]` rather than
+   * `MEDALS[rank]` would render 🥇🥈🥉 here — wrong, while looking right. Every
+   * rank below is one the server can actually emit.
+   */
+  it('shares a medal on a tie and skips the rank the tie consumed', () => {
+    const tied = [1, 1, 3, 4, 5, 5, 7]
+    expect(tied.map(rankDisplay)).toEqual(['🥇', '🥇', '🥉', '4', '5', '5', '7'])
+    expect(tied.map(rankDisplay)).not.toContain('🥈')
+  })
+
+  it('gives silver only when exactly one member is first', () => {
+    expect([1, 2, 3].map(rankDisplay)).toEqual(['🥇', '🥈', '🥉'])
+  })
+
+  // Three-way tie for first: the next distinct count is rank 4, so the whole
+  // podium is gold and neither 🥈 nor 🥉 appears.
+  it('handles a three-way tie for first', () => {
+    expect([1, 1, 1, 4].map(rankDisplay)).toEqual(['🥇', '🥇', '🥇', '4'])
+  })
+})
+
+describe('전체 랭킹 보기', () => {
+  it('collapses only a list longer than the top five', () => {
+    expect(TOP_RANK_LIMIT).toBe(5)
+    expect(hasHiddenRanks(5)).toBe(false)
+    expect(hasHiddenRanks(6)).toBe(true)
+    expect(hasHiddenRanks(0)).toBe(false)
+  })
+
+  // The label names what the next tap does, not the current state — a button
+  // reading "전체 랭킹 보기" while the full list is already open is a lie.
+  it('labels the button by what tapping it will do', () => {
+    expect(rankToggleLabel(false)).toBe('전체 랭킹 보기')
+    expect(rankToggleLabel(true)).toBe('TOP5만 보기')
   })
 })
