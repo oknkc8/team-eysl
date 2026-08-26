@@ -94,6 +94,9 @@ const TRIGGER_EVENTS: readonly PushEvent[] = [
  */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
+/** Well-formed, and names nothing. Refused alongside the malformed ones. */
+const NIL_UUID = '00000000-0000-0000-0000-000000000000'
+
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -244,6 +247,14 @@ async function authorize(
     // Canonical form only, which is what Postgres renders a uuid as, so this
     // cannot refuse a call the triggers actually make.
     if (!UUID_PATTERN.test(id)) return json({ ok: false, error: 'id must be a uuid' }, 400)
+    // The nil uuid is well-formed and identifies nothing. Downstream it is
+    // already harmless — the RPC finds no row and answers 200 {skipped:true} —
+    // so this closes a hole in what this check CLAIMS rather than a defect in
+    // what the function does. Worth closing anyway: what is being refused here
+    // is "an id that cannot name a row", and the nil uuid is the clearest
+    // example of one. It is also what an uninitialised variable serialises to,
+    // which is precisely the caller mistake this check exists for.
+    if (id === NIL_UUID) return json({ ok: false, error: 'id must not be the nil uuid' }, 400)
     return { event: event as PushEvent, id }
   }
 
