@@ -338,6 +338,20 @@ It sits mid-way through `loadPersistentContent()`, so everything after it is dea
 
 The lesson for us is narrow and important: **a feature we are porting may never have run in his app.** `final62-history-all-participants` and `final64-canonical-training-attendance` are both downstream of this, so reconstruct them from the `bc3523d` snapshot and do not assume he has validated their semantics against real data. Reported to the president separately; his own breakage, not exploitable, so naming the line here is safe.
 
+**So ask this before porting anything of his, and ask it first: is the feature's read path downstream of `index.html:1631`?** It is a mechanical question, not a judgement — find where the screen gets its data and see whether that runs inside `loadPersistentContent()` after the throwing line, or from somewhere else.
+
+| answer | what you are porting from |
+|---|---|
+| **downstream** | Nothing. The code has never executed, so there is no observed behaviour to match. **The semantics are ours to decide, and the decisions go in the migration header marked as ours** — a reader in six weeks has to be able to tell a port from a choice. |
+| **not downstream** | A working reference. His app really does behave this way, so a difference between his screen and ours is a bug in ours. |
+
+Two worked examples, because the answer does not follow from how central the feature looks:
+
+- 영법별 랭킹 (`0041`) is **not** downstream. `openFunEventPage` hangs off an `onclick` and calls its own RPC, and it reads nothing `loadPersistentContent()` populates — the payload carries nicknames directly, so there is no `members` lookup to be starved. One grep for the call sites settled it.
+- His push subscription path is also **not** downstream, for the same structural reason — which is how we know its failure was a separate fault (`sw.js` could not parse) rather than another symptom of this one. Two independent faults were live at once from `final66` to `final83`, and assuming a single cause would have found the wrong one.
+
+The grep is for call sites, not for the definition. At `final92`, `openFunEventPage` appears four times: three `onclick` attributes and the definition. **What matters is who calls it, not where it lives** — and the count differs between releases, so read it out of the release you are porting rather than carrying a number across.
+
 **And no member of his club received a push notification before `final85`** — but the reason is not the obvious one, and the obvious one is wrong.
 
 `sw.js` fails to parse in **57 consecutive versions**, `final14-auth` through `final83-push-clean-start`. The cause is one character on line 3, where `e.waitUntil(` is closed and `self.addEventListener(` never is.
