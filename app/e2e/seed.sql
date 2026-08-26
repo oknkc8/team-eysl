@@ -557,6 +557,30 @@ from (values
 cross join (select id from public.members where nickname = 'pwtestmember') mem
 cross join (select id from public.members where nickname = 'pwtestadmin') adm;
 
+-- ---------------------------------------------------------------------------
+-- 다중일 대회 fixture
+-- ---------------------------------------------------------------------------
+-- A race that runs three days, for the calendar and for the edit path that must
+-- not lose the range.
+--
+-- created_by is pwtestadmin so cleanup.sql removes it with the rest (it deletes
+-- activities by created_by), and 대회 rather than 훈련 because editing a race is
+-- staff-only — which is what makes the edit test exercise the real permission
+-- path rather than a member-owned 기타.
+--
+-- Days 10-12 of the current month: every month has them, so the calendar test
+-- opens on today's month and finds the race without month arithmetic, and the
+-- 9th is always a real day on which the race must NOT appear.
+insert into public.activities (id, kind, title, activity_date, end_date, place, created_by)
+select '99999999-9999-4999-8999-0000000000b1'::uuid,
+       'race',
+       'pwtest 다중일 대회',
+       make_date(extract(year from current_date)::int, extract(month from current_date)::int, 10),
+       make_date(extract(year from current_date)::int, extract(month from current_date)::int, 12),
+       'pwtest 수영장',
+       adm.id
+  from (select id from public.members where nickname = 'pwtestadmin') adm;
+
 commit;
 
 select nickname, status, role from public.members where nickname like 'pwtest%' order by nickname;
