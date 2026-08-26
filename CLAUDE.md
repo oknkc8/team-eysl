@@ -241,7 +241,11 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 git branch --show-current | grep -qx <branch> && git <cmd>
 ```
 
-이 형태를 쓰는 이유는 틀렸을 때 **거부하기** 때문이다. `git rev-parse --abbrev-ref HEAD && git <cmd>`는 브랜치를 출력만 하고 그대로 실행하므로, 사람이 출력을 읽어야만 알아차린다. 이 문단을 쓰는 동안에도 가드가 한 번 걸려서 `feat/admin-claim`에 커밋이 들어가는 것을 막았다.
+이 형태를 쓰는 이유는 틀렸을 때 **거부하기** 때문이다. `git rev-parse --abbrev-ref HEAD && git <cmd>`는 브랜치를 출력만 하고 그대로 실행하므로, 사람이 출력을 읽어야만 알아차린다.
+
+**보고만 하는 가드는 누군가 읽어야 하고, 회로를 끊는 가드는 잘못 읽힐 수가 없다.** 이 차이가 명령 자체보다 중요하다 — 어떤 검사를 새로 만들 때든, 틀렸을 때 무엇이 일어나는지를 먼저 정하고 나서 형태를 고른다.
+
+이 문단을 쓰는 동안에도 가드가 한 번 걸려서 `feat/admin-claim`에 커밋이 들어가는 것을 막았다. 워크트리 디렉터리 자체가 다른 에이전트의 브랜치로 바뀌어 있던 적도 있는데, 그때 작업이 무사했던 이유는 가드가 아니라 **편집할 때마다 바로 커밋하고 푸시해 둔 것**이었다. 가드는 커밋이 어디로 가는지를 지키고, 체크아웃이 남아 있는지는 지키지 못한다.
 
 **A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
 
@@ -296,9 +300,25 @@ Four of his recent changes contradict something we had already decided or built.
 
 It sits mid-way through `loadPersistentContent()`, so everything after it is dead: waitlist offers never render, the localStorage cache never refreshes, media, member avatars and notice attachments never load. `loginMember()` awaits it inside a try whose catch shows `로그인 중 오류가 발생했습니다` — **a fresh login fails outright**. A resumed session degrades silently.
 
-`final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer. Every release from `final66` to `final80` carries it — fourteen of them.
+`final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer.
+
+**Still live at `final91` (verified 2026-08-26), which makes it 26 releases and counting.** The consumer has moved to `index.html:1631` and `loadPersistentContent()` now destructures six slots where `final64` destructured seven; a Python scan of the whole file finds the identifier on that one line and nowhere else. So **anything downstream of 1631 in his app has never run**, and none of it can be treated as reference behaviour when we port it.
 
 The lesson for us is narrow and important: **a feature we are porting may never have run in his app.** `final62-history-all-participants` and `final64-canonical-training-attendance` are both downstream of this, so reconstruct them from the `bc3523d` snapshot and do not assume he has validated their semantics against real data. Reported to the president separately; his own breakage, not exploitable, so naming the line here is safe.
+
+**그리고 그의 푸시는 `final85`까지 아예 존재하지 않았다.** `sw.js`가 `final47`부터 `final83`까지 **31개 릴리스 연속으로 파싱되지 않았다.** 3번 줄에서 `e.waitUntil(`은 닫혔는데 `self.addEventListener(`가 끝내 닫히지 않은, 괄호 하나짜리 오류다. SyntaxError가 나는 서비스워커는 설치되지 않으므로 그동안 `pushManager`도 `push` 이벤트도 캐시도 없었다.
+
+`push-repair`·`push-autofix`·`push-server-register`·`push-clean-start`로 이어지는 다섯 릴리스는 **브라우저가 읽기를 거부한 파일 안에서 푸시를 고치고 있었고**, 그 연쇄는 처음으로 파싱에 성공한 `final85-push-true-reset`에서 정확히 끝난다. 그 릴리스에서 그는 `sw.js`를 통째로 다시 썼고, 괄호는 거기 묻어 함께 고쳐졌다.
+
+결론을 믿지 말고 직접 확인할 수 있게, 명령은 이것이다.
+
+```bash
+for c in $(git log --format=%h --reverse origin/main..upstream/main); do
+  git show "$c:sw.js" > /tmp/sw.js && node --check /tmp/sw.js
+done
+```
+
+여기서 두 가지가 따라 나온다. 그의 푸시 문제와 공지 푸시 문제는 **서로 다른 원인**이다 — 전자는 워커가 설치되지 않은 것이고 후자는 `historicalTrainingRes`가 던지는 것이며, `final66`부터 `final83`까지는 둘이 동시에 살아 있었다. 그리고 우리 `push-notify`의 500은 또 다른 세 번째 문제라, **저 다섯 릴리스에서 가져올 것은 없다.**
 
 **"이벤트" no longer means what it means in our code.** In his app the third activity kind is now labelled **기타**, and **이벤트** was reassigned to a rankings hub — a different feature entirely (출석왕 · 지각왕 · 단축왕). The database token stays `event`; only the Korean label changed, and he left the stored value alone too. Ours still renders '이벤트' for the kind, which now names the wrong thing to anyone reading both apps.
 
