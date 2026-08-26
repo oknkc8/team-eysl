@@ -103,6 +103,11 @@ export function HomePage() {
         <h2>바로가기</h2>
       </div>
       <nav className="list" aria-label="바로가기">
+        {/* His drawer files 자유게시판 under 게시판 beside 공지
+            (upstream:1421). We have no drawer and the bottom nav has five fixed
+            destinations, so this tile is the only way to the board — the same
+            reason 사진·영상 and 자료실 are here. */}
+        <Tile to="/board" icon="✎" title="자유게시판" desc="회원 누구나 쓰는 게시판" />
         <Tile to="/chat" icon="✉" title="채팅" desc="단체 대화와 1:1 메시지" />
         <Tile to="/media" icon="▦" title="사진·영상" desc="폴더별 훈련·대회 기록" />
         <Tile to="/files" icon="▤" title="자료실" desc="폴더에 담기지 않은 파일" />
