@@ -8,6 +8,7 @@ import {
   getNotice,
   listAttachments,
   NoticeConflictError,
+  nextEditorStateAfterSave,
   saveNotice,
   type Notice,
   type NoticeAttachment,
@@ -201,12 +202,16 @@ function NoticeForm({
       // attachment that opens to nothing and no idea it happened, so the screen
       // stays put, names the files, and offers 저장 again.
       if (result.uploadFailures.length > 0) {
-        setUploadFailures(result.uploadFailures)
+        // The rows all exist now, so the kept set adopts them and a retry
+        // updates rather than creating a second notice — but the rows whose
+        // object never arrived are left OUT of it, so the RPC deletes them, and
+        // their Files go back on the queue so they are sent again. The rule
+        // lives in api.ts, where a test can reach it.
+        const next = nextEditorStateAfterSave(result)
+        setUploadFailures(next.failedNames)
         setSaveState('error')
-        // The rows now exist, so a retry must not create them a second time:
-        // adopt what came back as the kept set and clear the pending files.
-        setKept(result.attachments.map((row) => ({ id: row.id, file_name: row.file_name })))
-        setFiles([])
+        setKept(next.kept)
+        setFiles(next.files)
         return
       }
 

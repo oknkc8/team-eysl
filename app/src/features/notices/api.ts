@@ -95,45 +95,16 @@ export async function getNotice(noticeId: string): Promise<Notice> {
   return data
 }
 
-// Staff-only, enforced by the notices_write RLS policy — this module does not
-// re-check the role, because a check here would only decide what to render.
-export async function createNotice(input: { title: string; body: string }): Promise<Notice> {
-  // Asked of the server rather than threaded down from the session, so no caller
-  // can pass the wrong id by accident. RLS does not constrain created_by, so
-  // this is authorship bookkeeping, not enforcement.
-  const { data: memberId, error: memberError } = await supabase.rpc('current_member_id')
-  if (memberError) throw memberError
-
-  const { data, error } = await supabase
-    .from('notices')
-    .insert({ title: input.title.trim(), body: input.body, created_by: memberId })
-    .select(NOTICE_COLUMNS)
-    .single()
-  if (error) throw error
-  return data
-}
-
-export async function updateNotice(input: {
-  noticeId: string
-  title: string
-  body: string
-}): Promise<Notice> {
-  const { data, error } = await supabase
-    .from('notices')
-    .update({
-      title: input.title.trim(),
-      body: input.body,
-      // Set explicitly: the column defaults to now() on insert but no trigger
-      // touches it on update, so it would otherwise freeze at creation time.
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', input.noticeId)
-    .select(NOTICE_COLUMNS)
-    .single()
-  if (error) throw error
-  return data
-}
-
+// createNotice() and updateNotice() USED TO LIVE HERE and are deliberately gone.
+//
+// Both wrote to `notices` directly, and once saveNotice() landed neither had a
+// caller. Leaving them exported would have been the cheap choice and the wrong
+// one: an UPDATE that does not go through save_notice_v1 never advances
+// updated_at through its greatest(now(), …) stamp, so it slips past the very
+// conflict check this feature exists to provide. 0040 revokes the policies that
+// let them work at all; deleting them here is the half that stops the next
+// screen from calling one and getting a runtime denial instead of a compile
+// error.
 export async function deleteNotice(noticeId: string): Promise<void> {
   const { error } = await supabase.from('notices').delete().eq('id', noticeId)
   if (error) throw error
@@ -218,17 +189,68 @@ export type SaveNoticeResult = {
   notice: Notice
   attachments: SavedAttachment[]
   /**
-   * Names of files whose ROW was created but whose OBJECT never arrived.
+   * The attachments whose ROW was created but whose OBJECT never arrived.
    *
    * This is the accepted failure, not an oversight — the same one
    * uploadMediaFiles lives with. The claim gate (0021) requires the row before
    * the object, so the only two orders available are "row with no object" and
    * "object with no row", and the first is far better: it shows up on the
    * screen as an attachment the uploader can see and delete, while the second
-   * is debris nobody can reach. The caller surfaces these names rather than
-   * swallowing them.
+   * is debris nobody can reach.
+   *
+   * IDENTITY, NOT A NAME, and that is the whole of the fix here. This was
+   * `string[]` of file names, which is exactly the wrong key: the upload loop
+   * below already notes that two files picked in one go can share a name, so a
+   * name cannot say WHICH row failed. A retry therefore could not drop the
+   * broken row or resend the right file, and the screen papered over it by
+   * keeping every returned row and clearing every pending file — turning a
+   * visible failure into an invisible success on the next click.
+   *
+   * Carrying the row id and the File itself lets the caller do the only two
+   * things that actually repair the state: leave the broken row out of the keep
+   * set so the RPC deletes it, and put the File back on the queue so it is sent
+   * again.
    */
-  uploadFailures: string[]
+  uploadFailures: UploadFailure[]
+}
+
+/** A row that exists with no object behind it, and the File that belongs in it. */
+export type UploadFailure = {
+  /** The notice_attachments row created for this file. */
+  id: string
+  file_name: string
+  /** The original File, so a retry resends it rather than losing it. */
+  file: File
+}
+
+/**
+ * What the form must hold after a save that left some object un-uploaded.
+ *
+ * PURE, AND OUT HERE ON PURPOSE. This decision used to live inside the mutation
+ * handler, where nothing could call it without rendering the page — and it was
+ * wrong there for a full review cycle: it kept the broken rows and dropped the
+ * files, so the next 저장 resent nothing, saw no failures, and navigated away
+ * over an attachment that opens to nothing. A defect that survives review
+ * because no test can reach the code is an argument about where the code lives,
+ * not about how careful the reviewer was.
+ *
+ * The rule it encodes, in one line: a row whose object never arrived is not an
+ * attachment, it is a pending upload, so it leaves `kept` and its File goes back
+ * on the queue.
+ */
+export function nextEditorStateAfterSave(result: SaveNoticeResult): {
+  kept: { id: string; file_name: string }[]
+  files: File[]
+  failedNames: string[]
+} {
+  const failedIds = new Set(result.uploadFailures.map((failure) => failure.id))
+  return {
+    kept: result.attachments
+      .filter((row) => !failedIds.has(row.id))
+      .map((row) => ({ id: row.id, file_name: row.file_name })),
+    files: result.uploadFailures.map((failure) => failure.file),
+    failedNames: result.uploadFailures.map((failure) => failure.file_name),
+  }
 }
 
 // The generated Args type declares p_attachments as Json, so the payload is
@@ -349,7 +371,7 @@ export async function saveNotice(input: {
   // new rows line up with `files` positionally. Zipping by index rather than by
   // name because two files picked in one go can share a name.
   const fresh = attachments.filter((row) => row.is_new)
-  const uploadFailures: string[] = []
+  const uploadFailures: UploadFailure[] = []
 
   for (let i = 0; i < fresh.length; i += 1) {
     const target = fresh[i]
@@ -358,7 +380,9 @@ export async function saveNotice(input: {
     const upload = await supabase.storage
       .from(ATTACHMENT_BUCKET)
       .upload(target.storage_path, file, { contentType: target.mime_type, upsert: true })
-    if (upload.error) uploadFailures.push(target.file_name)
+    // The row id and the File, not the name. Zipped by index for the reason
+    // stated above, which is the same reason the name alone will not do.
+    if (upload.error) uploadFailures.push({ id: target.id, file_name: target.file_name, file })
   }
 
   return { notice, attachments, uploadFailures }
