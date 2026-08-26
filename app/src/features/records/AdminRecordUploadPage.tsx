@@ -278,6 +278,8 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
       setSaveState(failures > 0 ? 'error' : 'saved')
       // If a staffer filed rows against themselves, their own screen is stale.
       await qc.invalidateQueries({ queryKey: ['my-records'] })
+      // A batch of new times can create PB 모먼트 on the same screen.
+      await qc.invalidateQueries({ queryKey: ['my-achievement'] })
     },
     onError: () => setSaveState('error'),
   })

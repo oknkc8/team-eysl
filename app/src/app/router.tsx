@@ -3,6 +3,7 @@ import { RequireAuth, RequireMasterAdmin, RequireStaff } from './guards'
 import { LoginPage, PendingPage } from '../features/auth/LoginPage'
 import { SignupPage } from '../features/auth/SignupPage'
 import { MyPage } from '../features/profile/MyPage'
+import { MonthlyActivityPage } from '../features/achievements/MonthlyActivityPage'
 import { ApplicationAdminPage } from '../features/schedule/ApplicationAdminPage'
 import { HomePage } from '../features/home/HomePage'
 import { MyAttendancePage } from '../features/attendance/MyAttendancePage'
@@ -98,6 +99,11 @@ export const router = createBrowserRouter([
           // the whole gate this route needs.
           { path: '/mypage', element: <MyPage /> },
           { path: '/attendance', element: <MyAttendancePage /> },
+          // 월간 활동 요약, his `#activity` page. Every approved member reads
+          // their own month and my_monthly_activity_v1 (0034) takes no member id,
+          // so RequireAuth is the whole gate — the server cannot be asked for
+          // somebody else's month.
+          { path: '/activity', element: <MonthlyActivityPage /> },
           { path: '/notices', element: <NoticeListPage /> },
           { path: '/notices/:noticeId', element: <NoticeDetailPage /> },
           { path: '/schedule', element: <ScheduleListPage /> },

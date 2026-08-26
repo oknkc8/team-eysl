@@ -134,6 +134,8 @@ function RecordForm({ members }: { members: MemberOption[] }) {
       // If the staffer filed this against themselves, their own screen is now
       // stale. Cheap to invalidate either way.
       await qc.invalidateQueries({ queryKey: ['my-records'] })
+      // A new time can create or move a PB 모먼트 on the same screen.
+      await qc.invalidateQueries({ queryKey: ['my-achievement'] })
     },
     onError: () => setState('error'),
   })
