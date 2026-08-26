@@ -137,20 +137,62 @@ create or replace function public.enqueue_object_deletion()
 returns trigger
 language plpgsql volatile security definer set search_path = public
 as $$
+declare
+  v_path text;
 begin
+  -- THE PATH COLUMN IS NAMED BY THE TRIGGER, not assumed. messages calls its
+  -- column attachment_path while the other three call theirs storage_path, and
+  -- reading old.storage_path directly is what limited this function to the
+  -- tables that happen to agree. to_jsonb(old) lets one function serve all
+  -- four; the argument defaults to storage_path so the existing triggers keep
+  -- working unchanged.
+  v_path := to_jsonb(old) ->> coalesce(tg_argv[0], 'storage_path');
+
+  -- Nullable on messages: a message with no attachment has nothing to queue.
+  if v_path is null then
+    return null;
+  end if;
+
   -- Another table -- or another row of this one -- may still claim this exact
   -- path, and then the object is not garbage, it is theirs.
-  if exists (select 1 from public.media_files where storage_path = old.storage_path)
-     or exists (select 1 from public.notice_attachments where storage_path = old.storage_path)
-     or exists (select 1 from public.messages where attachment_path = old.storage_path)
-     or exists (select 1 from public.record_uploads where storage_path = old.storage_path) then
+  --
+  -- KNOWN LIMIT, recorded rather than hidden: two transactions deleting rows in
+  -- DIFFERENT claim tables can each still see the other's row and both skip the
+  -- insert, leaving the object with no row and no queue entry. The failure
+  -- direction is the safe one — an orphan nobody deletes, not a live file
+  -- deleted — and 0036's adoption select is what recovers it, since an object
+  -- no table claims is by definition debris. Closing it properly needs
+  -- serialisable isolation or a lock ordered across four tables, and neither is
+  -- worth buying at the price of a leak that a re-adoption sweeps up.
+  if exists (select 1 from public.media_files where storage_path = v_path)
+     or exists (select 1 from public.notice_attachments where storage_path = v_path)
+     or exists (select 1 from public.messages where attachment_path = v_path)
+     or exists (select 1 from public.record_uploads where storage_path = v_path) then
     return null;
   end if;
 
   insert into public.pending_object_deletions (storage_path, requested_by)
-  values (old.storage_path, public.current_member_id())
+  values (v_path, public.current_member_id())
   on conflict (storage_path) do nothing;
 
+  return null;
+end $$;
+
+-- The same argument treatment for the release side, and for the same reason:
+-- a messages row re-claiming a queued path has to take it back out of the
+-- queue, and it could not while this function read new.storage_path.
+create or replace function public.release_object_deletion()
+returns trigger
+language plpgsql volatile security definer set search_path = public
+as $$
+declare
+  v_path text;
+begin
+  v_path := to_jsonb(new) ->> coalesce(tg_argv[0], 'storage_path');
+  if v_path is null then
+    return null;
+  end if;
+  delete from public.pending_object_deletions where storage_path = v_path;
   return null;
 end $$;
 
@@ -177,7 +219,110 @@ create trigger notice_attachments_release_object_deletion
   for each row execute function public.release_object_deletion();
 
 comment on function public.release_object_deletion() is
-  '같은 경로를 다시 가리키는 media_files 또는 notice_attachments 행이 생기면 삭제 대기열에서 뺀다.';
+  '같은 경로를 다시 가리키는 행이 생기면 삭제 대기열에서 뺀다. 경로 컬럼 이름은 트리거 인자로 받는다.';
+
+-- ------------------------------------------ the other two claim tables
+-- 0036 said to widen media_object_is_claimed, team_file_is_readable, the
+-- enqueue guard and the adoption select together. That instruction was about
+-- RECOGNISING a claim and said nothing about the LIFECYCLE, so the triggers
+-- stayed on media_files alone and this migration added notice_attachments —
+-- two of the four claim tables with an enqueue, two without.
+--
+-- The gap is not theoretical. A notice and a message claiming one path: delete
+-- the notice and the guard correctly skips because the message still claims it,
+-- then delete the message and nothing fires at all — the object ends with no
+-- row and no queue entry. The reverse strands it too, because a messages row
+-- re-claiming an already-queued path never released it, so a live object was
+-- queued for sweeping.
+--
+-- record_uploads has no delete path in the app yet, and that is exactly why it
+-- goes in now: 0036 called it "a landmine, not a live defect", and a trigger
+-- added before the feature is a trigger nobody has to remember afterwards.
+drop trigger if exists messages_enqueue_object_deletion on public.messages;
+create trigger messages_enqueue_object_deletion
+  after delete on public.messages
+  for each row execute function public.enqueue_object_deletion('attachment_path');
+
+drop trigger if exists messages_release_object_deletion on public.messages;
+create trigger messages_release_object_deletion
+  after insert on public.messages
+  for each row execute function public.release_object_deletion('attachment_path');
+
+drop trigger if exists record_uploads_enqueue_object_deletion on public.record_uploads;
+create trigger record_uploads_enqueue_object_deletion
+  after delete on public.record_uploads
+  for each row execute function public.enqueue_object_deletion();
+
+drop trigger if exists record_uploads_release_object_deletion on public.record_uploads;
+create trigger record_uploads_release_object_deletion
+  after insert on public.record_uploads
+  for each row execute function public.release_object_deletion();
+
+-- ------------------------------------------ who may write a notice object
+-- The storage policies ask two questions — is this path mine, and does a row
+-- claim it — and neither of them asks whether the caller is still staff. So a
+-- member demoted out of 운영진 kept the ability to upsert over, or delete, the
+-- objects on notices they had written: their member id is still the prefix and
+-- the notice_attachments row still claims the path. Creating anything new was
+-- already refused, because notice_attachments_write checks is_staff(); role
+-- revocation simply did not reach bytes that were already uploaded.
+--
+-- Asked per library rather than globally. media and resources are open to every
+-- approved member by 0021's deliberate decision, and widening this to all of
+-- team-files would quietly reverse that.
+create or replace function public.team_file_library_allows_me(p_path text)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select case
+           when p_path ~ '^[^/]+/notices/' then public.is_staff()
+           else true
+         end
+$$;
+
+comment on function public.team_file_library_allows_me(text) is
+  '경로가 속한 라이브러리에 지금도 쓸 자격이 있는지. notices는 운영진만이며 나머지는 승인 회원 모두에게 열려 있다.';
+
+-- The three write policies gain the conjunct. Copied from 0021 and 0036 with
+-- one clause added rather than rewritten, so nothing else about them moves.
+drop policy if exists team_files_insert on storage.objects;
+create policy team_files_insert on storage.objects
+  for insert to authenticated
+  with check (
+    bucket_id = 'team-files'
+    and public.is_my_media_object_path(name)
+    and public.media_object_is_claimed(name)
+    and public.team_file_library_allows_me(name)
+  );
+
+drop policy if exists team_files_update on storage.objects;
+create policy team_files_update on storage.objects
+  for update to authenticated
+  using (
+    bucket_id = 'team-files'
+    and public.is_my_media_object_path(name)
+    and public.media_object_is_claimed(name)
+    and public.team_file_library_allows_me(name)
+  )
+  with check (
+    bucket_id = 'team-files'
+    and public.is_my_media_object_path(name)
+    and public.media_object_is_claimed(name)
+    and public.team_file_library_allows_me(name)
+  );
+
+-- delete keeps its owner-or-staff shape from 0021 and gains the same clause, so
+-- a demoted member can no longer take down a notice attachment they wrote while
+-- staff remain able to.
+drop policy if exists team_files_delete on storage.objects;
+create policy team_files_delete on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id = 'team-files'
+    and ((storage.foldername(name))[1] = (public.current_member_id())::text
+         or public.is_staff())
+    and public.team_file_library_allows_me(name)
+  );
 
 -- ------------------------------------------------------------- execute rights
 -- Restated for the reason 0011 and 0029 restate theirs: `create or replace`
@@ -192,8 +337,11 @@ comment on function public.release_object_deletion() is
 revoke all on function public.is_my_media_object_path(text) from public, anon, authenticated;
 revoke all on function public.media_object_is_claimed(text) from public, anon, authenticated;
 
+revoke all on function public.team_file_library_allows_me(text) from public, anon, authenticated;
+
 grant execute on function public.is_my_media_object_path(text) to authenticated;
 grant execute on function public.media_object_is_claimed(text) to authenticated;
+grant execute on function public.team_file_library_allows_me(text) to authenticated;
 
 -- enqueue_object_deletion and release_object_deletion stay granted to nobody:
 -- they are trigger functions, and 0036 revoked them by name because a browser
@@ -244,11 +392,25 @@ revoke all on function public.release_object_deletion() from public, anon, authe
 -- rather than through anything the client has to remember. Passing a delta
 -- would mean the client and the server each holding half of the truth about
 -- what a notice has.
+-- ON p_expected_updated_at, WHICH IS NOT OPTIONAL FOR AN EDIT.
+--
+-- Without it this function was the lost update again, and with more to lose
+-- than the board post it was first found on: A saves an attachment, B saves
+-- from a screen loaded before that, and B's call overwrites A's body AND
+-- deletes A's attachment — because the desired-final-set semantics below mean
+-- B's stale id list is authoritative. Both callers are told they succeeded.
+--
+-- The comparison is lifted from update_board_post_v1 (0037), read out of that
+-- file rather than rebuilt: same PT409 errcode so a client can tell "changed
+-- elsewhere" from "gone", same DETAIL payload so the screen can show the
+-- current text from this one answer instead of a refetch that could itself
+-- land after a third edit.
 create or replace function public.save_notice_v1(
-  p_notice_id   uuid,
-  p_title       text,
-  p_body        text,
-  p_attachments jsonb
+  p_notice_id           uuid,
+  p_title               text,
+  p_body                text,
+  p_attachments         jsonb,
+  p_expected_updated_at timestamptz
 )
 returns jsonb
 language plpgsql security definer set search_path = public
@@ -289,17 +451,51 @@ begin
   end if;
 
   if p_notice_id is null then
+    -- Creating: there is no version to be stale against, and accepting one
+    -- would let a caller believe it had checked something.
+    if p_expected_updated_at is not null then
+      raise exception 'expected updated_at must be null when creating'
+        using errcode = '22023';
+    end if;
     insert into public.notices (title, body, created_by)
     values (v_title, v_body, v_me)
     returning * into v_notice;
   else
+    if p_expected_updated_at is null then
+      raise exception 'expected updated_at is required' using errcode = '22023';
+    end if;
+
+    -- LOCKED FIRST, then compared, then written — all three inside one
+    -- transaction, so nothing can slip between the comparison and the UPDATE.
+    -- The lock also covers the attachment reconciliation below, which is the
+    -- half that made this worse than the board case.
+    select * into v_notice from public.notices where id = p_notice_id for update;
+    if not found then
+      raise exception 'no such notice' using errcode = '42704';
+    end if;
+
+    if v_notice.updated_at <> p_expected_updated_at then
+      raise exception 'notice changed elsewhere'
+        using errcode = 'PT409',
+              detail  = jsonb_build_object(
+                          'title',      v_notice.title,
+                          'body',       v_notice.body,
+                          'updated_at', v_notice.updated_at
+                        )::text;
+    end if;
+
     update public.notices
-       set title = v_title, body = v_body, updated_at = now()
+       set title = v_title,
+           body  = v_body,
+           -- greatest(...), not a bare now(): now() is transaction-start time,
+           -- so two updates beginning in the same microsecond would stamp the
+           -- same value and a stale third write would then compare equal and be
+           -- accepted. One microsecond past the value being replaced makes the
+           -- column strictly increasing per row by construction. 0037's
+           -- reasoning, and it applies here for the same reason.
+           updated_at = greatest(now(), v_notice.updated_at + interval '1 microsecond')
      where id = p_notice_id
     returning * into v_notice;
-    if not found then
-      raise exception 'no such notice' using errcode = '23503';
-    end if;
   end if;
 
   -- Existing rows the caller is keeping. Anything else on this notice goes, and
@@ -363,9 +559,18 @@ begin
     'attachments', v_result);
 end $$;
 
-comment on function public.save_notice_v1(uuid, text, text, jsonb) is
+comment on function public.save_notice_v1(uuid, text, text, jsonb, timestamptz) is
   '공지와 첨부 목록을 한 트랜잭션에서 저장한다. 첨부 경로는 호출자가 정하지 않고 이 함수가 <내 member id>/notices/<uuid>로 만든다. 목록에 없는 기존 첨부는 삭제되고 객체는 삭제 대기열로 간다.';
 
-revoke all on function public.save_notice_v1(uuid, text, text, jsonb) from public, anon, authenticated;
-grant execute on function public.save_notice_v1(uuid, text, text, jsonb) to authenticated;
+-- The four-argument form is DROPPED rather than left beside the new one.
+-- `create or replace` cannot change a signature, so without this the old
+-- version would still exist and still be callable — and it is precisely the
+-- version with no conflict check. An overload that silently accepts the unsafe
+-- call is worse than no migration at all.
+drop function if exists public.save_notice_v1(uuid, text, text, jsonb);
+
+revoke all on function public.save_notice_v1(uuid, text, text, jsonb, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.save_notice_v1(uuid, text, text, jsonb, timestamptz)
+  to authenticated;
 
