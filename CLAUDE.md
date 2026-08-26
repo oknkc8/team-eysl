@@ -224,6 +224,10 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 
 **Both typecheck commands have to be run; neither implies the other.** `npm run typecheck` reads `src`, `npm run typecheck:functions` reads `supabase/functions`, and a green one says nothing about the other tree.
 
+**`src/types/database.ts`에서 일부러 빠뜨린 항목이 있고, `npm run db:types`는 그것을 말없이 되돌린다.** `member_link_summary_v1`은 아무에게도 EXECUTE가 없다 — 2026-08-26 라이브 ACL은 `{postgres=X/postgres,service_role=X/postgres}`이고 `authenticated`가 없다. 브라우저에서 부를 수 없는 함수이므로 타입에서도 빼 둔다. 그러면 실수로 호출했을 때 **총관리자 화면 앞에서 런타임 오류가 나는 대신 컴파일이 깨진다.**
+
+`db:types`는 이 파일을 통째로 덮어쓰므로 그 결정은 파일 안에 남지 않는다. 재생성한 뒤에는 이 함수가 다시 들어왔는지 확인하고 빼낸다. 같은 이유로, 권한을 주지 않은 새 함수를 만들 때마다 이 판단을 반복해야 한다 — 규칙은 "부를 수 없는 것은 타입에도 없다"이다.
+
 **워크트리 앵커가 세션 도중에 다른 워크트리로 옮겨 간다.** 2026-08-26에 두 번 확인했다. 한 번은 `git add … && git commit`이 `fix/media-delete-orphans` 대신 **`feat/admin-claim`에서** 실행됐고, 다른 한 번은 `claim2`의 `git mv`가 `admin-claim`에서 성공한 직후 `git commit`이 **`fix/media-delete-orphans`에서** 실행됐다. **둘 다 아무것도 커밋되지 않았고, 그건 순전히 상대편 트리가 마침 깨끗했기 때문이다.** 더러웠다면 남의 작업이 내 커밋 메시지를 달고 들어갔을 것이다.
 
 이 고장은 두 가지 모습으로 나타나고, 탐지 방법이 서로 다르다.
