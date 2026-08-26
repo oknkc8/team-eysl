@@ -22,6 +22,7 @@ const NOTICE_ID = '00000000-0000-4000-8000-000000000001'
 const ACTIVITY_ID = '00000000-0000-4000-8000-000000000002'
 const MEMBER_ID = '00000000-0000-4000-8000-000000000003'
 const FOLDER_ID = '00000000-0000-4000-8000-000000000004'
+const POST_ID = '00000000-0000-4000-8000-000000000005'
 
 /**
  * The guards and the screen a path lands on, in order.
@@ -366,5 +367,65 @@ describe('my race history route is guarded by tree position', () => {
   it('keeps it on RequireAuth only', () => {
     expect(guardsFor('/schedule/mine')).not.toContain('staff')
     expect(guardsFor('/schedule/mine')).not.toContain('master')
+  })
+})
+
+describe('board routes are guarded by tree position', () => {
+  // /board/new is a literal sibling of the dynamic /board/:postId, so which one
+  // answers is decided by ranked matching rather than declaration order — the
+  // same pairing that made /notices/new worth its own test. If the dynamic route
+  // won, 글 작성 would open a detail screen for a post called "new".
+  it('sends /board/new to the editor, not the detail route', () => {
+    expect(guardsFor('/board/new')).toEqual(['auth', '/board/new'])
+    expect(guardsFor('/board/new')).not.toContain('/board/:postId')
+  })
+
+  it('puts the list and one post on RequireAuth', () => {
+    expect(guardsFor('/board')).toEqual(['auth', '/board'])
+    expect(guardsFor(`/board/${POST_ID}`)).toEqual(['auth', '/board/:postId'])
+  })
+
+  it('puts the edit route on RequireAuth', () => {
+    expect(guardsFor(`/board/${POST_ID}/edit`)).toEqual(['auth', '/board/:postId/edit'])
+  })
+
+  // The load-bearing one. Writing here is open to every approved member — the ＋
+  // is unconditional markup in his app (upstream:1279) — so a staff guard on any
+  // of these four would lock the board's own audience out of it. Editing is
+  // narrower than staff, not wider: the author alone, which no position in the
+  // tree can express, so update_board_post_v1 decides it and the screen mirrors
+  // that. A RequireStaff here would be a guard that contradicts the database in
+  // both directions at once.
+  it('never sends a board route through a role guard', () => {
+    for (const path of ['/board', '/board/new', `/board/${POST_ID}`, `/board/${POST_ID}/edit`]) {
+      expect(guardsFor(path)).not.toContain('staff')
+      expect(guardsFor(path)).not.toContain('master')
+    }
+  })
+
+  it('does not fall through to the catch-all', () => {
+    expect(guardsFor('/board')).not.toContain('*')
+    expect(guardsFor(`/board/${POST_ID}`)).not.toContain('*')
+  })
+})
+
+describe('월간 활동 요약 is guarded by tree position', () => {
+  // RequireAuth and nothing more, for the same reason as /mypage above:
+  // my_monthly_activity_v1 (0034) takes no member id and derives the caller from
+  // the session, so there is no URL that reaches somebody else's month. A staff
+  // guard here would keep members off their own summary and protect nothing.
+  it('puts /activity on RequireAuth only', () => {
+    expect(guardsFor('/activity')).toEqual(['auth', '/activity'])
+  })
+
+  it('does not put a member’s own summary behind a staff guard', () => {
+    expect(guardsFor('/activity')).not.toContain('staff')
+    expect(guardsFor('/activity')).not.toContain('master')
+  })
+
+  // A literal sibling of /attendance rather than a parameterised route, so it
+  // must not be swallowed by the catch-all.
+  it('does not fall through to the catch-all', () => {
+    expect(guardsFor('/activity')).not.toContain('*')
   })
 })

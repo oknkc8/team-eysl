@@ -3,6 +3,7 @@ import { RequireAuth, RequireMasterAdmin, RequireStaff } from './guards'
 import { LoginPage, PendingPage } from '../features/auth/LoginPage'
 import { SignupPage } from '../features/auth/SignupPage'
 import { MyPage } from '../features/profile/MyPage'
+import { MonthlyActivityPage } from '../features/achievements/MonthlyActivityPage'
 import { ApplicationAdminPage } from '../features/schedule/ApplicationAdminPage'
 import { HomePage } from '../features/home/HomePage'
 import { MyAttendancePage } from '../features/attendance/MyAttendancePage'
@@ -32,6 +33,9 @@ import { EventRankingPage } from '../features/events/EventRankingPage'
 import { ChatPage } from '../features/chat/ChatPage'
 import { DmPage } from '../features/chat/DmPage'
 import { NotificationSettingsPage } from '../features/push/NotificationSettingsPage'
+import { BoardListPage } from '../features/board/BoardListPage'
+import { BoardDetailPage } from '../features/board/BoardDetailPage'
+import { BoardEditPage } from '../features/board/BoardEditPage'
 
 /**
  * The frame above every route, and the only thing in it is scroll position.
@@ -94,6 +98,11 @@ export const router = createBrowserRouter([
           // the whole gate this route needs.
           { path: '/mypage', element: <MyPage /> },
           { path: '/attendance', element: <MyAttendancePage /> },
+          // 월간 활동 요약, his `#activity` page. Every approved member reads
+          // their own month and my_monthly_activity_v1 (0034) takes no member id,
+          // so RequireAuth is the whole gate — the server cannot be asked for
+          // somebody else's month.
+          { path: '/activity', element: <MonthlyActivityPage /> },
           { path: '/notices', element: <NoticeListPage /> },
           { path: '/notices/:noticeId', element: <NoticeDetailPage /> },
           { path: '/schedule', element: <ScheduleListPage /> },
@@ -234,6 +243,25 @@ export const router = createBrowserRouter([
               },
             ],
           },
+          // 자유게시판. Every one of these is RequireAuth and none is
+          // RequireStaff, which is the whole shape of his board: the ＋ that
+          // opens 글 작성 is unconditional markup (upstream:1279) and applyRole()
+          // never touches a board control, so any approved member writes here.
+          //
+          // Editing is the one narrow permission, and it is narrower than any
+          // guard can say — the author of the row at this id, and not staff
+          // (upstream:2639 refuses a non-author, and he made no admin case for
+          // it). A RequireStaff copy of /board/:postId/edit would be the thing
+          // this file keeps warning about: a guard that looks like it decides
+          // something while update_board_post_v1 is what actually does. The
+          // screen mirrors the RPC instead and prints a Korean refusal.
+          //
+          // Ranked matching puts the literal /board/new ahead of the sibling
+          // /board/:postId, the same trap /notices/new springs.
+          { path: '/board', element: <BoardListPage /> },
+          { path: '/board/new', element: <BoardEditPage /> },
+          { path: '/board/:postId', element: <BoardDetailPage /> },
+          { path: '/board/:postId/edit', element: <BoardEditPage /> },
         ],
       },
       { path: '*', element: <div style={{ padding: 24 }}>페이지를 찾을 수 없습니다.</div> },

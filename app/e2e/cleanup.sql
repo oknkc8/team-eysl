@@ -33,12 +33,20 @@
 -- an activity would otherwise wedge every later cleanup.
 create temporary table pwtest_member_ids (id uuid primary key);
 
--- The four sign-in accounts, at the ids fixtures.ts imports.
+-- The six sign-in accounts, at the ids fixtures.ts imports.
 insert into pwtest_member_ids (id) values
   ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),  -- pwtestadmin
   ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),  -- pwtestmember
   ('cccccccc-cccc-4ccc-8ccc-cccccccccccc'),  -- pwtestpending
-  ('dddddddd-dddd-4ddd-8ddd-dddddddddddd');  -- pwtestmember2
+  ('dddddddd-dddd-4ddd-8ddd-dddddddddddd'),  -- pwtestmember2
+  -- Named here even though the signup block further down would also reach them
+  -- through the pwtest%@eysl.local auth join. That reach is incidental — it
+  -- exists for accounts whose ids are random because a button made them — and
+  -- leaning on it for a fixture whose id we chose ourselves would be depending
+  -- on a coincidence. These two are seeded exactly like the four above, so they
+  -- are removed exactly like the four above.
+  ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'),  -- pwtestrejected
+  ('ffffffff-ffff-4fff-8fff-ffffffffffff');  -- pwtestblocked
 
 -- The twelve roster/waitlist/ranking dummies, built by the same expression
 -- seed.sql uses so the two cannot drift apart silently.
@@ -84,6 +92,12 @@ select m.auth_user_id as id
 
 delete from public.notice_comments where member_id in (select id from pwtest_member_ids);
 delete from public.notices where created_by in (select id from pwtest_member_ids);
+-- board_posts.author_id is NOT NULL and carries no cascade (0033), so a post a
+-- pwtest member wrote raises 23503 on the members delete below and wedges the
+-- whole teardown — including the auth.users rows, whose email is UNIQUE, so the
+-- next run would then fail to seed at all. One statement, and it has to be here
+-- rather than "when the board suite runs": teardown is shared.
+delete from public.board_posts where author_id in (select id from pwtest_member_ids);
 delete from public.messages
 where sender_id in (select id from pwtest_member_ids)
    or recipient_id in (select id from pwtest_member_ids);

@@ -105,6 +105,7 @@ const MEMBER_ROUTES: Route[] = [
     expect: '일정 수정',
     note: 'four RLS policies decide who may save; the screen mirrors them',
   },
+  { path: '/activity', expect: '월간 활동 요약' },
   { path: '/events', expect: '이벤트' },
   { path: '/events/attendance', expect: '출석왕' },
   { path: '/events/late', expect: '지각왕' },
