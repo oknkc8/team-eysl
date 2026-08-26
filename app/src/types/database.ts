@@ -1443,6 +1443,7 @@ export type Database = {
         }
       }
       signup_client_key: { Args: never; Returns: string }
+      stroke_rankings_v1: { Args: never; Returns: Json }
       team_event_rankings_v1: { Args: never; Returns: Json }
       team_file_is_readable: { Args: { p_path: string }; Returns: boolean }
       update_board_post_v1: {

@@ -1,14 +1,18 @@
 import { Link } from 'react-router'
-import { KIND_TITLE, type RankingKind } from './rankings'
+import { KIND_TITLE, STROKE_RANKING_TITLE } from './rankings'
 
 // The president's 이벤트 hub is three buttons and nothing else
 // (upstream-index.html:1183). It fetches nothing: the rankings load on the
 // detail screen, so opening the hub costs no round trip.
 
-const ENTRIES: { kind: RankingKind; desc: string }[] = [
-  { kind: 'attendance', desc: '누적·상반기·하반기 출석 순위' },
-  { kind: 'late', desc: '누적·상반기·하반기 지각 순위' },
-  { kind: 'improve', desc: '영법별 기록 단축 순위' },
+// 영법별 랭킹 carries an explicit `to` because it is not a RankingKind: its data
+// comes from stroke_rankings_v1 (0041) rather than team_event_rankings_v1, so it
+// has its own route and its own screen.
+const ENTRIES: { to: string; title: string; desc: string }[] = [
+  { to: '/events/attendance', title: KIND_TITLE.attendance, desc: '누적·상반기·하반기 출석 순위' },
+  { to: '/events/late', title: KIND_TITLE.late, desc: '누적·상반기·하반기 지각 순위' },
+  { to: '/events/improve', title: KIND_TITLE.improve, desc: '영법별 기록 단축 순위' },
+  { to: '/events/stroke', title: STROKE_RANKING_TITLE, desc: '성별·영법별 50M 기록 순위' },
 ]
 
 export function EventHubPage() {
@@ -16,10 +20,10 @@ export function EventHubPage() {
     <div className="page">
       <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: 0, color: '#111317' }}>이벤트</h1>
       <nav style={{ display: 'grid', gap: 9, marginTop: 16 }}>
-        {ENTRIES.map(({ kind, desc }) => (
+        {ENTRIES.map(({ to, title, desc }) => (
           <Link
-            key={kind}
-            to={`/events/${kind}`}
+            key={to}
+            to={to}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -35,7 +39,7 @@ export function EventHubPage() {
             }}
           >
             <span>
-              <b style={{ fontSize: 14 }}>{KIND_TITLE[kind]}</b>
+              <b style={{ fontSize: 14 }}>{title}</b>
               <span style={{ display: 'block', fontSize: 11, color: '#6b7178', marginTop: 4 }}>
                 {desc}
               </span>

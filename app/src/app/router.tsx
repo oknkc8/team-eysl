@@ -31,6 +31,7 @@ import { ResourceListPage } from '../features/media/ResourceListPage'
 import { MyRacesPage } from '../features/schedule/MyRacesPage'
 import { EventHubPage } from '../features/events/EventHubPage'
 import { EventRankingPage } from '../features/events/EventRankingPage'
+import { StrokeRankingPage } from '../features/events/StrokeRankingPage'
 import { ChatPage } from '../features/chat/ChatPage'
 import { DmPage } from '../features/chat/DmPage'
 import { NotificationSettingsPage } from '../features/push/NotificationSettingsPage'
@@ -134,6 +135,10 @@ export const router = createBrowserRouter([
           // president's app does — the RPC refuses anyone else in the database, so
           // this guard keeps nobody out who the server would have answered.
           { path: '/events', element: <EventHubPage /> },
+          // Static before the parameterised route. React Router ranks by
+          // specificity so the order is not load-bearing, but reading it in this
+          // order is how somebody sees that /events/stroke is not a :kind.
+          { path: '/events/stroke', element: <StrokeRankingPage /> },
           { path: '/events/:kind', element: <EventRankingPage /> },
           { path: '/records', element: <MyRecordsPage /> },
           { path: '/members', element: <MemberListPage /> },
