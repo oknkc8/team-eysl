@@ -279,7 +279,31 @@ This form is the one to use because it **refuses** when it is wrong. `git rev-pa
 
 The guard fired for real while this paragraph was being written, stopping a commit from landing in `feat/admin-claim`. Separately, the worktree directory itself came back on another agent's branch; what saved the work then was not the guard but **committing and pushing after every edit**. The guard protects where a commit lands, not whether the checkout is still yours.
 
+**`| tail -N` on a test summary is a false-green generator.** `vitest` prints the file tally and the test tally on adjacent lines, and `tail` keeps the wrong one:
+
+```
+$ vitest run 2>&1 | tail -4
+      Tests  532 passed (532)          <- reads as a clean run
+
+what tail dropped, one line above:
+ Test Files  2 failed | 30 passed (32)
+```
+
+Every other trap in this section is a tool answering about the wrong input. This one is different and worse: **the tool answered correctly and the reader was handed the wrong half.** Nothing was broken, nothing was wrapped, and the output was true.
+
+Grep for what you mean — `vitest run 2>&1 | grep -E "Test Files|Tests "` — and never take the last N lines of a summary whose failure line comes first.
+
+**And the thing that actually caught it was arithmetic, not output.** 532 was lower than the 555 from before the merge, and a merge that adds a migration cannot remove tests. Had the numbers happened to line up, the run would have been reported green. So: **a count that moved the wrong way is a failure to investigate, not a curiosity.** Three separate agents arrived at that habit on 2026-08-26 — a test tally, a column count going 9 to 10, and this — which makes it the most reliable check any of us has, and it is not a check at all. It is noticing.
+
 **A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
+
+**Do not read that as being about one file.** The door is not `endpoint.rule.test.ts`; it is **any test whose import graph reaches `src/lib/env.ts`**, however indirectly. On 2026-08-26 there were two — `achievements.test.ts` joined it through the achievements feature — and the number grows with every feature that imports from `src/lib`. A reader who checks the one filename named here, on a tree where the other one is the problem, concludes this section does not apply to them.
+
+The way to find today's set is to make the condition and look, not to grep for a name:
+
+```
+mv app/.env app/.env.off && npx vitest run; mv app/.env.off app/.env
+```
 
 The local pass is therefore not evidence about CI, and the failure direction is the awkward one: it is green for everyone who could notice and red only in the place nobody watches until a PR is already open. Reading the workflow would never have found it. It took copying the tree without `.env` and running the suite there, which is the general move — **to predict a fresh checkout, make one.**
 
