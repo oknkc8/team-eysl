@@ -78,16 +78,16 @@ final59-event-top5-yoy
 
 Walking `git show <sha>:sw.js | grep VERSION` across `origin/main..upstream/main` is the cheapest way to see what a batch of uploads was actually about — far faster than reading a whole-file diff, and it names his intent rather than yours.
 
-**다만 이 walk이 알려주는 것은 그가 무엇을 하려 했는지뿐이고, 그 파일이 실제로 돌아갔다는 근거는 조금도 되지 않는다.** 2026-08-26에 확인한 바로는 `sw.js`가 `final47`부터 `final83`까지 **31개 릴리스 연속으로 파싱 자체가 되지 않았다**. 원인은 3번 줄의 괄호 하나로, `e.waitUntil(`은 닫혔는데 `self.addEventListener(`가 끝내 닫히지 않았다.
+**But the walk tells you only what he meant to do — it is no evidence at all that the file ran.** Verified 2026-08-26: `sw.js` **failed to parse for 31 consecutive releases**, `final47` through `final83`. One character on line 3 — `e.waitUntil(` is closed and `self.addEventListener(` never is.
 
 ```
 a2afc67  final78-swimming-team-board   node --check -> SyntaxError: missing ) after argument list
-265e14d  final85-push-true-reset       node --check -> ok   (처음으로 파싱된 버전)
+265e14d  final85-push-true-reset       node --check -> ok   (first version that parses)
 ```
 
-SyntaxError가 나는 서비스워커는 설치되지 않는다. 그동안 `pushManager`도, `push` 이벤트도, 캐시도 없었다는 뜻이다. 그런데도 VERSION 문자열은 그 31개 릴리스 내내 꼬박꼬박 새 이름으로 바뀌었다. 그가 `push-repair`, `push-autofix`, `push-clean-start`라고 이름 붙인 릴리스들은 **브라우저가 읽기를 거부한 파일 안에서 푸시를 고치고 있었다.**
+A service worker that throws SyntaxError never installs, so for all 31 there was no `pushManager`, no `push` event and no cache. The VERSION string kept getting a new name throughout. The releases he named `push-repair`, `push-autofix` and `push-clean-start` were **fixing push inside a file the browser refused to read.**
 
-그러니 walk에서 무언가를 읽어낼 때는 한 단계를 더 거친다. 파싱 여부는 눈으로 괄호를 세서 판단하지 말고 `node --check`로 확인한다 — 파서에 대한 질문은 파서만 답할 수 있고, 실제로 돌려 보면 커밋 전체를 훑는 값이 덤으로 따라온다.
+So put one step between the walk and any conclusion drawn from it. Do not settle whether something parses by counting brackets by eye — ask `node --check`. A question about a parser is answerable by a parser and by nothing else, and running the real one sweeps every commit in the range for free.
 
 Two traps in reading his diffs. A whole-file re-upload makes reformatting look like change, so separate real behaviour from churn before concluding anything. And an upload can be **truncated**: `3d1be2b` cut `index.html` to 246 lines and `954d9a7` restored it two minutes later, so a per-commit diff across that pair shows enormous phantom changes. Diff cumulatively (`origin/main..upstream/main`) unless you specifically need one commit.
 
@@ -154,12 +154,12 @@ Four things that cost real time when skipped:
 - **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
 - **Hand out migration numbers up front; do not let agents pick.** Checking `ls` and the ledger immediately before writing narrows the race, it does not close it — `0020` and `0024` were each claimed twice on 2026-08-25, the second collision forty-eight seconds apart, by parties who had both just checked. Resolving it afterwards means renaming a file, deleting a ledger row and re-applying, with a window where the ledger and the directory disagree. Assign `0031` to one agent and `0032` to the next in their briefs, or give only one of them the task.
 
-  **어디를 보고 번호를 나눠 주느냐가 나머지 절반이다.** 로컬 `ls`는 답이 되지 못한다 — 워크트리는 다른 워크트리의 아직 머지되지 않은 파일을 볼 수 없기 때문이다. 2026-08-26의 실패가 정확히 이것이었다: 한 워크트리에서 디렉터리 목록을 읽고 번호가 비어 있다고 판단했다. 봐야 할 곳은 두 군데다.
+  **Where you look before handing a number out is the other half of the rule.** A local `ls` is not an answer — a worktree cannot see another worktree's unmerged files. That is exactly the 2026-08-26 failure: a directory listing was read in one worktree and the number judged free. There are two places to look.
 
-  - `public.schema_migrations` — 이미 적용된 것은 여기 다 있다. 공유 dev DB라 모든 브랜치의 작업이 모인다.
-  - 모든 원격 브랜치의 `app/supabase/migrations/` — 아직 적용되지 않았지만 이미 누군가 이름을 잡아 둔 파일이 여기 있다.
+  - `public.schema_migrations` — everything already applied is here, and because the dev database is shared, every branch's work collects in it.
+  - `app/supabase/migrations/` on **every remote branch** — files not yet applied but whose names somebody has already claimed.
 
-  **그리고 번호가 겹쳐도 어디서도 오류가 나지 않는다.** `schema_migrations`의 키는 번호가 아니라 파일명 전체라서, `0036_a.sql`과 `0036_b.sql`은 서로 다른 행으로 얌전히 들어간다. 적용할 때도, CI에서도, 리뷰에서도 아무 소리가 나지 않는다. 두 파일명을 나란히 놓고 읽는 것 말고는 찾아낼 방법이 없다.
+  **And a duplicated number raises no error anywhere.** `schema_migrations` is keyed on the full filename rather than the number, so `0036_a.sql` and `0036_b.sql` sit down as two perfectly ordinary rows. Nothing complains on apply, in CI, or in review. Reading the two filenames side by side is the only thing that finds it.
 - **Never reconstruct a function body from a report.** `CREATE OR REPLACE` on an existing function is the same trap as porting the result parser: writing 0024 from a teammate's description silently dropped `p_user_agent` and changed the conflict target from `(member_id, endpoint)` to `(endpoint)` — the first would have broken the client's call, the second the device cap, and both would have applied cleanly. Read the current definition out of the migration that owns it and change only the line you came to change.
 
 ## PR review loop
@@ -203,20 +203,20 @@ This is the most dangerous tool failure on the list, because every other one ann
 
 `[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Prefix with `rtk proxy` to get the real output, or ask the GitHub API directly. Never let a wrapper's empty listing be the reason you skipped a step.
 
-**`gh`에는 `--repo`를 명시한다.** 2026-08-26: `rtk proxy gh pr create --base dev --head chore/hygiene-and-lessons …`가 `Head sha can't be blank, Base sha can't be blank, No commits between …, Head ref must be a branch`로 실패했다. 두 ref는 원격에 멀쩡히 있었다. `--repo oknkc8/team-eysl`을 붙이니 그대로 통과했다. 같은 래퍼, 같은 부류이고, **존재하는 ref를 두고 "ref가 비었다"고 말하기 때문에 원인을 엉뚱한 데서 찾게 만든다** — 브랜치를 다시 푸시하거나 커밋을 의심하기 전에 `--repo`부터 붙여 본다.
+**Name the repo explicitly to `gh`.** 2026-08-26: `rtk proxy gh pr create --base dev --head chore/hygiene-and-lessons …` failed with `Head sha can't be blank, Base sha can't be blank, No commits between …, Head ref must be a branch`. Both refs were sitting on the remote. Adding `--repo oknkc8/team-eysl` made the identical command work. Same wrapper, same class of lie, and **it says "the ref is blank" about a ref that exists**, which sends you looking in the wrong place — try `--repo` before you re-push the branch or start doubting your commits.
 
-**아무것도 찾지 못한 뒤 통과를 선언하는 검사는 검사가 없는 것보다 나쁘다.** 위의 두 항목은 이 한 가지 고장의 사례이고, 이 저장소는 2026-08-26 하루에만 여섯 가지 모습으로 이것을 만났다.
+**A check that finds nothing and then declares a pass is worse than no check.** The two entries above are instances of one failure, and this repository met it in six shapes on 2026-08-26 alone.
 
-- `grep`이 12개 중 11개만 반환했다. 다른 경우에는 19개가 든 파일들에 대해 0개를 반환했다.
-- `gh pr list`가 열려 있는 PR을 두고 `[]`를 출력했다. `--state all`도 `[]`였다.
-- `git show`를 `sha256sum`에 물렸더니 `e3b0c442…`가 나왔다 — **빈 문자열의 해시다.** 파일을 비교한 것이 아니라 아무것도 비교하지 않은 것이다.
-- `cd`가 실패해 0바이트 파일이 남았고, 그 파일을 스캔한 결과는 "Edge Function이 하나도 없다"로 읽혔다.
-- 스키마 추출기가 파일 앞부분의 stub에 매칭되어 `Tables: 0`을 출력한 다음 `UNION PRESERVED`를 선언했다.
-- 충돌 마커 스캔이 `-- =========` 주석 배너 세 개를 충돌로 신고했다. 이건 반대 방향의 같은 고장이다 — 없는 것을 찾아내는 검사도, 멀쩡한 파일을 "해결"하게 만들어 한 시간을 태운다.
+- `grep` returned 11 of 12. In another case it returned 0 against files containing 19.
+- `gh pr list` printed `[]` for an open PR. `--state all` printed `[]` too.
+- `git show` piped into `sha256sum` produced `e3b0c442…` — **the hash of the empty string.** Nothing was compared; the file was never read.
+- A failed `cd` left a 0-byte file behind, and scanning that file read as "there are no Edge Functions".
+- A schema extractor matched a stub earlier in the file, printed `Tables: 0`, and then announced `UNION PRESERVED`.
+- A conflict-marker scan reported three `-- =========` comment banners as conflicts. That is the same failure running backwards — a check that finds what is not there burns an hour and can talk somebody into "resolving" a healthy file.
 
-공통점은 **결과가 "찾을 것이 없었다"와 구분되지 않는다**는 것이다. 그래서 규칙은 하나다: 검사가 0을 반환하면 **그 검사가 실제로 무언가를 본 적이 있는지 먼저 확인한다.** 입력이 비어 있지 않은지, 패턴이 알려진 양성 사례에 걸리는지, 도구가 정말 실행됐는지.
+What they share is that **the result is indistinguishable from "there was nothing to find"**. So the rule is one line: when a check returns zero, **first establish that the check was capable of finding something.** That the input was not empty, that the pattern hits a known positive, that the tool actually ran.
 
-특히 **`e3b0c442…`로 시작하는 해시는 어떤 검증 파이프라인에서도 자동 실패로 취급한다.** 그것은 "두 쪽이 같다"가 아니라 "읽은 것이 없다"는 뜻이며, 같다는 결론과 생김새가 똑같다.
+In particular, **treat a hash beginning `e3b0c442…` as an automatic failure in any verification pipeline.** It does not mean "the two sides match" — it means "nothing was read", and it looks exactly like a match.
 
 **And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
 
@@ -226,28 +226,28 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 
 **Both typecheck commands have to be run; neither implies the other.** `npm run typecheck` reads `src`, `npm run typecheck:functions` reads `supabase/functions`, and a green one says nothing about the other tree.
 
-**`src/types/database.ts`에서 일부러 빠뜨린 항목이 있고, `npm run db:types`는 그것을 말없이 되돌린다.** `member_link_summary_v1`은 아무에게도 EXECUTE가 없다 — 2026-08-26 라이브 ACL은 `{postgres=X/postgres,service_role=X/postgres}`이고 `authenticated`가 없다. 브라우저에서 부를 수 없는 함수이므로 타입에서도 빼 둔다. 그러면 실수로 호출했을 때 **총관리자 화면 앞에서 런타임 오류가 나는 대신 컴파일이 깨진다.**
+**One entry is left out of `src/types/database.ts` on purpose, and `npm run db:types` silently puts it back.** `member_link_summary_v1` is granted EXECUTE to nobody — the live ACL on 2026-08-26 is `{postgres=X/postgres,service_role=X/postgres}`, with no `authenticated`. A function the browser cannot call is kept out of the types, so that calling it by mistake **breaks the compile instead of throwing at runtime in front of a 총관리자.**
 
-`db:types`는 이 파일을 통째로 덮어쓰므로 그 결정은 파일 안에 남지 않는다. 재생성한 뒤에는 이 함수가 다시 들어왔는지 확인하고 빼낸다. 같은 이유로, 권한을 주지 않은 새 함수를 만들 때마다 이 판단을 반복해야 한다 — 규칙은 "부를 수 없는 것은 타입에도 없다"이다.
+`db:types` overwrites the whole file, so that decision leaves no trace inside it. After regenerating, check whether the function came back and take it out again. The same judgement is due every time a new function is created without a grant — the rule is that what cannot be called does not appear in the types.
 
-**워크트리 앵커가 세션 도중에 다른 워크트리로 옮겨 간다.** 2026-08-26에 두 번 확인했다. 한 번은 `git add … && git commit`이 `fix/media-delete-orphans` 대신 **`feat/admin-claim`에서** 실행됐고, 다른 한 번은 `claim2`의 `git mv`가 `admin-claim`에서 성공한 직후 `git commit`이 **`fix/media-delete-orphans`에서** 실행됐다. **둘 다 아무것도 커밋되지 않았고, 그건 순전히 상대편 트리가 마침 깨끗했기 때문이다.** 더러웠다면 남의 작업이 내 커밋 메시지를 달고 들어갔을 것이다.
+**The worktree anchor moves to a different worktree mid-session.** Seen twice on 2026-08-26. Once, `git add … && git commit` ran in **`feat/admin-claim`** instead of `fix/media-delete-orphans`; the other time, `claim2`'s `git mv` succeeded in `admin-claim` and the very next `git commit` ran in **`fix/media-delete-orphans`**. **Neither committed anything, and that is purely because the other tree happened to be clean.** Had it been dirty, somebody else's work would have gone in under our commit message.
 
-이 고장은 두 가지 모습으로 나타나고, 탐지 방법이 서로 다르다.
+It takes two forms, and they need different detection.
 
-- **갈라지는 경우** — git과 셸이 서로 다른 곳을 가리킨다. 상대 경로로 `git add`를 하면 `pathspec` 오류가 나므로 비교적 눈에 띈다.
-- **통째로 옮겨 가는 경우** — `pwd`와 `git rev-parse`가 **서로 일치하면서 둘 다 틀린 곳을 가리킨다.** 둘을 비교하는 검사는 이 경우를 절대 잡지 못한다.
+- **Split** — git and the shell point at different places. A relative `git add` then fails with a `pathspec` error, so it is comparatively visible.
+- **Whole-session move** — `pwd` and `git rev-parse` **agree with each other and both point somewhere wrong.** A check that compares the two will never catch this one.
 
-**미리 확인하는 것으로는 막을 수 없다.** 확인과 명령 사이에 옮겨 갈 수 있기 때문에, 별개의 두 호출은 서로에 대해 아무것도 보장하지 않는다. 브랜치는 **작업을 수행하는 바로 그 셸 안에서** 증명되어야 한다.
+**Checking beforehand cannot prevent it.** The move can happen between the check and the command, so two separate calls guarantee nothing about each other. The branch has to be proven **inside the very shell that does the work.**
 
 ```bash
 git branch --show-current | grep -qx <branch> && git <cmd>
 ```
 
-이 형태를 쓰는 이유는 틀렸을 때 **거부하기** 때문이다. `git rev-parse --abbrev-ref HEAD && git <cmd>`는 브랜치를 출력만 하고 그대로 실행하므로, 사람이 출력을 읽어야만 알아차린다.
+This form is the one to use because it **refuses** when it is wrong. `git rev-parse --abbrev-ref HEAD && git <cmd>` only prints the branch and then runs anyway, so it is caught only if a person reads the output.
 
-**보고만 하는 가드는 누군가 읽어야 하고, 회로를 끊는 가드는 잘못 읽힐 수가 없다.** 이 차이가 명령 자체보다 중요하다 — 어떤 검사를 새로 만들 때든, 틀렸을 때 무엇이 일어나는지를 먼저 정하고 나서 형태를 고른다.
+**A guard that reports has to be read by somebody; a guard that short-circuits cannot be misread.** That distinction matters more than the command itself — whenever building a new check, decide what happens on failure first, then pick the form.
 
-이 문단을 쓰는 동안에도 가드가 한 번 걸려서 `feat/admin-claim`에 커밋이 들어가는 것을 막았다. 워크트리 디렉터리 자체가 다른 에이전트의 브랜치로 바뀌어 있던 적도 있는데, 그때 작업이 무사했던 이유는 가드가 아니라 **편집할 때마다 바로 커밋하고 푸시해 둔 것**이었다. 가드는 커밋이 어디로 가는지를 지키고, 체크아웃이 남아 있는지는 지키지 못한다.
+The guard fired for real while this paragraph was being written, stopping a commit from landing in `feat/admin-claim`. Separately, the worktree directory itself came back on another agent's branch; what saved the work then was not the guard but **committing and pushing after every edit**. The guard protects where a commit lands, not whether the checkout is still yours.
 
 **A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
 
@@ -308,11 +308,11 @@ It sits mid-way through `loadPersistentContent()`, so everything after it is dea
 
 The lesson for us is narrow and important: **a feature we are porting may never have run in his app.** `final62-history-all-participants` and `final64-canonical-training-attendance` are both downstream of this, so reconstruct them from the `bc3523d` snapshot and do not assume he has validated their semantics against real data. Reported to the president separately; his own breakage, not exploitable, so naming the line here is safe.
 
-**그리고 그의 푸시는 `final85`까지 아예 존재하지 않았다.** `sw.js`가 `final47`부터 `final83`까지 **31개 릴리스 연속으로 파싱되지 않았다.** 3번 줄에서 `e.waitUntil(`은 닫혔는데 `self.addEventListener(`가 끝내 닫히지 않은, 괄호 하나짜리 오류다. SyntaxError가 나는 서비스워커는 설치되지 않으므로 그동안 `pushManager`도 `push` 이벤트도 캐시도 없었다.
+**And his push did not exist at all until `final85`.** `sw.js` **failed to parse in every one of the 31 releases visible in `origin/main..upstream/main`** — `final47`, the oldest commit in that range, through `final83`. Note what that does and does not say: `final47` is where our visibility begins, not where the breakage began, and the fault predates our fork point. The cause is one character on line 3, where `e.waitUntil(` is closed and `self.addEventListener(` never is. A service worker that throws SyntaxError never installs, so throughout that span there was no `pushManager`, no `push` event and no cache.
 
-`push-repair`·`push-autofix`·`push-server-register`·`push-clean-start`로 이어지는 다섯 릴리스는 **브라우저가 읽기를 거부한 파일 안에서 푸시를 고치고 있었고**, 그 연쇄는 처음으로 파싱에 성공한 `final85-push-true-reset`에서 정확히 끝난다. 그 릴리스에서 그는 `sw.js`를 통째로 다시 썼고, 괄호는 거기 묻어 함께 고쳐졌다.
+The five releases running `push-repair` · `push-autofix` · `push-server-register` · `push-clean-start` were **fixing push inside a file the browser refused to read**, and the sequence ends exactly at `final85-push-true-reset`, the first version that parses. In that release he rewrote `sw.js` from scratch, and the bracket was fixed along with it.
 
-결론을 믿지 말고 직접 확인할 수 있게, 명령은 이것이다.
+So that nobody has to take the conclusion on trust, this is the command — widen the range past `origin/main` to see how far back it goes:
 
 ```bash
 for c in $(git log --format=%h --reverse origin/main..upstream/main); do
@@ -320,7 +320,7 @@ for c in $(git log --format=%h --reverse origin/main..upstream/main); do
 done
 ```
 
-여기서 두 가지가 따라 나온다. 그의 푸시 문제와 공지 푸시 문제는 **서로 다른 원인**이다 — 전자는 워커가 설치되지 않은 것이고 후자는 `historicalTrainingRes`가 던지는 것이며, `final66`부터 `final83`까지는 둘이 동시에 살아 있었다. 그리고 우리 `push-notify`의 500은 또 다른 세 번째 문제라, **저 다섯 릴리스에서 가져올 것은 없다.**
+Two things follow. His push problem and his notice-push problem have **different causes** — the first is a worker that never installed, the second is `historicalTrainingRes` throwing, and from `final66` to `final83` both were live at once. And our own `push-notify` 500 is a third, separate problem, so **there is nothing to take from those five releases.**
 
 **"이벤트" no longer means what it means in our code.** In his app the third activity kind is now labelled **기타**, and **이벤트** was reassigned to a rankings hub — a different feature entirely (출석왕 · 지각왕 · 단축왕). The database token stays `event`; only the Korean label changed, and he left the stored value alone too. Ours still renders '이벤트' for the kind, which now names the wrong thing to anyone reading both apps.
 

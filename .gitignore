@@ -44,11 +44,12 @@ app/scripts/import/*.sql
 
 # Dependencies / build output
 #
-# node_modules 뒤에 슬래시를 붙이지 않는다. 슬래시가 붙으면 디렉터리만 무시하는데,
-# 워크트리에서는 node_modules가 공유 체크아웃을 가리키는 심볼릭 링크인 경우가 있고
-# 심볼릭 링크는 디렉터리가 아니라서 그대로 추적 대상이 된다. 공유 체크아웃에서만
-# 확인하면 디렉터리라 잘 무시되는 것처럼 보이므로, 확인은 반드시 심볼릭 링크가 있는
-# 워크트리에서 `git check-ignore -v app/node_modules`로 한다.
+# No trailing slash on node_modules. A trailing slash matches directories only,
+# and in a worktree node_modules is often a symlink to the shared checkout — a
+# symlink is not a directory, so it stayed tracked. Checking in the shared
+# checkout proves nothing: there it is a real directory and looks correctly
+# ignored. Verify with `git check-ignore -v app/node_modules` in a worktree
+# where it is a symlink.
 node_modules
 dist/
 build/
