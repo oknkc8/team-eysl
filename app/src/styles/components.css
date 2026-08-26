@@ -236,7 +236,18 @@ ul.list {
   font-size: var(--text-lg);
 }
 
+/* 전체보기 — the section's own control, not a word inside a sentence, so it has
+   to be a real target. Measured at 40x17 before this rule: a heading-sized piece
+   of text with no box around it, which on a phone is a miss more often than a
+   hit. The hit area grows to --tap and reaches leftwards, towards the heading it
+   belongs to. Padding on the trailing side instead — with a negative margin to
+   pull the words back — was the first attempt, and it gave .section 8px of
+   horizontal overflow that only html's overflow-x:hidden was covering up. */
 .section .link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding-inline-start: var(--space-3);
   font-size: var(--text-xs);
   color: var(--muted);
 }
@@ -392,13 +403,26 @@ button.row:active {
   padding: var(--space-5);
 }
 
+/* The hero is a link when there is a notice behind it and a plain div when there
+   is not, so it has to lay out the same either way — an <a> is inline by
+   default and would collapse the padding this card is made of. The colour is
+   already safe: `.hero` (0,1,0) outranks the bare `a` rule in base.css. */
+a.hero {
+  display: block;
+}
+
 .hero small {
   font-size: var(--text-2xs);
   letter-spacing: 1px;
   color: var(--hero-label);
 }
 
-.hero h1 {
+/* h2 as well as h1: on 홈 the page's own <h1> is the greeting, so the notice
+   title inside the hero is the second level even though it is the biggest thing
+   on the screen. Rank in the outline and size on the page are different
+   questions and only the first belongs to the tag. */
+.hero h1,
+.hero h2 {
   margin: var(--space-2) 0;
   font-size: var(--text-xl);
   line-height: var(--leading-tight);

@@ -58,8 +58,8 @@ export function ActivityDetailPage() {
   })
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
-      <Link to="/schedule" style={{ fontSize: 12, color: '#6b7178', textDecoration: 'none' }}>
+    <div className="page">
+      <Link to="/schedule" className="backLink">
         ← 일정
       </Link>
 

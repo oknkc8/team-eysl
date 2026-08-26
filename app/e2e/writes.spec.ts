@@ -280,6 +280,21 @@ test.describe('훈련 정원', () => {
 // 3. Attendance that is actually written down.
 // ---------------------------------------------------------------------------
 
+/**
+ * One member's card on 출석 체크, so a status assertion names whose status it is.
+ *
+ * The walk-in test below has two people on screen and every row draws the same
+ * three button labels, which makes an unscoped `getByRole('button', { name:
+ * '지각' })` either ambiguous or — worse — quietly right about the wrong row.
+ *
+ * Depends on the shape AdminCheckInPage.tsx:47-71 renders: a card div holding a
+ * header div, and the nickname in a `<b>` inside that header. Two ancestors up
+ * from the `<b>` is the card. If that nesting changes this stops matching and
+ * the test fails loudly, which is why the dependency is written down here.
+ */
+const rosterCard = (page: Page, nickname: string) =>
+  page.getByText(nickname, { exact: true }).locator('xpath=ancestor::div[2]')
+
 test.describe('출석 체크', () => {
   test.use({ storageState: STATE.admin })
 
@@ -385,6 +400,120 @@ test.describe('출석 체크', () => {
       await member.close()
     }
   })
+
+  /**
+   * The other half of the same screen, and the defect 0030 fixes.
+   *
+   * attendance_mark_v1 has never asked whether the member it is handed applied —
+   * it checks is_staff() and the status vocabulary and then upserts. The roster
+   * read built its result the other way round, `from activity_applications` with
+   * attendance LEFT JOINed onto it, so a mark against somebody with no
+   * application had nothing to hang on and never came back. The row was stored,
+   * the member saw it on 내 출석, team_event_rankings_v1 counted it, and the
+   * admin who made the mark was the only reader in the whole system who could
+   * not see it — so on the next load they marked the same person again.
+   *
+   * Driven through the admin screen because the screen is what was lying. The
+   * mark itself goes through attendance_mark_v1 rather than through a button,
+   * for the same reason the defect could exist: AdminCheckInPage only draws
+   * buttons for people the roster already returned, so there is no click that
+   * puts a walk-in there. That is not a shortcut around the UI — it is the shape
+   * of the bug.
+   *
+   * Both arms are asserted. `roster` is a UNION of two selects and either side
+   * can break alone: lose the attendance arm and the walk-in vanishes again,
+   * lose the application arm and every unmarked participant does.
+   */
+  test('신청하지 않은 회원을 체크해도 운영진 명단에 남는다', async ({ page, consoleWatcher }) => {
+    await page.goto(`/admin/attendance/${SEED.walkInActivityId}`)
+    await waitForScreen(page)
+
+    // Named positively as well as negatively, per the rule at the head of this
+    // file: the applicant proves the roster rendered at all, which is what makes
+    // the walk-in's absence here mean "has not been marked yet" rather than
+    // "nothing has loaded".
+    await expect(page.getByText('pwtestmember', { exact: true }), '체크 전 신청자').toBeVisible()
+    await expect(
+      page.getByText('pwtestmember2', { exact: true }),
+      '체크 전 워크인',
+    ).toHaveCount(0)
+
+    // seed.sql deliberately leaves pwtestmember2 out of this activity's
+    // applications, so this is a walk-in in the only sense that matters to the
+    // function: a member_id the participant list has never heard of.
+    const marked = await directRequest(page, {
+      path: '/rest/v1/rpc/attendance_mark_v1',
+      method: 'POST',
+      body: {
+        p_activity_id: SEED.walkInActivityId,
+        p_member_id: SEED.member2MemberId,
+        p_status: 'late',
+        p_late_fee_paid: false,
+      },
+    })
+    expect(marked.status, '워크인 출석 기록 응답 코드').toBe(200)
+
+    await page.reload()
+    await waitForScreen(page)
+
+    // The assertion the pre-0030 function could not pass: somebody with no
+    // application, on the admin's own roster, carrying the status that was set.
+    const walkIn = rosterCard(page, 'pwtestmember2')
+    await expect(
+      walkIn.getByRole('button', { name: '지각', exact: true }),
+      '워크인 지각 버튼',
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(
+      walkIn.getByRole('button', { name: '출석', exact: true }),
+      '워크인 출석 버튼',
+    ).toHaveAttribute('aria-pressed', 'false')
+
+    // The application arm, unmarked and still listed. A union that lost this
+    // side would leave the coach unable to check in anybody who had not turned
+    // up yet, which is most of the roster at the moment they open the screen.
+    const applicant = rosterCard(page, 'pwtestmember')
+    for (const label of ['출석', '지각', '불참']) {
+      await expect(
+        applicant.getByRole('button', { name: label, exact: true }),
+        `신청자 ${label} 버튼`,
+      ).toHaveAttribute('aria-pressed', 'false')
+    }
+
+    // Two members, one from each arm, one row each — the UNION deduping rather
+    // than a UNION ALL that would list a marked applicant twice.
+    const roster = await directRequest(page, {
+      path: '/rest/v1/rpc/attendance_for_activity_v1',
+      method: 'POST',
+      body: { p_activity_id: SEED.walkInActivityId },
+    })
+    expect(roster.status).toBe(200)
+    const listed = rows<{ member_id: string; status: string | null; late_fee_paid: boolean }>(
+      roster.body,
+      'attendance_for_activity_v1',
+    )
+    expect(listed, '명단 행').toHaveLength(2)
+    // As a map rather than by index, so the assertion says which member holds
+    // which status instead of depending on the ORDER BY nickname that put them
+    // in this sequence.
+    expect(
+      new Map(listed.map((row) => [row.member_id, row.status])),
+      '명단의 회원별 출석 상태',
+    ).toEqual(
+      new Map([
+        [SEED.memberMemberId, null],
+        [SEED.member2MemberId, 'late'],
+      ]),
+    )
+    // coalesce(a.late_fee_paid, false) — the unmarked side has no attendance row
+    // to read it from, and a null here would render 지각비 미납 for somebody who
+    // was never marked 지각.
+    expect(
+      listed.map((row) => row.late_fee_paid),
+      '지각비 납부 여부',
+    ).toEqual([false, false])
+
+    expect(consoleWatcher.errors, '워크인 출석 관리 콘솔').toEqual([])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -416,7 +545,15 @@ test.describe('기록 등록', () => {
       await page.goto('/admin/records/new')
       await waitForScreen(page)
 
-      await page.getByLabel('회원', { exact: true }).selectOption({ label: 'pwtestmember2' })
+      // `닉네임 (short_name)`, not the bare nickname: AdminRecordEditPage:202
+      // appends short_name whenever the member has one, and seed.sql now gives
+      // the fixtures one because 0032's signup guard reads it. Every member the
+      // workbook importer creates has short_name equal to their nickname, so
+      // this doubled label is what an admin genuinely sees for the club's own
+      // roster today — the fixture had simply never resembled a real row before.
+      await page
+        .getByLabel('회원', { exact: true })
+        .selectOption({ label: 'pwtestmember2 (pwtestmember2)' })
       // 일반 수영대회 · 개인전 are the form's defaults; pressing them anyway would
       // test the chips rather than the write.
       await page.getByRole('button', { name: '자유형', exact: true }).click()

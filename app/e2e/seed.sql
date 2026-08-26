@@ -72,22 +72,34 @@ begin;
 -- fixtures.ts has to name them: /members/:memberId and /chat/dm/:memberId
 -- cannot be visited without one, and a spec that queried for the id first would
 -- need database credentials in the browser process.
+-- short_name / birth_year / gender are here because 0032's signup guard reads
+-- them. The workbook importer fills those three columns for every member it
+-- creates, and they are what makes a returning member recognisable when they
+-- sign up under the 이름/출생년도/성별/지역 format — a fixture without them looks
+-- like nothing the club actually has, and the guard would have no row to catch.
+--
+-- `location` is deliberately left null, matching the import: the spreadsheet
+-- carried no region column, which is exactly why the guard ignores that segment.
 create temporary table pwtest_accounts (
   nickname   text primary key,
   status     text not null,
   role       text not null,
   member_id  uuid not null,
+  birth_year smallint not null,
+  gender     text not null,
   auth_id    uuid not null default gen_random_uuid()
 ) on commit drop;
 
-insert into pwtest_accounts (nickname, status, role, member_id) values
+insert into pwtest_accounts (nickname, status, role, member_id, birth_year, gender) values
   -- 총관리자: reaches every screen, including the three master-admin ones.
-  ('pwtestadmin',   'approved', 'master_admin', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
-  -- An ordinary approved member: the refusal case for the admin routes.
-  ('pwtestmember',  'approved', 'member',       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+  ('pwtestadmin',   'approved', 'master_admin', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1980, '남'),
+  -- An ordinary approved member: the refusal case for the admin routes, and the
+  -- roster row 0032's signup guard is tested against. 1970 so the two-digit year
+  -- in that test (`70`) is unambiguous.
+  ('pwtestmember',  'approved', 'member',       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 1970, '남'),
   -- Signed up, not yet admitted. The state a real first user meets, so it gets
   -- an account rather than being tested only as an absence.
-  ('pwtestpending', 'pending',  'member',       'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
+  ('pwtestpending', 'pending',  'member',       'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 1990, '여'),
   -- A second ordinary member, which only the write suite needs.
   --
   -- Two of the legacy app's data-loss bugs are races between two people, and a
@@ -96,7 +108,7 @@ insert into pwtest_accounts (nickname, status, role, member_id) values
   -- branches through apply_to_activity() and every RLS policy they touch. The
   -- bug the president's members actually hit is two members, so the fixture is
   -- two members.
-  ('pwtestmember2', 'approved', 'member',       'dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+  ('pwtestmember2', 'approved', 'member',       'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 1995, '여');
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
@@ -169,10 +181,16 @@ from pwtest_accounts a;
 -- id is rewritten too, so fixtures.ts can name the ids literally. Safe only
 -- because these rows are seconds old and nothing references them yet.
 update public.members m
-set id        = a.member_id,
-    real_name = a.nickname || ' 테스트',
-    status    = a.status,
-    role      = a.role
+set id         = a.member_id,
+    real_name  = a.nickname || ' 테스트',
+    status     = a.status,
+    role       = a.role,
+    -- The three the workbook importer fills, and that 0032's signup guard
+    -- matches on. short_name is the nickname because for an imported member it
+    -- is: the spreadsheet's 이름 column becomes both.
+    short_name = a.nickname,
+    birth_year = a.birth_year,
+    gender     = a.gender
 from pwtest_accounts a
 where m.auth_user_id = a.auth_id;
 
@@ -235,9 +253,16 @@ select
   m.id
 from public.members m where m.nickname = 'pwtestadmin';
 
--- The attendance roster. attendance_for_activity_v1 lists only rows at
--- application_type = 'participant', so an activity nobody applied to shows
--- 신청자가 없습니다 and there is nothing to check anyone in against.
+-- The attendance roster. Since 0030 attendance_for_activity_v1 lists the union
+-- of application_type = 'participant' and anyone already marked, so an activity
+-- with neither shows 신청자가 없습니다 and there is nothing to check anyone in
+-- against. Exactly one member applies below, and the write test marks that same
+-- member, which is why the roster it reads back is one row and not two.
+--
+-- That covers the applied-and-marked path only. The walk-in path — marked
+-- without ever applying, which is the case 0030 exists for — has its own
+-- activity further down, because keeping this roster at one row is the whole
+-- point of it.
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
   '55555555-5555-4555-8555-555555555555',
@@ -257,6 +282,35 @@ select
   'participant'
 from public.members m where m.nickname = 'pwtestmember';
 
+-- The walk-in roster. Since 0030, attendance_for_activity_v1 returns the union
+-- of the participant list and everyone already marked — two arms that can break
+-- independently, so this fixture seeds one member into each.
+--
+-- pwtestmember applies here and the test never marks them: the application arm.
+-- pwtestmember2 is deliberately left out of activity_applications and the test
+-- marks them: the attendance arm, and the row the pre-0030 function dropped.
+--
+-- Its own activity rather than 출석 훈련 above, whose roster has to stay at one
+-- row for the test that owns it.
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  '77777777-7777-4777-8777-777777777777',
+  'training',
+  'pwtest 워크인 훈련',
+  current_date + 10,
+  '22:00',
+  'pwtest 수영장',
+  10,
+  m.id
+from public.members m where m.nickname = 'pwtestadmin';
+
+insert into public.activity_applications (activity_id, member_id, application_type)
+select
+  '77777777-7777-4777-8777-777777777777',
+  m.id,
+  'participant'
+from public.members m where m.nickname = 'pwtestmember';
+
 -- Its own notice, so the concurrent-comment test counts the comments it wrote
 -- and not whatever else the run has left on the shared one.
 insert into public.notices (id, title, body, created_by)
@@ -266,6 +320,168 @@ select
   'pwtest 동시 댓글 시험용 공지입니다.',
   m.id
 from public.members m where m.nickname = 'pwtestadmin';
+
+-- ---------------------------------------------------------------------------
+-- A roster with depth: twelve synthetic members.
+--
+-- The four accounts above are enough to test permissions and two-party races,
+-- and not enough to test anything that only appears in bulk — a roster that
+-- scrolls, a waitlist with an order to get wrong, a ranking with a tie in it.
+-- These twelve exist for that, and they are DATA rather than accounts: no
+-- auth.users row, no password, auth_user_id left null. Nothing signs in as them,
+-- so nothing here weakens the point 0029 makes about seeded credentials in a
+-- public repository.
+--
+-- Names are unmistakably fake. The dev database also holds the real club roster
+-- imported from the club workbook, and a plausible-looking Korean name in a
+-- committed file would be indistinguishable from one of those at a glance —
+-- 'pwtest더미01' cannot be mistaken for a person.
+--
+-- The pwtest prefix is the same contract as everywhere else: cleanup.sql
+-- matches on it and removes every row below.
+-- ---------------------------------------------------------------------------
+
+create temporary table pwtest_dummies (
+  n          int primary key,
+  nickname   text not null,
+  gender     text not null,
+  birth_year smallint not null,
+  member_id  uuid not null
+) on commit drop;
+
+insert into pwtest_dummies (n, nickname, gender, birth_year, member_id)
+select n,
+       'pwtest더미' || to_char(n, 'FM00'),
+       case when n % 2 = 0 then '여' else '남' end,
+       (1985 + n)::smallint,
+       -- Fixed and readable, for the same reason the four accounts above have
+       -- fixed ids: a spec that needs /members/:memberId cannot query for one.
+       ('e0000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
+from generate_series(1, 12) as n;
+
+insert into public.members (
+  id, nickname, short_name, real_name, birth_year, gender, lesson_level, status, role
+)
+select d.member_id,
+       d.nickname,
+       d.nickname,
+       '테스트더미 ' || to_char(d.n, 'FM00'),
+       d.birth_year,
+       d.gender,
+       case d.n % 3 when 0 then '상급' when 1 then '중급' else '연수' end,
+       'approved',
+       'member'
+from pwtest_dummies d;
+
+-- ------------------------------------------------------------------ 대기 순번
+--
+-- Capacity 3 with 8 applicants, so the waitlist is five deep and has an order
+-- that can be read back. 'pwtest 정원1 훈련' above is capacity 1 and answers a
+-- different question — whether the server arbitrates a single seat — which is
+-- why it cannot also be the fixture for an ordered queue.
+--
+-- Rows are written directly rather than through apply_to_activity(): this is a
+-- starting state, and going through the RPC would make the fixture depend on
+-- the very seat handout the tests exist to check.
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  '88888888-8888-4888-8888-888888888888',
+  'training',
+  'pwtest 대기 훈련',
+  current_date + 11,
+  '20:30',
+  'pwtest 수영장',
+  3,
+  m.id
+from public.members m where m.nickname = 'pwtestadmin';
+
+insert into public.activity_applications (activity_id, member_id, application_type, wait_order)
+select
+  '88888888-8888-4888-8888-888888888888',
+  d.member_id,
+  case when d.n <= 3 then 'participant' else 'waitlist' end,
+  -- wait_order_only_for_waitlist (0001) refuses an order on a participant, and
+  -- activity_applications_wait_order_uq refuses a repeated one on a waitlist.
+  case when d.n <= 3 then null else d.n - 3 end
+from pwtest_dummies d
+where d.n <= 8;
+
+-- -------------------------------------------------------------------- 랭킹
+--
+-- team_event_rankings_v1 (0016) scopes 상반기/하반기 to the calendar year of
+-- now() in Asia/Seoul, so these dates are anchored to the current year rather
+-- than offset from today. `current_date - 60` would drift into the previous
+-- year whenever the suite runs in the first two months and the ranking would
+-- quietly see nothing.
+create temporary table pwtest_rank_days (slot int primary key, activity_id uuid, on_date date)
+on commit drop;
+
+insert into pwtest_rank_days (slot, activity_id, on_date) values
+  (1, '99999999-9999-4999-8999-999999999991',
+      make_date(extract(year from current_date)::int, 3, 2)),   -- 상반기
+  (2, '99999999-9999-4999-8999-999999999992',
+      make_date(extract(year from current_date)::int, 7, 20)),  -- 하반기
+  (3, '99999999-9999-4999-8999-999999999993',
+      make_date(extract(year from current_date)::int, 7, 30));  -- 하반기
+
+insert into public.activities (id, kind, title, activity_date, place, capacity, created_by)
+select r.activity_id, 'training', 'pwtest 랭킹 훈련 ' || r.slot, r.on_date, 'pwtest 수영장', 20, m.id
+from pwtest_rank_days r
+cross join public.members m
+where m.nickname = 'pwtestadmin';
+
+-- The tallies are deliberately uneven, and deliberately not all distinct:
+--
+--   더미01  present x3            출석 3, 지각 0
+--   더미02  present x2, late x1   출석 3, 지각 1   <- ties 더미01 at the top
+--   더미03  late x2               출석 2, 지각 2   <- top of 지각왕
+--   더미04  present x1            출석 1
+--   더미05  late x1               출석 1, 지각 1
+--
+-- The tie at the top is the point. 0016 ranks with rank() so ties share a place
+-- and the next distinct count skips one; a fixture where every total differed
+-- would pass whether or not that held.
+insert into public.attendance (activity_id, member_id, status, marked_by)
+select r.activity_id, d.member_id, v.status, adm.id
+from (values
+  (1, 1, 'present'), (1, 2, 'present'), (1, 3, 'late'), (1, 4, 'present'), (1, 5, 'late'),
+  (2, 1, 'present'), (2, 2, 'present'), (2, 3, 'late'),
+  (3, 1, 'present'), (3, 2, 'late')
+) as v(slot, n, status)
+join pwtest_rank_days r on r.slot = v.slot
+join pwtest_dummies d on d.n = v.n
+cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+
+-- 단축왕 reads records, not attendance, and only category='meet',
+-- subcategory='personal', stroke in the four pool strokes. It builds two lists:
+-- within_year (first swim of the year minus the year's best) and yoy_pb (last
+-- year's best minus this year's), so the fixture seeds one of each.
+--
+--   더미01  자유형 50  35.00 → 33.50 this year        within_year, -1.50
+--   더미02  배영   50  42.00 last year → 40.50 this   yoy_pb,      -1.50
+--   더미03  평영   50  48.00 → 47.00 this year        within_year, -1.00
+insert into public.records (
+  member_id, category, subcategory, stroke, distance_m,
+  event_name, event_date, result_display, result_centiseconds, created_by
+)
+select d.member_id, 'meet', 'personal', v.stroke, 50,
+       v.event_name, v.event_date, v.result_display, v.result_centiseconds, adm.id
+from (values
+  (1, '자유형', 'pwtest 봄 대회',
+      make_date(extract(year from current_date)::int, 3, 2), '35.00', 3500),
+  (1, '자유형', 'pwtest 여름 대회',
+      make_date(extract(year from current_date)::int, 7, 20), '33.50', 3350),
+  (2, '배영', 'pwtest 작년 대회',
+      make_date(extract(year from current_date)::int - 1, 6, 15), '42.00', 4200),
+  (2, '배영', 'pwtest 여름 대회',
+      make_date(extract(year from current_date)::int, 7, 20), '40.50', 4050),
+  (3, '평영', 'pwtest 봄 대회',
+      make_date(extract(year from current_date)::int, 3, 2), '48.00', 4800),
+  (3, '평영', 'pwtest 여름 대회',
+      make_date(extract(year from current_date)::int, 7, 20), '47.00', 4700)
+) as v(n, stroke, event_name, event_date, result_display, result_centiseconds)
+join pwtest_dummies d on d.n = v.n
+cross join (select id from public.members where nickname = 'pwtestadmin') adm;
 
 commit;
 

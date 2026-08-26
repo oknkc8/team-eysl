@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import { memberSchema, type CurrentUser } from './schema'
+import { canonicalNickname } from './nickname'
 import { readSignupResult, type SignupInput, type SignupRefusal } from './signup'
 
 /**
@@ -71,8 +72,12 @@ export async function getMyMember(authUserId: string): Promise<CurrentUser | nul
  * signupErrorMessage().
  */
 export async function registerMember(input: SignupInput): Promise<SignupRefusal | null> {
+  // canonicalNickname, not .trim(). register_member_v1 normalises to NFC too, so
+  // this does not change what gets stored — but sending the canonical form keeps
+  // the string the screen validated identical to the string the server judges,
+  // which is what makes a refusal explicable.
   const { data, error } = await supabase.rpc('register_member_v1', {
-    p_nickname: input.nickname.trim(),
+    p_nickname: canonicalNickname(input.nickname),
     p_password: input.password,
   })
   if (error) throw error

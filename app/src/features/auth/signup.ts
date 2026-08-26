@@ -1,6 +1,8 @@
 // The signup rules, kept apart from api.ts so they can be tested without the
 // Supabase client — the same split as schedule's kinds.ts against its api.ts.
 
+import { canonicalNickname, checkNicknameFormat } from './nickname'
+
 /** What the president's form asks for, and all it asks for (upstream:1064-1068). */
 export type SignupInput = { nickname: string; password: string }
 
@@ -25,12 +27,26 @@ const byteLength = (value: string) => new TextEncoder().encode(value).length
  *
  * A sentence rather than a field name and a code, because this is the first
  * screen anyone outside the club ever sees.
+ *
+ * The order matches register_member_v1() (0032) exactly — length, then format,
+ * then the password — so the screen and a direct RPC call answer the same
+ * complaint about the same input. A screen that refused a different thing first
+ * would have people fixing one problem and being handed another.
  */
 export function validateSignup(input: SignupInput): string | null {
-  const nickname = input.nickname.trim()
+  // Trim AND normalise. A decomposed nickname renders identically to its
+  // precomposed twin and would otherwise be judged here, sent, stored, and
+  // compared against a precomposed roster — see nickname.ts's header.
+  const nickname = canonicalNickname(input.nickname)
 
   if (nickname.length < 2) return '닉네임은 2자 이상 입력해주세요.'
   if (nickname.length > NICKNAME_MAX) return `닉네임은 ${NICKNAME_MAX}자 이하로 입력해주세요.`
+
+  // 이름/출생년도/성별/지역. The rule is enforced in the RPC; this call is what
+  // makes it a sentence naming the wrong part rather than a flat rejection.
+  const badFormat = checkNicknameFormat(nickname)
+  if (badFormat) return badFormat.message
+
   if (input.password.length < PASSWORD_MIN)
     return `비밀번호는 ${PASSWORD_MIN}자 이상으로 설정해주세요.`
   if (byteLength(input.password) > PASSWORD_MAX_BYTES)
@@ -41,7 +57,7 @@ export function validateSignup(input: SignupInput): string | null {
 
 /** Why a signup was turned down, in a form the screen can show as-is. */
 export type SignupRefusal = {
-  /** Machine-readable: `nickname_taken`, `password_short`, `rate_limited`, … */
+  /** Machine-readable: `already_registered`, `password_short`, `rate_limited`, … */
   reason: string
   /** The Korean sentence to display. Always non-empty. */
   message: string
@@ -108,8 +124,14 @@ export function signupErrorMessage(error: { message?: string; status?: number })
 
   // GoTrue's own duplicate check. The address is derived from the nickname, so
   // a duplicate address is a duplicate nickname.
+  //
+  // No longer says "다른 닉네임을 입력해주세요": since 0032 the nickname is
+  // 이름/출생년도/성별/지역, so there is nothing for the applicant to change
+  // except where they claim to live. Byte-identical to register_member_v1's own
+  // sentence, which it shares with the roster-guard refusal — the server gives
+  // one answer for "already registered" however it worked that out.
   if (message.includes('already registered') || message.includes('already been registered'))
-    return '이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.'
+    return '이미 등록된 회원 정보입니다. 새로 가입하지 마시고 관리자에게 문의해주세요.'
 
   // handle_new_auth_user() raising inside GoTrue's transaction — a nickname
   // collision our unique index caught. GoTrue flattens it to this one string,

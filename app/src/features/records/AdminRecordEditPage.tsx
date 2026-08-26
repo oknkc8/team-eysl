@@ -77,8 +77,8 @@ export function AdminRecordEditPage() {
 
 function Page({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
-      <Link to="/records" style={{ fontSize: 12, color: '#6b7178', textDecoration: 'none' }}>
+    <div className="page">
+      <Link to="/records" className="backLink">
         ← 기록
       </Link>
       <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: '12px 0 16px' }}>{title}</h1>

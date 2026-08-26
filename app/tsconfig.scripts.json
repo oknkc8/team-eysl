@@ -1,0 +1,46 @@
+{
+  // The third tree, and the same reasoning that produced tsconfig.functions.json.
+  //
+  // tsconfig.json has "include": ["src", "vite.config.ts"], so everything under
+  // scripts/ is outside every gate this repo has: tsc does not read it, and
+  // vitest transpiles scripts/import/*.test.ts with esbuild, which strips types
+  // without checking them. A type error in the importer would therefore be
+  // caught by nothing until it threw at run time against the live database.
+  //
+  // Run it:  ./node_modules/.bin/tsc -p tsconfig.scripts.json
+  //
+  // Not yet wired into package.json — that file belongs to another change in
+  // flight. It wants a "typecheck:scripts" script beside typecheck and
+  // typecheck:functions, and a step in .github/workflows/app.yml, because three
+  // trees that each need their own command is exactly the shape that gets one
+  // of them forgotten.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    // These modules import each other with an explicit '.ts' extension because
+    // that is what Node 24's native type stripping requires — run.ts executes
+    // as `node scripts/import/run.ts` with no bundler and no ts-node.
+    "allowImportingTsExtensions": true,
+    // Strip-only mode erases type annotations and refuses anything that would
+    // need code emitted: enums, namespaces, and `constructor(public readonly x)`
+    // parameter properties. Without this flag tsc happily accepts all three and
+    // the failure arrives at run time, mid-import, as ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX.
+    // That is not hypothetical — it is how the first version of this error class
+    // was written.
+    "erasableSyntaxOnly": true,
+    "types": ["node", "vitest/globals"]
+  },
+  // parse.ts imports parseSwimTime from src/features/records/time.ts, so that
+  // file is pulled in and checked as a dependency without src/ being listed.
+  "include": ["scripts"]
+}

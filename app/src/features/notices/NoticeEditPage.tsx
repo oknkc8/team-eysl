@@ -52,8 +52,8 @@ function EditExisting({ noticeId }: { noticeId: string }) {
 
 function Page({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
-      <Link to="/notices" style={{ fontSize: 12, color: '#6b7178', textDecoration: 'none' }}>
+    <div className="page">
+      <Link to="/notices" className="backLink">
         ← 공지사항
       </Link>
       <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: '12px 0 16px' }}>{title}</h1>

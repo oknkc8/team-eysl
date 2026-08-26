@@ -15,7 +15,7 @@ export function MyRecordsPage() {
   const query = useQuery({ queryKey: ['my-records'], queryFn: getMyRecords })
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
+    <div className="page">
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: 0 }}>기록</h1>
         {/* Presentation only. /admin/records/new sits under RequireStaff in the

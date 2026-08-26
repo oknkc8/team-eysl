@@ -62,8 +62,8 @@ export function MemberApprovalPage() {
   }
 
   return (
-    <div style={{ padding: 18, background: '#f5f6f8', minHeight: '100vh' }}>
-      <Link to="/members" style={{ fontSize: 12, color: '#6b7178', textDecoration: 'none' }}>
+    <div className="page">
+      <Link to="/members" className="backLink">
         ← 회원
       </Link>
 
