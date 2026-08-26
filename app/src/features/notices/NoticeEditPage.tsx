@@ -210,7 +210,14 @@ function NoticeForm({
   function pick(list: FileList | null) {
     if (!list) return
     const room = MAX_ATTACHMENTS - total
-    setFiles((current) => [...current, ...Array.from(list).slice(0, Math.max(room, 0))])
+    // COPIED EAGERLY, and this line is load-bearing. `list` is the input's LIVE
+    // FileList: clearing pickerRef.current.value below empties it in place. A
+    // functional updater that called Array.from(list) inside its body would run
+    // during React's render phase — after the clear — and add nothing at all.
+    // Found in a browser, where the picked file simply never appeared; the
+    // types are identical either way and no unit test mounts this component.
+    const chosen = Array.from(list).slice(0, Math.max(room, 0))
+    setFiles((current) => [...current, ...chosen])
     if (saveState !== 'saving') setSaveState('idle')
     // Cleared so picking the same file twice in a row still fires onChange.
     if (pickerRef.current) pickerRef.current.value = ''
