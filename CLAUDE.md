@@ -211,6 +211,21 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 
 **Both typecheck commands have to be run; neither implies the other.** `npm run typecheck` reads `src`, `npm run typecheck:functions` reads `supabase/functions`, and a green one says nothing about the other tree.
 
+**워크트리 앵커가 세션 도중에 다른 워크트리로 옮겨 간다.** 2026-08-26에 두 번 확인했다. 한 번은 `git add … && git commit`이 `fix/media-delete-orphans` 대신 **`feat/admin-claim`에서** 실행됐고, 다른 한 번은 `claim2`의 `git mv`가 `admin-claim`에서 성공한 직후 `git commit`이 **`fix/media-delete-orphans`에서** 실행됐다. **둘 다 아무것도 커밋되지 않았고, 그건 순전히 상대편 트리가 마침 깨끗했기 때문이다.** 더러웠다면 남의 작업이 내 커밋 메시지를 달고 들어갔을 것이다.
+
+이 고장은 두 가지 모습으로 나타나고, 탐지 방법이 서로 다르다.
+
+- **갈라지는 경우** — git과 셸이 서로 다른 곳을 가리킨다. 상대 경로로 `git add`를 하면 `pathspec` 오류가 나므로 비교적 눈에 띈다.
+- **통째로 옮겨 가는 경우** — `pwd`와 `git rev-parse`가 **서로 일치하면서 둘 다 틀린 곳을 가리킨다.** 둘을 비교하는 검사는 이 경우를 절대 잡지 못한다.
+
+**미리 확인하는 것으로는 막을 수 없다.** 확인과 명령 사이에 옮겨 갈 수 있기 때문에, 별개의 두 호출은 서로에 대해 아무것도 보장하지 않는다. 브랜치는 **작업을 수행하는 바로 그 셸 안에서** 증명되어야 한다.
+
+```bash
+git branch --show-current | grep -qx <branch> && git <cmd>
+```
+
+이 형태를 쓰는 이유는 틀렸을 때 **거부하기** 때문이다. `git rev-parse --abbrev-ref HEAD && git <cmd>`는 브랜치를 출력만 하고 그대로 실행하므로, 사람이 출력을 읽어야만 알아차린다. 이 문단을 쓰는 동안에도 가드가 한 번 걸려서 `feat/admin-claim`에 커밋이 들어가는 것을 막았다.
+
 **A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
 
 The local pass is therefore not evidence about CI, and the failure direction is the awkward one: it is green for everyone who could notice and red only in the place nobody watches until a PR is already open. Reading the workflow would never have found it. It took copying the tree without `.env` and running the suite there, which is the general move — **to predict a fresh checkout, make one.**
