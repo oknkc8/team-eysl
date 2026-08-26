@@ -25,10 +25,25 @@ import { defineConfig, devices } from '@playwright/test'
  * paths happen to collide, or a port already taken by something else.
  * --strictPort on the preview command is what makes either case loud instead of
  * silently serving on the next port up.
+ *
+ * COLLISIONS ARE NOT DETECTED, and the span is sized on that basis. Two
+ * worktrees whose paths hash to the same port would reuse each other's server
+ * exactly as before — the bug this file exists to prevent, arriving silently,
+ * because a Vite preview of one build is indistinguishable over HTTP from a
+ * preview of another.
+ *
+ * So the only lever is making it rare, and the birthday maths is worse than it
+ * looks: seven worktrees into a hundred slots is a 19.3% chance of some pair
+ * sharing, and the seven that exist today landing distinct was luck rather than
+ * design. A thousand slots takes those same seven to 2.1%. The range stops at
+ * 5172, below Vite's dev default of 5173 and well below Postgres on 5432.
+ *
+ * If it ever does bite, the symptom is the familiar one — a whole suite failing
+ * on catch-all timeouts — and EYSL_E2E_PORT is the way out.
  */
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PORT_FLOOR = 4173
-const PORT_SPAN = 100
+const PORT_SPAN = 1000
 const derivedPort =
   PORT_FLOOR +
   (parseInt(createHash('sha256').update(HERE).digest('hex').slice(0, 8), 16) % PORT_SPAN)
