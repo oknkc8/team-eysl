@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection } from '../../components/ui/AsyncSection'
+import { viewerKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
 import { getMyRaceHistory, isFinished, isWaiting, type RaceHistoryRow } from './api'
 
 // 나의 대회 신청 내역, the president's myStatus screen scoped to races
@@ -33,7 +35,11 @@ const CARD = {
 
 export function MyRacesPage() {
   const [filter, setFilter] = useState<Filter>('all')
-  const query = useQuery({ queryKey: ['my-races'], queryFn: getMyRaceHistory })
+  const { session } = useSession()
+  const query = useQuery({
+    queryKey: viewerKey(['my-races'], session?.user.id),
+    queryFn: getMyRaceHistory,
+  })
 
   return (
     <div className="page">

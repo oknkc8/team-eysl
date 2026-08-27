@@ -78,7 +78,7 @@ final59-event-top5-yoy
 
 Walking `git show <sha>:sw.js | grep VERSION` across `origin/main..upstream/main` is the cheapest way to see what a batch of uploads was actually about — far faster than reading a whole-file diff, and it names his intent rather than yours.
 
-**But the walk tells you only what he meant to do — it is no evidence at all that the file ran.** Verified 2026-08-26: `sw.js` **failed to parse for 31 consecutive releases**, `final47` through `final83`. One character on line 3 — `e.waitUntil(` is closed and `self.addEventListener(` never is.
+**But the walk tells you only what he meant to do — it is no evidence at all that the file ran.** Verified 2026-08-26: `sw.js` **failed to parse for 29 consecutive releases**, `final47` through `final83`. One character on line 3 — `e.waitUntil(` is closed and `self.addEventListener(` never is.
 
 ```
 a2afc67  final78-swimming-team-board   node --check -> SyntaxError: missing ) after argument list
@@ -89,11 +89,43 @@ A service worker that throws SyntaxError never installs, so for all 31 there was
 
 So put one step between the walk and any conclusion drawn from it. Do not settle whether something parses by counting brackets by eye — ask `node --check`. A question about a parser is answerable by a parser and by nothing else, and running the real one sweeps every commit in the range for free.
 
+**And the name can be wrong about the contents, not merely about whether they
+ran.** `final69-events-gender-first2026` sounds like the gender-split stroke
+ranking. It does not contain one: no `stroke_rankings`, no gender split, only an
+`openFunEventPage` that predates the feature. The ranking enters at
+`final71-event-data-rpc` and reaches its current shape at `final75-medal-rank`.
+
+So **before porting a release by name, grep the release for the thing the name
+promises.** One loop settles it:
+
+```bash
+for c in $(git log --format=%h --reverse origin/main..upstream/main); do
+  printf '%s %s\n' "$c" "$(git show "$c:index.html" | grep -c '<the identifier>')"
+done
+```
+
 Two traps in reading his diffs. A whole-file re-upload makes reformatting look like change, so separate real behaviour from churn before concluding anything. And an upload can be **truncated**: `3d1be2b` cut `index.html` to 246 lines and `954d9a7` restored it two minutes later, so a per-commit diff across that pair shows enormous phantom changes. Diff cumulatively (`origin/main..upstream/main`) unless you specifically need one commit.
 
 ## Workflow rules
 
 **Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`.
+
+**Always branch off `dev`, never off another branch that is still in flight.** This is not style. **Every PR here is squash-merged**, so when the branch you forked from lands, its file arrives on `dev` as a *brand-new blob with no ancestry in common with your copy.* Git then sees one path created independently twice and raises an **add/add conflict** on a file neither of you may have meaningfully changed. That is what happened to `chore/ci-migration-numbers`, and it cost more time on 2026-08-26 than any other single thing.
+
+**Three things about that conflict, because the obvious reading of it is wrong in a dangerous direction.**
+
+**A two-dot diff measures staleness, not danger.** `git diff origin/dev..<branch>` compares tips, so it reports everything that landed on `dev` since you forked as *deletions* — even though a merge would never delete them. `CLAUDE.md | 14 --------------` looked like a PR about to revert someone's work; it was not. Reproduced with `git merge-tree --write-tree`, the merged `CLAUDE.md` came out **byte-identical** to `dev`'s. A three-way merge does not drop lines present on one side only. The two-dot diff fires on every branch that is behind, so as an alarm it is **all false positives** — read it as "this branch lacks things `dev` has", which is a reason to look, not a verdict.
+
+**The danger is in the resolution, not in the diff.** An add/add conflict offers whole files, not hunks. Taking "ours" is where work disappears — and it disappears **silently, having never appeared in the diff anyone reviewed**. So the fix is not a better conflict resolution; it is not having the conflict:
+
+```bash
+git switch -c fix/<thing> origin/dev
+git checkout origin/<stale-branch> -- <the one path you want>
+```
+
+The resulting file list *is* the proof. If it names one path, nothing else can have moved.
+
+**And do not infer one artifact's behaviour from a different artifact's output.** The two-dot `--stat` and the merge result are two different products of the same two commits, and reading the first to predict the second produced a confident, wrong, team-wide rule. When the question is "what will the merge do", the answer comes from `git merge-tree`, which performs the merge.
 
 **`main` is our release line** (changed 2026-08-25; it previously mirrored the president's upstream). `dev` merges into it through a `chore/release-vX.Y.Z` PR, and the merge commit gets a matching `vX.Y.Z` tag. Nothing else lands on `main`.
 
@@ -231,6 +263,18 @@ The general form, of which the hash is the memorable instance: **anything that m
 
 `e3b0c442…` is worth memorising because it is that failure wearing a disguise — the sha256 of the empty string, produced when `git show` writes its error to stderr and `sha256sum` hashes nothing. It is a well-formed 64-character hash and it means "nothing was read". **Treat it as an automatic failure in any verification pipeline.**
 
+**That rule has a false-positive mode, and it is the mirror image of the hash.** `wc -c < file` returned **0** for a 49,714-byte file — but only when chained into the same call, behind the wrapped redirect that had just written it. `sha256sum` in that same call returned the correct hash, and run separately, python, `os.stat`, `ls -l` and `wc -c` all agreed on 49,714. The wrapper's redirect finishes asynchronously, so a size check chained behind it reads the file too early.
+
+The direction is the whole point. `e3b0c442…` is an empty result that means a real problem; this is an **empty result that means nothing is wrong** — so the rule above, applied literally, condemns a healthy file and sends somebody hunting a defect that does not exist.
+
+The rule stands, with one condition attached: **do not chain a size check into the same call as a wrapped redirect that produced the file.** Check it in a separate call. What made this diagnosable was `sha256sum` being right in the same breath that `wc -c` was wrong — one tool reading early, not a file that was empty. Two tools side by side found it; either one alone would have concluded the file was empty.
+
+**Count what your cause explains against what you observed.** On 2026-08-26 a signup rate limit was found to be real — a 417ms refusal carrying an error code, a retry timer and a Korean sentence — and was then offered as the explanation for about forty failing e2e tests. It explained nine. Seeding never calls `register_member`, and exactly one spec touches the signup RPC, so thirty seconds of reading would have settled it. The reading did not happen because the artefact was so specific that it felt like proof of more than it proved.
+
+**That is this section's failure running in the opposite direction.** Everywhere above, the danger is an **empty** result that looks like an absence. Here it is a **very specific** result that looks wider than it is. Both end an investigation early, and the arithmetic is the cheap guard against the second one: nine against forty fails on sight.
+
+**And a workaround deserves the same scepticism as the code it works around.** In that same episode the neighbour's preview server was verified to be real, the port genuinely taken, and `reuseExistingServer` genuinely capable of returning a green run against somebody else's bundle — every claim about the problem checked. Then a two-line override was trusted without checking whether it reached everything, and it did not: it moved the first browser and left every second browser on the old port, because the fixtures import the base URL as a **constant** rather than reading the resolved config. **Every claim about the problem was checked and no claim about the fix was**, and that asymmetry is the whole of it.
+
 **And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
 
 That makes "typecheck passes" narrower than it sounds, and it is the kind of claim that gets repeated because it was true about the part somebody happened to be looking at. **Say which tree you checked, not just that the check was green.**
@@ -264,7 +308,100 @@ This form is the one to use because it **refuses** when it is wrong. `git rev-pa
 
 The guard fired for real while this paragraph was being written, stopping a commit from landing in `feat/admin-claim`. Separately, the worktree directory itself came back on another agent's branch; what saved the work then was not the guard but **committing and pushing after every edit**. The guard protects where a commit lands, not whether the checkout is still yours.
 
+**But git itself is not lying — and an earlier version of this section said it was.** The claim that `git status` and `git log` report the wrong branch was investigated and disproved. `claim2` followed the `.git` pointer in 14 worktrees to read each `HEAD` file directly, then ran `branch --show-current`, `rev-parse --abbrev-ref HEAD` and `status --short --branch` in every one of them, bare and substituted: **70 readings, zero disagreements**, the multi-line `status` included. Every reading that looked wrong was true about a different directory.
+
+**Each git command is honest about wherever it is standing at that instant. The anchor is what moves.** Three sightings on 2026-08-26, each with somebody's work in reach:
+
+- The lead believed it was in `free-board` and was standing in `chore/e2e-parallel-isolation` — another agent's tree, holding 161 uncommitted lines. A `CLAUDE.md` edit sat beside them for five minutes.
+- `claim2`'s shell was anchored in `enrol`, also not its own, **holding one unpushed commit.** Nothing was lost only because there was nothing to commit.
+- `badges2` drifted through six trees in one session — `strokes`, `free-board`, `admin-claim`, `cinum`, `porting`, `enrol` — and one `git add` of three paths ran in the wrong one. Harmless only because those paths were unmodified there.
+
+**In all three, what prevented harm was the state of the tree that was landed in, not any defence.** The lead's edit sat beside 161 uncommitted lines and happened not to disturb them; `claim2`'s tree held an unpushed commit and there happened to be nothing to add; `badges2`'s three paths happened to be unmodified where the `git add` really ran. No tool refused anything in any of the three.
+
+**So do not read "nothing happened" as evidence that something protected you.** It usually means the tree you drifted into was quiet at that moment, which is a fact about somebody else's working state and not a property of your setup. The same drift onto a dirty tree writes another agent's uncommitted work into your commit.
+
+Keeping the disproved version would have been worse than writing nothing. It teaches people to distrust `git status`, and **the accident still happens to someone who distrusts it**: `status` honestly reports a stranger's branch, and the reader has no way to tell the branch is a stranger's.
+
+**What the guard does not cover.** It compares against a branch name, so it protects a **change**. It cannot protect a path that **reads** while the anchor is wrong and then decides from what it read. That is the path that caught the lead, who was reading and editing rather than committing, so the guard had nowhere to fire.
+
+**`git -C <absolute path>` is not the escape hatch it looks like.** It is available in some sessions and refused in others, and where it is refused the refusal *follows* the drift rather than correcting it. Measured by `badges2` while the anchor was wrong:
+
+| command | result |
+|---|---|
+| `pwd` | `…/worktrees/free-board` — drifted; the assigned tree was `badges-medals` |
+| `git -C …/badges-medals rev-parse` | **refused**: "must target its own worktree" |
+| `git -C …/free-board rev-parse` | allowed → `chore/e2e-parallel-isolation` |
+
+The guard's notion of "its own worktree" **is** the drifting anchor, so `-C` was permitted only toward where the drift had already gone and refused toward the real tree. Where `-C` is available, prefer it: it looks at the right place rather than merely refusing the wrong one. Where it is refused, use `EnterWorktree` and then confirm the move happened with `pwd` + `branch` + `HEAD`, not with the tool's success line.
+
+**And `board2` narrowed exactly when `-C` works, which turns out to be the unhelpful half.** It succeeds when the anchor is sound and you are reading *another* tree. It is refused when you have drifted and are trying to reach **your own** tree — because at that moment your own tree is the "shared checkout" as far as the harness is concerned. **So it is missing precisely when it is needed, and present only when it was not.**
+
+**The recovery that does work is `EnterWorktree`, then the work.** `board2` recovered that way four times in a single turn, and `claim2` did the same and confirmed the move with `pwd` + `branch` + `HEAD` rather than the tool's success line. Treat `-C` as a convenience for reading somebody else's tree from a healthy session, not as a remedy for drift.
+
+**And settle a branch switch by SHA, never by its success message.** `git switch -C` once printed its success line while `HEAD` had not moved. That is consistent with the anchor explanation — it may well have switched a different tree — so the only claim worth writing down is the operational one: after switching, compare `git rev-parse HEAD` against the SHA you expected.
+
+**The read path is not a hypothetical, and the reading that drifts may be your verification.** Writing this very section, `badges2` patched `CLAUDE.md` in `lead-docs-pr`, confirmed in python that all 37 lines were additions and every original line survived, and then ran `git diff --numstat origin/dev -- CLAUDE.md` to confirm it. The answer was **`0 76` — nothing added, 76 lines deleted.** The anchor had moved to `admin-claim`/`feat/notice-attachments` between the write and the check, so git honestly described *that* tree's file. Re-entering the right worktree and asking again gave `37 0`.
+
+Two things make this the sharpest instance on the page. **`pwd` and `git rev-parse --show-toplevel` agreed with each other and were both wrong** — the whole-session move described above, which no comparison between them can catch. And the wrong answer was not merely wrong but **alarming**: "you deleted 76 lines" is exactly the reading that provokes a `checkout --` or a `reset --hard`, so believing it would have destroyed the work it was meant to protect. **Prove the location in the same call as the check** — `echo $(git branch --show-current)` beside the diff — for reads as well as for writes.
+
+**A second way to be handed alarming false deletions: diff against a `dev` that moved.** Checking the same file an hour later, `git diff --numstat origin/dev -- CLAUDE.md` reported **17 added, 26 deleted** — and those 26 were content from a PR that had merged between the fetch and the check, which the branch simply did not carry yet. Nothing had been deleted. Asking about the branch's **own** base instead, `git diff HEAD -- CLAUDE.md`, answered `14 0`, which was the truth.
+
+The two look identical on the terminal and share no cause: one is the anchor moving under you, the other is the base moving ahead of you. **Both are avoided by asking about your own change rather than about a moving reference** — make `git diff HEAD` the habit, and keep `origin/dev` comparisons for the question they actually answer, which is how far behind you are.
+
+**`ps` is the worst of these, and the reason is that its lie is the answer you wanted.** `git status` printing `ok` is obviously not git's output. `gh pr list` printing `[]` at least looks odd for a repo with open PRs. But `ps | grep <anything>` returning nothing looks exactly like *"that program is not running"* — so it **confirms rather than contradicts**, and an investigation stops. Every "I checked, nothing was running" in this project's history was produced this way.
+
+**Read `/proc` instead.** `ls -d /proc/[0-9]* | wc -l` for a count, `/proc/<pid>/comm` and `/proc/<pid>/cmdline` for what a process is. Nothing sits between those files and the truth. `rtk proxy ps` also works, but it puts a wrapper in the path and wrappers are the subject.
+
+**And the interception depends on how the command is invoked, which is why two people measuring the same thing disagree.** Measured on 2026-08-26, same shell, seconds apart:
+
+```
+bare      ps -e | wc -l        31        <- wrong
+$( )      ps -e | wc -l      1100        correct
+          ls -d /proc/[0-9]* | wc -l
+                             1100        ground truth
+
+bare      wc -l < file          0        <- wrong
+$( )      wc -l < file         31        correct
+bare      wc -l   file         31        correct
+```
+
+**The wrapper intercepts the command as typed; it does not reach inside `$( )` command substitution.** So the same query gives two different answers depending on where you put it, and the bare form — the one you type when you are checking something quickly — is the one that lies.
+
+That has a cheap consequence worth using: **run it bare and substituted, and if they disagree, the bare one is wrong.** It also means a verification that happens to wrap everything in `$( )` will fail to reproduce a real bug and can talk you into telling a colleague their correct finding is mistaken. That nearly happened while this paragraph was being written.
+
+Two more from the same session. **`cat` fabricated a truncation count**: a 31-line file printed with `... (1065 lines truncated)` appended, and 31 + 1065 is 1096 against a real 1080 — **the invented number nearly reconciled the two figures being compared**, which is worse than an obvious lie because it manufactures exactly the reassurance that ends an investigation. And the standing rule about `pwtest` rows still holds — **a row count means nothing without a paired "is a runner active" check** — but `ps` cannot supply that second half, so pair it with `/proc`.
+
+**A wrapper can also forge line numbers while reporting the content correctly.** `grep -n` placed `<codex_delegation>` at line 454, and `sed -n '445,462p'` duly printed that very block — in a file where it actually lived at **line 371 of 384**. Content right, coordinates wrong, which makes it the only member of this family that survives a spot-check: you read what was printed, recognise it, and therefore believe the number that arrived with it.
+
+Harmless while reading; dangerous the moment you write. `sed -i '454s/…/…/'` edits a real line, the wrong one, and exits 0.
+
+**So do not address a file by line number.** Anchor an edit on unique surrounding text — which is what the Edit tool does — and where a line number is genuinely needed, take it from the Read tool or from python rather than from a wrapped `grep -n`.
+
+**`| tail -N` on a test summary is a false-green generator.** `vitest` prints the file tally and the test tally on adjacent lines, and `tail` keeps the wrong one:
+
+```
+$ vitest run 2>&1 | tail -4
+      Tests  532 passed (532)          <- reads as a clean run
+
+what tail dropped, one line above:
+ Test Files  2 failed | 30 passed (32)
+```
+
+Every other trap in this section is a tool answering about the wrong input. This one is different and worse: **the tool answered correctly and the reader was handed the wrong half.** Nothing was broken, nothing was wrapped, and the output was true.
+
+Grep for what you mean — `vitest run 2>&1 | grep -E "Test Files|Tests "` — and never take the last N lines of a summary whose failure line comes first.
+
+**And the thing that actually caught it was arithmetic, not output.** 532 was lower than the 555 from before the merge, and a merge that adds a migration cannot remove tests. Had the numbers happened to line up, the run would have been reported green. So: **a count that moved the wrong way is a failure to investigate, not a curiosity.** Three separate agents arrived at that habit on 2026-08-26 — a test tally, a column count going 9 to 10, and this — which makes it the most reliable check any of us has, and it is not a check at all. It is noticing.
+
 **A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
+
+**Do not read that as being about one file.** The door is not `endpoint.rule.test.ts`; it is **any test whose import graph reaches `src/lib/env.ts`**, however indirectly. On 2026-08-26 there were two — `achievements.test.ts` joined it through the achievements feature — and the number grows with every feature that imports from `src/lib`. A reader who checks the one filename named here, on a tree where the other one is the problem, concludes this section does not apply to them.
+
+The way to find today's set is to make the condition and look, not to grep for a name:
+
+```
+mv app/.env app/.env.off && npx vitest run; mv app/.env.off app/.env
+```
 
 The local pass is therefore not evidence about CI, and the failure direction is the awkward one: it is green for everyone who could notice and red only in the place nobody watches until a PR is already open. Reading the workflow would never have found it. It took copying the tree without `.env` and running the suite there, which is the general move — **to predict a fresh checkout, make one.**
 
@@ -319,13 +456,49 @@ It sits mid-way through `loadPersistentContent()`, so everything after it is dea
 
 `final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer.
 
-**Still live at `final91` (verified 2026-08-26), which makes it 26 releases and counting.** The consumer has moved to `index.html:1631` and `loadPersistentContent()` now destructures six slots where `final64` destructured seven; a Python scan of the whole file finds the identifier on that one line and nowhere else. So **anything downstream of 1631 in his app has never run**, and none of it can be treated as reference behaviour when we port it.
+**It ran from `final66` to `final91` — 19 releases — and `final92-unregistered-roster` (`59a67e3`) fixed it.**
+
+*(That number was first written here as 26, and separately guessed at as 27, both by subtracting `66` from `91`. **His release numbers are not dense.** 67, 68, 74, 82, 84, 88 and 90 never shipped, so the run is 66, 69, 70, 71, 72, 73, 75, 76, 77, 78, 79, 80, 81, 83, 85, 86, 87, 89, 91 — nineteen. Counted by walking every commit and asking each one whether `index.html` used `historicalTrainingRes` without declaring it. **Subtracting two version numbers is arithmetic about a naming scheme, not a count of releases**, and the walk costs one loop.*
+
+*The first walk filtered to commits touching `index.html` and got the same 19 — but it also silently dropped `final59`, a release that changed only `sw.js`. That filter was wrong for the question being asked: a release that ships an untouched broken file still ships the bug. **The answer surviving the removal of a bad filter is evidence; the filter agreeing with the answer would not have been.**)* At `final91` the consumer sat at `index.html:1631` while `loadPersistentContent()` destructured six slots where `final64` destructured seven, so anything downstream of that line had never executed. `final92` put the seventh slot back and gave it a source:
+
+```diff
+- const [noticeRes,activityRes,memberRes,applicationRes,historyRes,raceHistoryRes]=await Promise.all([
++ const [noticeRes,activityRes,memberRes,applicationRes,historyRes,raceHistoryRes,historicalTrainingRes]=await Promise.all([
++  dbClient.rpc('team_attendance_canonical_v1')
+```
+
+Declared at `1572`, used at `1632`, and the same at the tip (`final93-owner-time`, `4475128`).
+
+**So the question below has a version boundary, and it is the whole of its meaning.** It applies to **`final66` through `final91`**. From `final92` on, `loadPersistentContent()` runs to completion and downstream code is observed behaviour again — porting from it under the old rule would throw away a working reference and re-decide semantics he has already settled.
+
+That boundary is the point worth keeping. **A rule derived from a bug expires when the bug is fixed, and nothing announces it** — this one was written on 2026-08-26 and was already false the same day. Any rule of this shape needs the version it was measured at written beside it, so the next reader can check whether it still holds instead of inheriting it.
 
 The lesson for us is narrow and important: **a feature we are porting may never have run in his app.** `final62-history-all-participants` and `final64-canonical-training-attendance` are both downstream of this, so reconstruct them from the `bc3523d` snapshot and do not assume he has validated their semantics against real data. Reported to the president separately; his own breakage, not exploitable, so naming the line here is safe.
 
+**So, when porting from a release between `final66` and `final91`, ask this first: is the feature's read path downstream of `index.html:1631`?** It is a mechanical question, not a judgement — find where the screen gets its data and see whether that runs inside `loadPersistentContent()` after the throwing line, or from somewhere else. (At `final92` and later the line no longer throws, so the answer is always "not downstream".)
+
+| answer | what you are porting from |
+|---|---|
+| **downstream** | Nothing. The code has never executed, so there is no observed behaviour to match. **The semantics are ours to decide, and the decisions go in the migration header marked as ours** — a reader in six weeks has to be able to tell a port from a choice. |
+| **not downstream** | A working reference. His app really does behave this way, so a difference between his screen and ours is a bug in ours. |
+
+Two worked examples, because the answer does not follow from how central the feature looks:
+
+- 영법별 랭킹 (`0041`) is **not** downstream. `openFunEventPage` hangs off an `onclick` and calls its own RPC, and it reads nothing `loadPersistentContent()` populates — the payload carries nicknames directly, so there is no `members` lookup to be starved. One grep for the call sites settled it.
+- His push subscription path is also **not** downstream, for the same structural reason — which is how we know its failure was a separate fault (`sw.js` could not parse) rather than another symptom of this one. Two independent faults were live at once from `final66` to `final83`, and assuming a single cause would have found the wrong one.
+
+The grep is for call sites, not for the definition. At `final92`, `openFunEventPage` appears four times: three `onclick` attributes and the definition. **What matters is who calls it, not where it lives** — and the count differs between releases, so read it out of the release you are porting rather than carrying a number across.
+
 **And no member of his club received a push notification before `final85`** — but the reason is not the obvious one, and the obvious one is wrong.
 
-`sw.js` fails to parse in **57 consecutive versions**, `final14-auth` through `final83-push-clean-start`. The cause is one character on line 3, where `e.waitUntil(` is closed and `self.addEventListener(` never is.
+`sw.js` fails to parse in **56 consecutive versions**, `final14-auth` through `final83-push-clean-start`. The cause is one character on line 3, where `e.waitUntil(` is closed and `self.addEventListener(` never is.
+
+*(This said **57** until it was measured. 57 is real, but it counts **commits that touched `sw.js`** and fail to parse; the sentence calls them versions, and two of those commits shared one VERSION string. Re-measured over the whole history: 73 distinct VERSION strings ever existed, **56** of them unparsable, occupying positions 11 through 66 of the sequence with no parsable version among them — so **consecutive is right, and only the number was wrong.***
+
+***Consecutive was checked by printing the sequence, not inferred from the count.** A count cannot establish consecutiveness: 56 broken out of 73 is equally consistent with them being scattered. Two separate claims live in that sentence and they need two separate measurements.*
+
+***And the unit that survives the filter is the one to quote.** Walking every commit instead of only those touching `sw.js` moves the commit figures — 74 → 80 commits carrying a `sw.js`, 57 → 62 of them unparsable — while the version count stays **56 either way**. A quantity that changes when you change which commits you look at is describing your walk; a quantity that does not is describing his releases. Same filter defect, same conclusion, as the `index.html` walk above.)*
 
 **A file that fails to parse is a rejected update, not an uninstall.** A member already holding a working worker keeps it; the browser simply declines the new one. So "there was no worker" would be false, and the conclusion has to rest on something else. It does:
 
@@ -333,16 +506,16 @@ The lesson for us is narrow and important: **a feature we are porting may never 
 480259d  final12-profile-role      parses   addEventListener('push')  0   <- last installable worker
 1d60225  final14-auth              FAILS                              0   <- break enters here
 1cf1697  final16-push-status…      FAILS                              1   <- push handling first appears
-…        56 more failing versions, all with a push handler
+…        54 more failing versions, all with a push handler
 265e14d  final85-push-true-reset   parses                             1   <- first file that does both
 ```
 
 **The last worker that could install had no push handler, and every file that had one was rejected.** Push handling and a parsable file were never the same file until `final85`. That is why the run of five push releases — `push-repair` · `push-autofix` · `push-server-register` · `push-clean-start` — ends exactly there: he rewrote `sw.js` from scratch and the bracket went with it.
 
-Reproduce it over the whole history rather than the slice we can see; sweeping only `origin/main..upstream/main` gives 31 and reads as though the fault began at our fork point:
+Reproduce it over the whole history rather than the slice we can see; sweeping only `origin/main..upstream/main` gives 29 and reads as though the fault began at our fork point. Note the path filter is **gone** from the loop below — it is what produced the 57, and `-- sw.js` answers "which commits edited this file", not "which releases shipped it broken":
 
 ```bash
-for c in $(git log --format=%h --reverse upstream/main -- sw.js); do
+for c in $(git log --format=%h --reverse upstream/main); do
   git show "$c:sw.js" > /tmp/sw.js
   printf '%s ' "$c"; node --check /tmp/sw.js && echo ok
 done
@@ -358,7 +531,18 @@ Two things to know before implementing it. His client sends `created_by` from th
 
 **`activities.details` now carries canonical data, which revises the rule above it.** `historical_participants` (nickname array) and `historical_attendance` (nickname → status map) hold the club's paper attendance registers for trainings that predate the app. Unlike `participants`/`waitlist`/`offer` — still dead data, still rebuilt from `activity_applications` every load — these are **read-only canonical**: `index.html` reads them at `upstream:1300-1301` and writes them nowhere, so he backfills through the dashboard or SQL.
 
-Our schema cannot hold them. `attendance.member_id` is a FK to `members` (`0001:104`), so a past participant who never had an account cannot be stored at all, and `attendance_for_activity_v1` (`0001:258-269`) builds its roster solely from `activity_applications` participant rows, so a past training with no applications shows an empty list. Supporting this needs a decision on whether an attendance row may exist without a member row — not just an import script.
+**Our schema holds them already, and the sentence that used to stand here was wrong.** It said "our schema cannot hold them — `attendance.member_id` is a FK to `members`, so a past participant who never had an account cannot be stored at all." The FK asks for a **member row**, not an account, and a member row needs no `auth_user_id`. Measured 2026-08-26:
+
+```
+members | no_login | with_login        attendance | for_no_login
+     41 |       36 |          5               249 |          198
+```
+
+**79% of every attendance row we hold belongs to somebody who has never logged in** — the 36 whose rows came from the club spreadsheet, the same population `0035` counted in its own header. They reach the roster too: `0030` widened it to `activity_applications ∪ attendance`, and on the activity with the most attendance that returns 19 people of whom 17 have no login.
+
+Two lessons, and the second is the transferable one. `attendance_for_activity_v1`'s owner is **`0030`**, not the `0001:258-269` this file used to cite — **a `create or replace` leaves the old line reference looking valid**, so re-find a function by name before trusting a line number attached to it. And the claim itself had been repeated for two days without anybody running `select count(*) filter (where auth_user_id is null)`, which is the whole check. **A schema claim is answerable by the schema; ask it before writing the claim down.**
+
+What was genuinely missing was narrower: staff could *mark attended* a member who cannot sign in (`attendance_mark_v1` takes `p_member_id`) but could not *enrol* one, because `apply_to_activity` derives the member from the session and there was no staff-side path. `0042` adds one, and refuses to waitlist such a member — `offer_seat_to_next_waitlister()` picks by `wait_order` without asking whether the person can answer, so queueing an unreachable member parks a live seat for 12 hours per turn at everyone else's expense.
 
 **He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. **Closed in `0021`** — `media_folders_update`, `media_files_update` and `media_files_delete` are owner-only, `media_folders` has no DELETE policy at all (deletion goes through `delete_media_folder_v1`, which checks ownership), and the screens no longer offer staff a control the database would refuse. The cost is real and is his to revisit: no admin can take down another member's folder or file from inside the app any more.
 
@@ -376,6 +560,7 @@ Global `~/.claude/CLAUDE.md` already carries the full ruleset — do not duplica
 - Canonical call (the `-o` artifact is the source of truth, never stdout):
   `codex exec -m gpt-5.6-sol -c model_reasoning_effort="high" --json -o /path/verdict.txt "$PROMPT"`
 - 2026-08-24, this repo: the `codex:rescue` skill returned a contentless `"Complete."` twice in a row despite 51 real `tool_uses` and 10+ min runtime; a `SendMessage` resume produced the same. A *completed* status with an empty result means the delivery channel failed, not that the work is absent. One retry, then drop the codex track and verify load-bearing facts directly.
+- **A missing `-o` artifact is not a delivery failure.** The rule above turns on the word *completed*: until the run reports completion, an absent or short artifact is indistinguishable from work still in progress. Reading it as a failure nearly discarded eight minutes of a live #22 re-review on 2026-08-26. The cheapest discriminator is the log's mtime against the clock — **`stat -c '%n %s bytes  mtime %y' <log>`**, which works today. **`ls -l --time-style=…` does not**: it printed empty output for a file already known to exist, which reads exactly like "no such file". Where mtime is ambiguous, parse the `--json` log — a run still going ends on `item.started` / `command_execution` / `web_search` with only short `agent_message`s (139–206 chars), while the verdict is a single closing `agent_message` of several thousand.
 </codex_delegation>
 
 ### HTML rendering convention

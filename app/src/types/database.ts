@@ -983,6 +983,39 @@ export type Database = {
       }
     }
     Functions: {
+      activity_enrol_member_v1: {
+        Args: { p_activity_id: string; p_member_id: string }
+        Returns: {
+          activity_id: string
+          application_type: string
+          created_at: string
+          details: Json
+          id: string
+          member_id: string
+          offer_expires_at: string | null
+          offer_status: string
+          updated_at: string
+          wait_order: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_applications"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      activity_enrollable_members_v1: {
+        Args: { p_activity_id: string }
+        Returns: {
+          already_enrolled: boolean
+          member_id: string
+          nickname: string
+        }[]
+      }
+      activity_unenrol_member_v1: {
+        Args: { p_activity_id: string; p_member_id: string }
+        Returns: boolean
+      }
       append_notice_comment: {
         Args: { p_body: string; p_notice_id: string }
         Returns: {
@@ -1181,6 +1214,16 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      save_notice_v1: {
+        Args: {
+          p_attachments: Json
+          p_body: string
+          p_expected_updated_at: string | null
+          p_notice_id: string | null
+          p_title: string
+        }
+        Returns: Json
       }
       send_message_v1: {
         Args: {
@@ -1446,6 +1489,7 @@ export type Database = {
         }
       }
       signup_client_key: { Args: never; Returns: string }
+      stroke_rankings_v1: { Args: never; Returns: Json }
       team_event_rankings_v1: { Args: never; Returns: Json }
       team_file_is_readable: { Args: { p_path: string }; Returns: boolean }
       update_board_post_v1: {

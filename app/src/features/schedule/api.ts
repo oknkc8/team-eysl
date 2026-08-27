@@ -364,6 +364,17 @@ export type ApplicantName = {
   wait_order: number | null
 }
 
+/**
+ * A member staff can put on an activity, because that member has no way to put
+ * themselves on one. Carries no auth user id: the browser needs the fact, not
+ * the identifier behind it.
+ */
+export type EnrollableMember = {
+  memberId: string
+  nickname: string
+  alreadyEnrolled: boolean
+}
+
 export type ApplicationSummary = {
   activity: Activity
   participants: ApplicantName[]
@@ -493,6 +504,69 @@ export async function applyToActivity(activityId: string): Promise<MyApplication
 export async function cancelApplication(applicationId: string): Promise<void> {
   const { error } = await supabase.from('activity_applications').delete().eq('id', applicationId)
   if (error) throw error
+}
+
+/**
+ * Approved members who cannot sign in, and whether each is already on this
+ * activity. 36 of our 41 members are in this list: their rows came from the
+ * club's spreadsheet and nobody ever had an account, so they can neither apply
+ * nor be seen to have applied.
+ *
+ * The `alreadyEnrolled` flag is what lets the card mark the people on it who
+ * cannot be reached — staff need to know who will not get a push and cannot
+ * answer a waitlist offer.
+ *
+ * Empty for a non-staff caller rather than an error: 0042 filters on is_staff()
+ * the way 0030 does, so this returns zero rows instead of throwing.
+ */
+export async function listEnrollableMembers(activityId: string): Promise<EnrollableMember[]> {
+  const { data, error } = await supabase.rpc('activity_enrollable_members_v1', {
+    p_activity_id: activityId,
+  })
+  if (error) throw error
+  return (data ?? []).map((row) => ({
+    memberId: row.member_id,
+    nickname: row.nickname,
+    alreadyEnrolled: row.already_enrolled,
+  }))
+}
+
+/**
+ * Put a member on an activity on their behalf. Only a member who cannot sign in
+ * — anyone with a login applies for themselves, and the RPC refuses rather than
+ * letting staff speak for them.
+ *
+ * A full activity REFUSES instead of queueing. That is deliberate and is the
+ * one place this differs from applyToActivity: offer_seat_to_next_waitlister()
+ * picks by wait_order without asking whether the person can answer, so queueing
+ * somebody who cannot sign in would park a live seat for 12 hours and lapse it,
+ * once per turn, at the expense of everybody behind them.
+ */
+export async function enrolMember(activityId: string, memberId: string): Promise<MyApplication> {
+  const { data, error } = await supabase.rpc('activity_enrol_member_v1', {
+    p_activity_id: activityId,
+    p_member_id: memberId,
+  })
+  if (error) throw error
+  return toApplication(data)
+}
+
+/**
+ * Take a staff-enrolled member back off. Ships with enrolMember rather than
+ * after it: applications_self_delete is the only DELETE policy on the table and
+ * it is `member_id = current_member_id()`, so a row created by enrolMember is
+ * deletable by nobody without this — the member cannot log in to withdraw and
+ * staff have no policy to do it for them.
+ *
+ * Returns whether a row actually went, so a second press is not an error.
+ */
+export async function unenrolMember(activityId: string, memberId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('activity_unenrol_member_v1', {
+    p_activity_id: activityId,
+    p_member_id: memberId,
+  })
+  if (error) throw error
+  return data === true
 }
 
 /**
