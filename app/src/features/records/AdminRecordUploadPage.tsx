@@ -6,6 +6,7 @@ import { SaveState } from '../../components/ui/SaveState'
 import {
   CATEGORY_LABEL,
   createRecordFromSheet,
+  createRecordUpload,
   listMatchRoster,
   RECORD_CATEGORIES,
   SUBCATEGORY_LABEL,
@@ -18,7 +19,10 @@ import { parseResultFile, type ParseResult, type ParsedRow, type RosterEntry } f
 // so. This one stops in the middle: parse, show every EYSL row it found, and
 // save nothing until a person has looked at the list.
 //
-// Everything happens in the browser. The file is not uploaded anywhere.
+// The parse happens in the browser; nothing is sent while a person is still
+// deciding. On 저장 the sheet itself is filed too (0043), so a record that turns
+// out to be wrong can be checked against the page it was read from — and so
+// that deleting the 결과지 takes its records with it.
 
 const CARD = {
   padding: 14,
@@ -86,7 +90,12 @@ export function AdminRecordUploadPage() {
       <Link to="/records" className="backLink">
         ← 기록
       </Link>
-      <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: '12px 0 16px' }}>결과지 업로드</h1>
+      <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: '12px 0 6px' }}>결과지 업로드</h1>
+      <p style={{ fontSize: 12, margin: '0 0 16px' }}>
+        <Link to="/admin/records/uploads" style={{ color: '#6b7178' }}>
+          올린 결과지 보기 →
+        </Link>
+      </p>
 
       <AsyncSection
         query={rosterQuery}
@@ -137,6 +146,14 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
   const [outcomes, setOutcomes] = useState<Record<string, SaveOutcome>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveProgress, setSaveProgress] = useState('')
+  /**
+   * The sheet itself, kept from the moment it was picked so 저장 can file it.
+   *
+   * Held rather than uploaded at parse time on purpose: a parse that fails, or
+   * a coach who looks at the rows and walks away, would otherwise leave a
+   * 결과지 on file for an import that never happened.
+   */
+  const [sheetFile, setSheetFile] = useState<File | null>(null)
 
   function reset() {
     setResult(null)
@@ -145,6 +162,7 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
     setOutcomes({})
     setSaveState('idle')
     setSaveProgress('')
+    setSheetFile(null)
   }
 
   // The category belongs to the whole file and every parsed row carries it, so
@@ -168,6 +186,7 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
     setPhase('parsing')
     setParseError('')
     setProgress('파일을 여는 중…')
+    setSheetFile(file)
 
     try {
       const parsed = await parseResultFile(file, {
@@ -228,6 +247,24 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
   const save = useMutation({
     mutationFn: async (batch: ParsedRow[]) => {
       const fileName = result?.fileName ?? ''
+
+      // File the sheet FIRST, once, and hang every record off its id.
+      //
+      // This is what makes a bad import undoable: records.upload_id is a FK
+      // with ON DELETE CASCADE (0004), so removing the 결과지 removes the rows
+      // it produced. Before this the column was never set on any of the 258
+      // records on file, and an import could only be unpicked one row at a
+      // time.
+      //
+      // A failure here stops the save rather than importing anyway. Rows with
+      // no upload to hang off are exactly what we already have too many of,
+      // and the coach can retry once they know.
+      let uploadId: string | undefined
+      if (sheetFile) {
+        setSaveProgress('결과지 보관 중…')
+        const upload = await createRecordUpload({ file: sheetFile, category })
+        uploadId = upload.id
+      }
       // Seeded from what is already on screen, so a retry of two failed rows
       // does not blank the 저장됨 marks on the thirty that worked.
       const done: Record<string, SaveOutcome> = { ...outcomes }
@@ -255,6 +292,7 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
               teammates: row.teammates,
             },
             { fileName, sheetName: row.sheetName, rowNumber: row.rowNumber },
+            uploadId,
           )
           done[row.key] = { ok: true }
         } catch (error) {
@@ -334,8 +372,8 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
         </label>
 
         <p style={{ fontSize: 11, color: '#6b7178', margin: '9px 0 0' }}>
-          파일은 이 기기 안에서만 읽습니다. 서버로 올라가지 않으며, 확인 후 고른 기록만
-          저장됩니다.
+          파일은 이 기기에서 먼저 읽고, 확인 후 고른 기록만 저장됩니다. 저장할 때
+          결과지 파일도 함께 보관해 두어 나중에 원본과 대조할 수 있습니다.
         </p>
 
         {phase === 'parsing' && (
