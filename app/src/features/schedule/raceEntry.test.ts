@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   EMPTY_ENTRY,
   NO_SECOND_EVENT,
+  formatRelayInput,
+  genderFromNickname,
+  hasGroupFor,
+  parseRelayInput,
+  withRelays,
   normaliseEntry,
   parseEntry,
   relayOptions,
@@ -140,5 +145,83 @@ describe('summarise', () => {
 
   it('says so when relays were declined, rather than showing nothing', () => {
     expect(summarise({ ...EMPTY_ENTRY, noRelay: true })).toContain('단체전 없음')
+  })
+})
+
+
+describe('parseRelayInput', () => {
+  it('one event per line, trimmed', () => {
+    expect(parseRelayInput(' 계영 200m \n혼계영 200m\n')).toEqual(['계영 200m', '혼계영 200m'])
+  })
+
+  it('drops blanks and repeats', () => {
+    expect(parseRelayInput('계영 200m\n\n계영 200m\n   \n혼계영 200m')).toEqual([
+      '계영 200m',
+      '혼계영 200m',
+    ])
+  })
+
+  it('round-trips through the box', () => {
+    const list = ['계영 200m', '혼성계영 200m']
+    expect(parseRelayInput(formatRelayInput(list))).toEqual(list)
+  })
+})
+
+describe('withRelays', () => {
+  it('keeps every other key', () => {
+    // The legacy defect this guards: registerSchedule rebuilt details from
+    // scratch and dropped historical_participants. Our imported rows carry
+    // provenance no form here knows about.
+    const before = { source: 'import', half: 2, label: '상반기' }
+    expect(withRelays(before, ['계영 200m'])).toEqual({
+      source: 'import',
+      half: 2,
+      label: '상반기',
+      relays: ['계영 200m'],
+    })
+  })
+
+  it('removes the key rather than storing an empty list', () => {
+    expect(withRelays({ source: 'import', relays: ['계영 200m'] }, [])).toEqual({
+      source: 'import',
+    })
+  })
+
+  it('survives details that is not an object', () => {
+    expect(withRelays(null, ['계영 200m'])).toEqual({ relays: ['계영 200m'] })
+    expect(withRelays('nonsense', ['계영 200m'])).toEqual({ relays: ['계영 200m'] })
+    expect(withRelays(['a'], ['계영 200m'])).toEqual({ relays: ['계영 200m'] })
+  })
+})
+
+describe('genderFromNickname', () => {
+  it('reads the signup format', () => {
+    expect(genderFromNickname('민선/97/여/강남')).toBe('여')
+    expect(genderFromNickname('철수/88/남/관악')).toBe('남')
+  })
+
+  it('is null when it cannot tell, including every fixture nickname', () => {
+    expect(genderFromNickname('pwtestmember')).toBeNull()
+    expect(genderFromNickname('')).toBeNull()
+    expect(genderFromNickname(null)).toBeNull()
+    expect(genderFromNickname('이름/97')).toBeNull()
+    expect(genderFromNickname('이름/97/x/강남')).toBeNull()
+  })
+})
+
+describe('hasGroupFor', () => {
+  it('his list has nothing for a male member', () => {
+    expect(hasGroupFor('남')).toBe(false)
+    expect(hasGroupFor('여')).toBe(true)
+  })
+
+  it('says nothing when the gender is unknown', () => {
+    // Warning every fixture account, and every member whose nickname predates
+    // the format, would be noise rather than information.
+    expect(hasGroupFor(null)).toBe(true)
+  })
+
+  it('goes quiet once the list gains a male group', () => {
+    expect(hasGroupFor('남', ['여자 일반부', '남자 일반부'])).toBe(true)
   })
 })

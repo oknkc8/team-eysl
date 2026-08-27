@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCurrentUser } from '../auth/useCurrentUser'
 import { SaveState } from '../../components/ui/SaveState'
 import { setRaceEntry, type ScheduleEntry } from './api'
 import {
@@ -7,6 +8,8 @@ import {
   NO_SECOND_EVENT,
   RACE_EVENTS,
   RACE_GROUPS,
+  genderFromNickname,
+  hasGroupFor,
   normaliseEntry,
   parseEntry,
   relayOptions,
@@ -75,6 +78,13 @@ export function RaceEntryCard({ entry: scheduleEntry }: { entry: ScheduleEntry }
   const stored = parseEntry(scheduleEntry.mine?.details)
   const offered = relayOptions(scheduleEntry.activity.details)
 
+  const { user } = useCurrentUser()
+  // His 그룹 list is women-only. We do not invent the missing 남자 groups -- his
+  // list is the spec -- but a member with no truthful answer should be told that
+  // rather than left to pick a wrong one. Saying an absence out loud is not the
+  // same as fabricating the data.
+  const groupMissing = !hasGroupFor(genderFromNickname(user?.nickname))
+
   const [draft, setDraft] = useState<RaceEntry>(stored ?? EMPTY_ENTRY)
   const [state, setState] = useState<SaveStatus>('idle')
   const [failure, setFailure] = useState<string | null>(null)
@@ -115,6 +125,12 @@ export function RaceEntryCard({ entry: scheduleEntry }: { entry: ScheduleEntry }
           ))}
         </select>
       </label>
+      {groupMissing && (
+        <p style={{ fontSize: 13, color: '#6b7076', margin: '-8px 0 14px' }}>
+          이 목록은 대회 신청서에 있는 그대로입니다. 해당하는 그룹이 없으면 운영진에게
+          문의해 주세요.
+        </p>
+      )}
 
       <label style={LABEL}>
         개인종목 1

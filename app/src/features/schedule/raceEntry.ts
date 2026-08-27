@@ -1,3 +1,5 @@
+import type { Json } from '../../types/database'
+
 /**
  * 대회 신청 — which events a member is entering.
  *
@@ -131,4 +133,95 @@ export function summarise(entry: RaceEntry): string {
   if (entry.noRelay) parts.push('단체전 없음')
   else parts.push(...entry.relays)
   return parts.filter(Boolean).join(' · ')
+}
+
+
+/**
+ * The admin's relay-options box, one event per line.
+ *
+ * Newlines rather than commas because these names contain no commas but do get
+ * pasted from a meet programme, which is already one per line.
+ */
+export function parseRelayInput(text: string): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of text.split(/\r?\n/)) {
+    const name = raw.trim()
+    // Silently dropping a duplicate is right here: the same event listed twice
+    // is a paste artefact, not a statement that it runs twice.
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    out.push(name)
+  }
+  return out
+}
+
+/** The stored list back into the box. */
+export function formatRelayInput(relays: readonly string[]): string {
+  return relays.join('\n')
+}
+
+/**
+ * Merge a relay list into an activity's existing `details`, keeping every other
+ * key.
+ *
+ * Replacing the object wholesale is the legacy defect this project already
+ * catalogued: `registerSchedule` rebuilt `details` from scratch on every save
+ * and dropped `historical_participants`, destroying a backfilled attendance
+ * register with one edit. Our own rows carry import provenance -- `source`,
+ * `half`, `label`, `date_source`, `record_category` -- and none of it belongs to
+ * this form.
+ */
+export function withRelays(
+  details: unknown,
+  relays: readonly string[],
+): Record<string, Json> {
+  const base =
+    details && typeof details === 'object' && !Array.isArray(details)
+      ? { ...(details as Record<string, Json>) }
+      : {}
+  if (relays.length === 0) {
+    // Removed rather than stored as [], so "this race opens no relays" and
+    // "nobody has said" stay the same absent key the reader already handles.
+    delete base.relays
+    return base
+  }
+  base.relays = [...relays]
+  return base
+}
+
+/**
+ * 남 / 여 from the nickname, which our signup format encodes as
+ * `닉네임/생년/성별/지역` -- e.g. `민선/97/여/강남`.
+ *
+ * Read from the nickname rather than by widening the session query: the member
+ * row the app already holds carries it, and a screen that needs one more column
+ * to show one sentence is not worth another round trip.
+ *
+ * Null for anything that does not match, which includes every pwtest fixture.
+ * Null means "we do not know", and the caller must treat that as "say nothing"
+ * rather than guessing.
+ */
+export function genderFromNickname(nickname: string | null | undefined): '남' | '여' | null {
+  if (!nickname) return null
+  const parts = nickname.split('/')
+  if (parts.length < 3) return null
+  const g = parts[2]?.trim()
+  return g === '남' || g === '여' ? g : null
+}
+
+/**
+ * Does the offered group list have anything for this member?
+ *
+ * His list is women-only -- 여자 20대 · 여자 일반부 · 여자 30대, with no 남자
+ * entry at all -- so a male member has no truthful answer. We do not invent the
+ * missing groups (his list is the spec) but we do not let the gap pass silently
+ * either: the screen says so, which is reporting an absence rather than
+ * fabricating data.
+ */
+export function hasGroupFor(gender: '남' | '여' | null, groups: readonly string[] = RACE_GROUPS): boolean {
+  // Unknown gender: assume the list is fine, because warning everybody whose
+  // nickname is not in the standard format would be noise.
+  if (gender === null) return true
+  return groups.some((g) => g.startsWith(gender === '남' ? '남자' : '여자'))
 }

@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase'
+import type { Json } from '../../types/database'
 import type { RaceEntry } from './raceEntry'
 import { lastDayOfMonth, monthPrefix } from './calendar'
 import { hasFinished, shiftDays, sortUpcomingFirst, todayKey } from './order'
@@ -666,6 +667,14 @@ export type ActivityInput = {
   end_time: string | null
   place: string | null
   capacity: number | null
+  /**
+   * Per-kind extras. Sent only when a form actually edits one of them, and
+   * always MERGED from the row it loaded rather than rebuilt -- see
+   * `raceEntry.withRelays`. Rebuilding this object from scratch on save is the
+   * legacy defect that destroyed backfilled attendance registers, and our own
+   * rows carry import provenance no form here knows about.
+   */
+  details?: Json
 }
 
 /**
