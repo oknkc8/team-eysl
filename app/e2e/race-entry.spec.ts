@@ -38,22 +38,16 @@ test.describe('대회 신청', () => {
         .click()
       await staff.page.getByLabel('제목').fill(RACE)
       await staff.page.getByLabel('날짜').fill(soon())
+      await staff.page.getByLabel(/단체전 종목/).fill(RELAYS.join('\n'))
       await staff.page.getByRole('button', { name: '등록' }).click()
       await staff.page.waitForURL(/\/schedule\/[0-9a-f-]{36}$/, { timeout: 20_000 })
       activityId = new URL(staff.page.url()).pathname.split('/').pop() ?? ''
       expect(activityId, 'the new race id').toMatch(/^[0-9a-f-]{36}$/)
 
-      // The relay events it opens. Set out of band on purpose: neither his app
-      // nor ours has a UI that writes `details.relays` -- his 일정 등록 has 14
-      // controls and none touches it -- so this is how a race really acquires
-      // them, and pretending otherwise would test a path nobody uses.
-      const seeded = await directRequest(staff.page, {
-        path: `/rest/v1/activities?id=eq.${activityId}`,
-        method: 'PATCH',
-        body: { details: { relays: RELAYS } },
-        headers: { Prefer: 'return=representation' },
-      })
-      expect(seeded.status, 'staff may set details').toBeLessThan(300)
+      // The relay events it opens, set through the staff form -- which is the
+      // point of that field existing. An earlier version of this test PATCHed
+      // `details` directly because no UI wrote it; now one does, and testing the
+      // real path is what proves the picker downstream is reachable at all.
 
       // The member fills it in.
       await page.goto(`/schedule/${activityId}`)
