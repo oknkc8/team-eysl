@@ -7,13 +7,16 @@ import { matchRoutes, type RouteObject } from 'react-router'
 let router: (typeof import('./router'))['router']
 let RequireAuth: (typeof import('./guards'))['RequireAuth']
 let RequireStaff: (typeof import('./guards'))['RequireStaff']
+let RequireRecordManager: (typeof import('./guards'))['RequireRecordManager']
 let RequireMasterAdmin: (typeof import('./guards'))['RequireMasterAdmin']
 
 beforeAll(async () => {
   vi.stubEnv('VITE_SUPABASE_URL', 'https://ourdevproject.supabase.co')
   vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_test')
   ;({ router } = await import('./router'))
-  ;({ RequireAuth, RequireStaff, RequireMasterAdmin } = await import('./guards'))
+  ;({ RequireAuth, RequireStaff, RequireMasterAdmin, RequireRecordManager } = await import(
+    './guards',
+  ))
 })
 
 afterAll(() => vi.unstubAllEnvs())
@@ -40,6 +43,11 @@ function guardsFor(pathname: string) {
       const element = m.route.element as { type?: unknown } | undefined
       if (element?.type === RequireMasterAdmin) return 'master'
       if (element?.type === RequireStaff) return 'staff'
+      // Without this the record routes report NO guard rather than the wrong
+      // one, which reads as 'unguarded' — a far more alarming failure than the
+      // real change. A guard the labeller does not know is a guard it cannot
+      // see.
+      if (element?.type === RequireRecordManager) return 'records'
       if (element?.type === RequireAuth) return 'auth'
       return m.route.path ?? 'layout'
     })
@@ -185,15 +193,28 @@ describe('record routes are guarded by tree position', () => {
     expect(guardsFor('/records')).toEqual(['auth', '/records'])
   })
 
-  // Filing a result is staff-only in the tree, and can_manage_records() is what
-  // enforces it in the database — upsert_record() raises 42501 for anyone else,
-  // so reaching this screen is not the same as being allowed to write.
-  it('puts filing a record behind RequireStaff', () => {
-    expect(guardsFor('/admin/records/new')).toEqual(['auth', 'staff', '/admin/records/new'])
+  // Filing a result is behind RequireRecordManager, NOT RequireStaff, and the
+  // difference is a 코치: can_manage_records() (0004:159-169) admits one and
+  // is_staff() does not. These assertions previously said 'staff', which is the
+  // mismatch this PR closes — the database trusted a coach to file a record
+  // while the router refused them the screen.
+  //
+  // Still presentation either way: upsert_record() raises 42501 for anyone the
+  // database does not admit, so reaching the screen is not being allowed to write.
+  it('puts filing a record behind RequireRecordManager', () => {
+    expect(guardsFor('/admin/records/new')).toEqual(['auth', 'records', '/admin/records/new'])
   })
 
-  it('puts the sheet upload behind RequireStaff too', () => {
-    expect(guardsFor('/admin/records/upload')).toEqual(['auth', 'staff', '/admin/records/upload'])
+  // The guard has to be the wider one specifically, not merely present.
+  it('does not put the record screens behind the staff guard', () => {
+    expect(guardsFor('/admin/records/new')).not.toContain('staff')
+    expect(guardsFor('/admin/records/upload')).not.toContain('staff')
+    expect(guardsFor('/admin/records/uploads')).not.toContain('staff')
+  })
+
+  it('puts the sheet upload and its history behind RequireRecordManager too', () => {
+    expect(guardsFor('/admin/records/upload')).toEqual(['auth', 'records', '/admin/records/upload'])
+    expect(guardsFor('/admin/records/uploads')).toEqual(['auth', 'records', '/admin/records/uploads'])
   })
 
   it('does not let the member records route swallow the admin path', () => {

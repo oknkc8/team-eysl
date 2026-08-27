@@ -453,6 +453,7 @@ describe('the members who joined before the rule existed', () => {
         avatar_path: null,
         role: 'member' as const,
         status: 'approved' as const,
+        team_role: null,
       }
       expect(() => memberSchema.parse(row), nickname).not.toThrow()
       expect(memberSchema.parse(row).nickname).toBe(nickname)
@@ -473,6 +474,7 @@ describe('the members who joined before the rule existed', () => {
         avatar_path: null,
         role: 'member',
         status: 'pending',
+        team_role: null,
       }).nickname,
     ).toBe(NICKNAME_FORMAT_EXAMPLE)
   })
