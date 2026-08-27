@@ -19,7 +19,10 @@ import { parseResultFile, type ParseResult, type ParsedRow, type RosterEntry } f
 // so. This one stops in the middle: parse, show every EYSL row it found, and
 // save nothing until a person has looked at the list.
 //
-// Everything happens in the browser. The file is not uploaded anywhere.
+// The parse happens in the browser; nothing is sent while a person is still
+// deciding. On 저장 the sheet itself is filed too (0043), so a record that turns
+// out to be wrong can be checked against the page it was read from — and so
+// that deleting the 결과지 takes its records with it.
 
 const CARD = {
   padding: 14,
@@ -369,8 +372,8 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
         </label>
 
         <p style={{ fontSize: 11, color: '#6b7178', margin: '9px 0 0' }}>
-          파일은 이 기기 안에서만 읽습니다. 서버로 올라가지 않으며, 확인 후 고른 기록만
-          저장됩니다.
+          파일은 이 기기에서 먼저 읽고, 확인 후 고른 기록만 저장됩니다. 저장할 때
+          결과지 파일도 함께 보관해 두어 나중에 원본과 대조할 수 있습니다.
         </p>
 
         {phase === 'parsing' && (
