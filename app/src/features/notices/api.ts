@@ -367,24 +367,78 @@ export async function saveNotice(input: {
       })
     : []
 
-  // The RPC walks p_attachments in order and returns in the same order, so the
-  // new rows line up with `files` positionally. Zipping by index rather than by
-  // name because two files picked in one go can share a name.
-  const fresh = attachments.filter((row) => row.is_new)
-  const uploadFailures: UploadFailure[] = []
-
-  for (let i = 0; i < fresh.length; i += 1) {
-    const target = fresh[i]
-    const file = input.files[i]
-    if (!target || !file) continue
-    const upload = await supabase.storage
-      .from(ATTACHMENT_BUCKET)
-      .upload(target.storage_path, file, { contentType: target.mime_type, upsert: true })
-    // The row id and the File, not the name. Zipped by index for the reason
-    // stated above, which is the same reason the name alone will not do.
-    if (upload.error) uploadFailures.push({ id: target.id, file_name: target.file_name, file })
-  }
+  const uploadFailures = await uploadAttachmentObjects(
+    supabase.storage.from(ATTACHMENT_BUCKET),
+    attachments.filter((row) => row.is_new),
+    input.files,
+  )
 
   return { notice, attachments, uploadFailures }
+}
+
+/**
+ * The slice of the storage client this needs, and nothing more.
+ *
+ * Narrow on purpose: a test satisfies it with an object literal, so the upload
+ * loop below can be exercised without a mocking framework — of which this
+ * repository has none, in any of its test files.
+ */
+export type AttachmentUploader = {
+  upload(
+    path: string,
+    file: File,
+    options: { contentType: string; upsert: boolean },
+  ): Promise<{ error: unknown }>
+}
+
+/**
+ * Put each new row's object in the bucket, and report the ones that did not land.
+ *
+ * OUT HERE SO A TEST CAN REACH IT. Inside saveNotice this was unreachable
+ * without a live supabase client, and that is exactly where the previous defect
+ * hid: a rejected upload — a dropped connection, not a storage error — escaped
+ * the loop, so saveNotice threw, onSuccess never ran, and the form never learned
+ * the notice's id. The retry then sent p_notice_id = null and wrote a SECOND
+ * notice. The same bug the failure-identity fix had just closed, arriving by a
+ * path that fix did not cover.
+ *
+ * So the rule this encodes: ONCE THE RPC HAS SUCCEEDED, THE ROWS EXIST, and this
+ * function must return normally whatever the bucket does. A throw here would
+ * discard a notice the database has already committed.
+ *
+ * Zipped by index rather than by name: the RPC walks p_attachments in order and
+ * returns in the same order, and two files picked in one go can share a name —
+ * which is also why a failure carries the row id rather than the file name.
+ */
+export async function uploadAttachmentObjects(
+  uploader: AttachmentUploader,
+  targets: SavedAttachment[],
+  files: File[],
+): Promise<UploadFailure[]> {
+  const failures: UploadFailure[] = []
+
+  for (let i = 0; i < targets.length; i += 1) {
+    const target = targets[i]
+    const file = files[i]
+    if (!target || !file) continue
+
+    const failed = (): void => {
+      failures.push({ id: target.id, file_name: target.file_name, file })
+    }
+
+    try {
+      const upload = await uploader.upload(target.storage_path, file, {
+        contentType: target.mime_type,
+        upsert: true,
+      })
+      if (upload.error) failed()
+    } catch {
+      // A rejection is a failure like any other, and must become one HERE.
+      // Letting it propagate is what created the second notice.
+      failed()
+    }
+  }
+
+  return failures
 }
 
