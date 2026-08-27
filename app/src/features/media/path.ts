@@ -64,10 +64,33 @@ export function resourceObjectPath(input: {
   return objectPath({ ...input, prefix: 'resources' })
 }
 
+/**
+ * The same key again, under `chat/`.
+ *
+ * A chat attachment is not a media library file and must not appear in one: the
+ * prefix is what 미디어 and 자료실 read to decide what to list, so filing a
+ * direct-message photo under `media/` would put it on a screen its sender never
+ * chose to post to.
+ *
+ * THE PREFIX IS NOT WHAT KEEPS IT PRIVATE. team_file_is_readable is SECURITY
+ * INVOKER over messages_read, and that is the whole of the boundary — only the
+ * two participants of a dm can read the row that claims this path, so only they
+ * can read the object. `chat/` is filing. 0047 says the same thing in the
+ * database, in the place somebody reasoning about access will actually look.
+ */
+export function chatObjectPath(input: {
+  memberId: string
+  fileName: string
+  now?: number
+  nonce?: string
+}): string {
+  return objectPath({ ...input, prefix: 'chat' })
+}
+
 function objectPath(input: {
   memberId: string
   fileName: string
-  prefix: 'media' | 'resources'
+  prefix: 'media' | 'resources' | 'chat'
   now?: number
   nonce?: string
 }): string {
