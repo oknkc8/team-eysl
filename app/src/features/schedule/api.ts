@@ -49,6 +49,14 @@ export type Activity = {
    * anyone was attributed.
    */
   created_by: string | null
+  /** Coach, gear, notes, link and plan. Empty fields read as null, not ''. */
+  detail: TrainingDetail
+  /**
+   * Carried so an edit can prove it saw this version. saveTrainingDetail sends
+   * it back as p_expected_updated_at and the function refuses a mismatch, which
+   * is what stops two staffers overwriting each other's plan.
+   */
+  updated_at: string
 }
 
 export type MyApplication = {
@@ -69,7 +77,7 @@ export type ScheduleEntry = Seats & {
 }
 
 const ACTIVITY_COLUMNS =
-  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by'
+  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by, details, updated_at'
 const APPLICATION_COLUMNS =
   'id, activity_id, application_type, wait_order, offer_status, offer_expires_at'
 
@@ -108,9 +116,49 @@ type ActivityRow = {
   place: string | null
   capacity: number | null
   created_by: string | null
+  details: unknown
+  updated_at: string
 }
 
-const toActivity = (row: ActivityRow): Activity => ({ ...row, kind: toKind(row.kind) })
+/**
+ * The training-detail keys, and only those.
+ *
+ * `details` also carries keys this feature has no business reading — the
+ * importer's `source`, and the backfilled `historical_*` registers — so it is
+ * narrowed here rather than handed to the screens whole. Reading it as a
+ * Record<string, unknown> and picking six names means a key added by somebody
+ * else cannot appear on a training screen by accident.
+ */
+export type TrainingDetail = {
+  coach: string | null
+  gear: string | null
+  info: string | null
+  link: string | null
+  plan: string | null
+  plan_by: string | null
+  plan_at: string | null
+}
+
+const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null)
+
+const toTrainingDetail = (raw: unknown): TrainingDetail => {
+  const d = (raw ?? {}) as Record<string, unknown>
+  return {
+    coach: str(d.coach),
+    gear: str(d.gear),
+    info: str(d.info),
+    link: str(d.link),
+    plan: str(d.plan),
+    plan_by: str(d.plan_by),
+    plan_at: str(d.plan_at),
+  }
+}
+
+const toActivity = (row: ActivityRow): Activity => ({
+  ...row,
+  kind: toKind(row.kind),
+  detail: toTrainingDetail(row.details),
+})
 
 type ApplicationRow = {
   id: string
@@ -634,6 +682,50 @@ export async function createActivity(input: ActivityInput): Promise<Activity> {
  * own 기타 to 훈련 fails the policy's WITH CHECK and lands here as an error,
  * which is what the live probe against the dev database showed.
  */
+export type TrainingDetailInput = {
+  activityId: string
+  coach: string
+  gear: string
+  info: string
+  link: string
+  plan: string
+  /** The updated_at this edit started from. The function refuses a mismatch. */
+  expectedUpdatedAt: string
+}
+
+/**
+ * Save the training detail through save_activity_details_v1 (0048).
+ *
+ * NOT a `.from('activities').update({ details })`, and the difference is the
+ * whole point. A client that sends the whole jsonb object silently deletes
+ * every key it does not know about — which is exactly how the president's app
+ * loses a backfilled attendance register when somebody edits a past training.
+ * The function merges the six fields it owns and leaves the rest alone, so a
+ * key we have never heard of survives an edit here by construction.
+ *
+ * PT409 is the version conflict, distinct from 42704 (no such activity) and
+ * 42501 (not staff), so the screen can tell "somebody else saved" from "it is
+ * gone" and from "you may not".
+ */
+export async function saveTrainingDetail(input: TrainingDetailInput): Promise<TrainingDetail> {
+  const { data, error } = await supabase.rpc('save_activity_details_v1', {
+    p_activity_id: input.activityId,
+    p_coach: input.coach,
+    p_gear: input.gear,
+    p_info: input.info,
+    p_link: input.link,
+    p_plan: input.plan,
+    // Sent verbatim as the string PostgREST gave us. Rebuilding it through
+    // `new Date(...).toISOString()` truncates microseconds to milliseconds, and
+    // every save would then conflict with itself — the same trap the board
+    // editor documents.
+    p_expected_updated_at: input.expectedUpdatedAt,
+  })
+  if (error) throw error
+  const row = (data ?? {}) as Record<string, unknown>
+  return toTrainingDetail(row.details)
+}
+
 export async function updateActivity(
   input: ActivityInput & { activityId: string },
 ): Promise<Activity> {
