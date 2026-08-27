@@ -11,6 +11,7 @@ import {
   getActivity,
   getReservedSeats,
   KIND_LABEL,
+  saveTrainingDetail,
   updateActivity,
   type Activity,
   type ActivityInput,
@@ -193,11 +194,36 @@ function ActivityForm({
       ? ''
       : String(activity.capacity),
   )
+  // Training detail. Only 훈련 carries these — a 대회 has no coach or training
+  // plan, and 기타 is whatever a member decided to file.
+  const [coach, setCoach] = useState(activity?.detail.coach ?? '')
+  const [gear, setGear] = useState(activity?.detail.gear ?? '')
+  const [info, setInfo] = useState(activity?.detail.info ?? '')
+  const [link, setLink] = useState(activity?.detail.link ?? '')
+  const [plan, setPlan] = useState(activity?.detail.plan ?? '')
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
   const save = useMutation({
-    mutationFn: (input: ActivityInput) =>
-      activity ? updateActivity({ activityId: activity.id, ...input }) : createActivity(input),
+    // Two writes, in this order, because the detail RPC needs a row to merge
+    // into and a version to check against. The activity save returns both — its
+    // id and the updated_at it just wrote — so the second call proves it saw
+    // this version rather than racing another staffer's plan.
+    mutationFn: async (input: ActivityInput) => {
+      const saved = activity
+        ? await updateActivity({ activityId: activity.id, ...input })
+        : await createActivity(input)
+      if (saved.kind !== 'training') return saved
+      await saveTrainingDetail({
+        activityId: saved.id,
+        coach,
+        gear,
+        info,
+        link,
+        plan,
+        expectedUpdatedAt: saved.updated_at,
+      })
+      return saved
+    },
     onMutate: () => setState('saving'),
     onSuccess: async (saved) => {
       setState('saved')
@@ -462,6 +488,92 @@ function ActivityForm({
           <p role="alert" style={{ fontSize: 12, color: '#a33', margin: '8px 0 0' }}>
             이미 {reservedSeats}명이 자리를 확보했습니다. 정원을 그보다 적게 줄일 수 없습니다.
           </p>
+        )}
+
+        {kind === 'training' && (
+          <>
+            <label htmlFor="activity-coach" style={{ ...LABEL, marginTop: 14 }}>
+              코치
+            </label>
+            <input
+              id="activity-coach"
+              value={coach}
+              onChange={(e) => {
+                setCoach(e.target.value)
+                touched()
+              }}
+              placeholder="예: 박코치"
+              style={FIELD}
+            />
+
+            <label htmlFor="activity-gear" style={{ ...LABEL, marginTop: 14 }}>
+              준비물
+            </label>
+            <input
+              id="activity-gear"
+              value={gear}
+              onChange={(e) => {
+                setGear(e.target.value)
+                touched()
+              }}
+              placeholder="예: 오리발, 킥판"
+              style={FIELD}
+            />
+
+            <label htmlFor="activity-info" style={{ ...LABEL, marginTop: 14 }}>
+              상세 내용
+            </label>
+            <textarea
+              id="activity-info"
+              value={info}
+              onChange={(e) => {
+                setInfo(e.target.value)
+                touched()
+              }}
+              rows={3}
+              placeholder="회원에게 알릴 내용"
+              style={{ ...FIELD, minHeight: 88, resize: 'vertical' }}
+            />
+
+            <label htmlFor="activity-plan" style={{ ...LABEL, marginTop: 14 }}>
+              훈련표
+            </label>
+            <textarea
+              id="activity-plan"
+              value={plan}
+              onChange={(e) => {
+                setPlan(e.target.value)
+                touched()
+              }}
+              rows={6}
+              placeholder={'예:\n1. 웜업 400m\n2. 메인 8x100'}
+              style={{ ...FIELD, minHeight: 140, resize: 'vertical' }}
+            />
+            <p style={NOTE}>훈련표를 채우면 작성자와 작성 시각이 함께 기록됩니다.</p>
+
+            <label htmlFor="activity-link" style={{ ...LABEL, marginTop: 14 }}>
+              링크
+            </label>
+            <input
+              id="activity-link"
+              type="url"
+              value={link}
+              onChange={(e) => {
+                setLink(e.target.value)
+                touched()
+              }}
+              placeholder="https://"
+              style={FIELD}
+            />
+            {/* Checked here for the message and again in 0048 for the rule. The
+                server is what enforces it: a link is rendered as an anchor, and
+                javascript: in an href is script execution. */}
+            {link.trim() !== '' && !/^https?:\/\//i.test(link.trim()) && (
+              <p role="alert" style={{ fontSize: 12, color: '#a33', margin: '8px 0 0' }}>
+                링크는 http:// 또는 https:// 로 시작해야 합니다.
+              </p>
+            )}
+          </>
         )}
       </div>
 
