@@ -229,6 +229,93 @@ async function acquireSeedLock(): Promise<void> {
  * branch in flight, to save thirty seconds of waiting. Deferred deliberately;
  * it is the better end state and belongs in its own change.
  */
+/**
+ * The signup limiter's cap, from 0038:96. Mirrored rather than read back because
+ * a limit the suite disagrees with should be visible as a wrong number here, not
+ * silently adopted from the database it is supposed to be checking.
+ */
+const SIGNUP_CAP_PER_KEY = 60
+
+/**
+ * What one suite spends. Measured, not guessed: a full run took the two live
+ * keys from 39 to 44 and 39 to 47 — five and eight, thirteen in total.
+ *
+ * THIRTEEN IS THE TOTAL, AND THE THRESHOLD USES IT PER KEY ANYWAY. The split
+ * across egress addresses is incidental — whichever address a worker's request
+ * happens to leave by — so nothing stops a run from putting all thirteen on one
+ * key. Requiring thirteen free on EVERY key is the conservative reading of the
+ * same measurement, and the cost of being wrong in this direction is a run that
+ * waits, rather than one that fails eight tests for a reason it cannot name.
+ */
+const SIGNUP_COST_PER_RUN = 13
+
+/**
+ * Fail in one line when the signup budget cannot cover this run.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS NOT ABOUT THE QUOTA BEING SMALL. When the cap
+ * is reached, register_member_v1 refuses, and the refusal surfaces four layers
+ * down as eight signup assertions failing on their own terms — none of which
+ * says "rate limited". A day was spent reading those before anybody read the
+ * quota table. What is expensive is not the limit, it is the distance between
+ * the cause and the symptom.
+ *
+ * RUN AFTER THE SEED, NOT BEFORE, AND THAT ORDER IS THE POINT. cleanup.sql
+ * deletes every quota row and seed.sql runs it first, so a check placed before
+ * the seed would read residue this run is about to remove and refuse for a
+ * condition that was already being fixed. Asked afterwards, it verifies the
+ * state signup.spec.ts actually depends on — which is also what makes it able
+ * to fail: rows here after a delete mean something outside this suite is
+ * writing them, and that is precisely the case the delete cannot help with.
+ *
+ * Reports every key rather than the first bad one, because "which address" is
+ * the question anybody debugging this asks next.
+ */
+function assertSignupBudget() {
+  const sql =
+    "select coalesce(string_agg(left(md5(client_key), 6) || ' ' || attempts_in_window, ' | '), '')" +
+    ' from public.signup_attempt_quota' +
+    ` where ${SIGNUP_CAP_PER_KEY} - attempts_in_window < ${SIGNUP_COST_PER_RUN}`
+  let short: string
+  try {
+    short = execFileSync('bash', ['scripts/psql.sh', '-q', '-tAX', '-c', sql], {
+      cwd: appDir,
+      stdio: 'pipe',
+      encoding: 'utf8',
+    }).trim()
+  } catch (err) {
+    // Not fatal. The seed just succeeded against this database, so a failure to
+    // read one small table is a hiccup, and refusing the run over it would trade
+    // a clear diagnostic for a new flake.
+    //
+    // BUT IT SAYS SO. Returning in silence would make a check that stopped
+    // running indistinguishable from a check that ran and found nothing — the
+    // exact shape this function was written to avoid one paragraph up. A rename
+    // of the table or a change of grants would disable it permanently and
+    // nobody would learn that from a green run.
+    const e = err as { stderr?: string; message?: string }
+    process.stderr.write(
+      'e2e: could not read signup_attempt_quota, so the signup budget was NOT checked. ' +
+        'Continuing anyway — if signup.spec fails, read that table by hand before believing ' +
+        `the assertions.\n  ${(e.stderr ?? e.message ?? '').trim().split('\n')[0]}\n`,
+    )
+    return
+  }
+
+  if (short === '') return
+
+  throw new Error(
+    'e2e: the signup rate limit does not have room for this run, so it is stopping here ' +
+      'rather than failing inside signup.spec.\n' +
+      `Keys with less than ${SIGNUP_COST_PER_RUN} attempts left (md5 prefix, attempts used of ` +
+      `${SIGNUP_CAP_PER_KEY}): ${short}\n` +
+      'cleanup.sql empties this table and the seed just ran it, so rows here mean something ' +
+      'outside this suite is spending the budget — another checkout, or an agent driving signup ' +
+      'by hand.\n' +
+      'The window is one hour from window_started_at (0038:95). Wait for it, or find the other ' +
+      'writer; re-running now spends what is left and fails the same way.',
+  )
+}
+
 export default async function globalSetup() {
   // Before anything is deleted, and held until teardown. seed.sql's first act is
   // `\i e2e/cleanup.sql`, which deletes fixed ids — so without this, a second
@@ -260,4 +347,6 @@ export default async function globalSetup() {
         `${e.stderr ?? ''}${e.stdout ?? ''}`,
     )
   }
+
+  assertSignupBudget()
 }
