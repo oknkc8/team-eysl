@@ -6,6 +6,7 @@ import { SaveState } from '../../components/ui/SaveState'
 import {
   CATEGORY_LABEL,
   createRecordFromSheet,
+  createRecordUpload,
   listMatchRoster,
   RECORD_CATEGORIES,
   SUBCATEGORY_LABEL,
@@ -137,6 +138,14 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
   const [outcomes, setOutcomes] = useState<Record<string, SaveOutcome>>({})
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveProgress, setSaveProgress] = useState('')
+  /**
+   * The sheet itself, kept from the moment it was picked so 저장 can file it.
+   *
+   * Held rather than uploaded at parse time on purpose: a parse that fails, or
+   * a coach who looks at the rows and walks away, would otherwise leave a
+   * 결과지 on file for an import that never happened.
+   */
+  const [sheetFile, setSheetFile] = useState<File | null>(null)
 
   function reset() {
     setResult(null)
@@ -145,6 +154,7 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
     setOutcomes({})
     setSaveState('idle')
     setSaveProgress('')
+    setSheetFile(null)
   }
 
   // The category belongs to the whole file and every parsed row carries it, so
@@ -168,6 +178,7 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
     setPhase('parsing')
     setParseError('')
     setProgress('파일을 여는 중…')
+    setSheetFile(file)
 
     try {
       const parsed = await parseResultFile(file, {
@@ -228,6 +239,24 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
   const save = useMutation({
     mutationFn: async (batch: ParsedRow[]) => {
       const fileName = result?.fileName ?? ''
+
+      // File the sheet FIRST, once, and hang every record off its id.
+      //
+      // This is what makes a bad import undoable: records.upload_id is a FK
+      // with ON DELETE CASCADE (0004), so removing the 결과지 removes the rows
+      // it produced. Before this the column was never set on any of the 258
+      // records on file, and an import could only be unpicked one row at a
+      // time.
+      //
+      // A failure here stops the save rather than importing anyway. Rows with
+      // no upload to hang off are exactly what we already have too many of,
+      // and the coach can retry once they know.
+      let uploadId: string | undefined
+      if (sheetFile) {
+        setSaveProgress('결과지 보관 중…')
+        const upload = await createRecordUpload({ file: sheetFile, category })
+        uploadId = upload.id
+      }
       // Seeded from what is already on screen, so a retry of two failed rows
       // does not blank the 저장됨 marks on the thirty that worked.
       const done: Record<string, SaveOutcome> = { ...outcomes }
@@ -255,6 +284,7 @@ function UploadFlow({ roster }: { roster: RosterEntry[] }) {
               teammates: row.teammates,
             },
             { fileName, sheetName: row.sheetName, rowNumber: row.rowNumber },
+            uploadId,
           )
           done[row.key] = { ok: true }
         } catch (error) {

@@ -96,10 +96,16 @@
 --    its source months later, and record_uploads.storage_path plus 0036's
 --    fourth claim arm were built for exactly that.
 --
--- 3. ONE OBJECT PER UPLOAD ROW, NAMED BY UUID, NOT BY THE FILE'S OWN NAME.
---    file_name keeps what the uploader called it, for display. The object path
---    is <member id>/records/<uuid>, so two sheets called 결과.pdf cannot collide
---    and a filename can never steer where bytes land.
+-- 3. THE OBJECT KEY REUSES THE EXISTING SCHEME RATHER THAN INVENTING ONE.
+--    <member id>/records/<millis>_<nonce>_<sanitised name>, the same shape
+--    media/ and resources/ use, built by the same function. A uuid key was
+--    considered and dropped: it would have been a second naming convention in
+--    one bucket for no gain, and src/features/media/path.ts documents why the
+--    millis+nonce is load-bearing — pending_object_deletions (0036) is keyed on
+--    the path alone, so a key that can repeat lets a queued deletion and a later
+--    upload become the same row. The existing scheme already defends that, and
+--    safeObjectName() already stops a filename steering where bytes land.
+--    file_name keeps the original for display.
 
 -- ------------------------------------------------------- the path shape
 
