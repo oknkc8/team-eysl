@@ -1,7 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { AppShell } from '../components/layout/AppShell'
 import { useCurrentUser } from '../features/auth/useCurrentUser'
-import { isMasterAdmin, isStaff } from '../features/auth/schema'
+import { canManageRecords, isMasterAdmin, isStaff } from '../features/auth/schema'
 
 function Loading() {
   return <div className="page">불러오는 중…</div>
@@ -38,6 +38,22 @@ export function RequireStaff() {
 
   if (isLoading) return <Loading />
   if (!isStaff(user)) return <Navigate to="/" replace />
+
+  return <Outlet />
+}
+
+/**
+ * 결과지 screens. Wider than RequireStaff on purpose — see canManageRecords().
+ *
+ * These two screens were behind RequireStaff, which meant a coach the database
+ * trusts to file records could not open the screen that files them. The router
+ * comment beside them even recorded the mismatch without closing it.
+ */
+export function RequireRecordManager() {
+  const { user, isLoading } = useCurrentUser()
+
+  if (isLoading) return <Loading />
+  if (!canManageRecords(user)) return <Navigate to="/" replace />
 
   return <Outlet />
 }
