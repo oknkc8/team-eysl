@@ -87,7 +87,12 @@ export function AdminRecordUploadPage() {
       <Link to="/records" className="backLink">
         ← 기록
       </Link>
-      <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: '12px 0 16px' }}>결과지 업로드</h1>
+      <h1 style={{ fontSize: 22, letterSpacing: -0.8, margin: '12px 0 6px' }}>결과지 업로드</h1>
+      <p style={{ fontSize: 12, margin: '0 0 16px' }}>
+        <Link to="/admin/records/uploads" style={{ color: '#6b7178' }}>
+          올린 결과지 보기 →
+        </Link>
+      </p>
 
       <AsyncSection
         query={rosterQuery}

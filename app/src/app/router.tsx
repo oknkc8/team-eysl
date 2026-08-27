@@ -19,6 +19,7 @@ import { ActivityEditPage } from '../features/schedule/ActivityEditPage'
 import { MyRecordsPage } from '../features/records/MyRecordsPage'
 import { MemberRecordsPage } from '../features/records/MemberRecordsPage'
 import { AdminRecordEditPage } from '../features/records/AdminRecordEditPage'
+import { RecordUploadListPage } from '../features/records/RecordUploadListPage'
 import { MemberListPage } from '../features/members/MemberListPage'
 import { MemberDetailPage } from '../features/members/MemberDetailPage'
 import { MemberActivityPage } from '../features/members/MemberActivityPage'
@@ -229,6 +230,14 @@ export const router = createBrowserRouter([
                     .AdminRecordUploadPage,
                 }),
               },
+              // 결과지 목록. NOT lazy, unlike its sibling above: this screen lists
+              // rows and deletes one, and imports no parser at all — the ~900kB
+              // SheetJS bundle is the only reason /admin/records/upload is lazy,
+              // and paying that cost to read a list would be the wrong trade.
+              //
+              // `uploads` plural beside `upload` singular: two literal segments,
+              // so ranked matching never has to choose between them.
+              { path: '/admin/records/uploads', element: <RecordUploadListPage /> },
               // Ranked matching puts the literal /notices/new ahead of the sibling
               // /notices/:noticeId above, so the staff branch wins despite being
               // declared later — a member who types the URL lands on RequireStaff.
