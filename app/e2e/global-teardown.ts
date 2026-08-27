@@ -113,7 +113,15 @@ function heldBackendPid(lock: SeedLock): number | null {
   }
 }
 
-function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null) {
+/**
+ * Returns true only if the shared key is provably no longer held by us.
+ *
+ * The caller has to know: a release that could not be confirmed leaves the next
+ * run waiting on a lock nobody can name, and that is worth failing this run to
+ * say out loud rather than exiting green.
+ */
+function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null): boolean {
+  let terminated = false
   const { localPid } = lock
   const backendPid = verifiedBackendPid
 
@@ -152,15 +160,32 @@ function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null) {
       '   and exists (select 1 from pg_locks n' +
       `                where n.pid = l.pid and n.locktype = 'advisory' and n.classid = 0` +
       `                  and n.objsubid = 1 and n.granted and n.objid = ${lock.nonceKey})`
+    // A FAILED TERMINATE IS NOT A RELEASE, AND USED TO BE TREATED AS ONE. The
+    // catch below swallowed connection errors, and the code then went on to kill
+    // the local psql and delete the pid file — leaving the pooled backend holding
+    // the shared key with nothing left that could name it. That is the exact
+    // state this file measured and documented twenty lines up: killing the client
+    // does not release a pooled session's lock.
+    //
+    // Three outcomes, and only one of them is a failure:
+    //   't'   the backend was ours and is now gone      -> released
+    //   ''    nothing matched, so it is not holding      -> already released
+    //   throw we could not ask                          -> UNKNOWN, assume held
+    // The empty result is the ordinary "it expired on its own" case and must not
+    // be confused with the error case, which is why the output is read rather
+    // than the call merely being made.
     try {
-      execFileSync('bash', ['scripts/psql.sh', '-q', '-tAX', '-c', sql], {
+      const out = execFileSync('bash', ['scripts/psql.sh', '-q', '-tAX', '-c', sql], {
         cwd: appDir,
         stdio: 'pipe',
         encoding: 'utf8',
-      })
+      }).trim()
+      terminated = out === 't' || out === ''
     } catch {
-      // Raced with its own expiry between the check and here. Nothing to do:
-      // the lock is gone either way, which is the outcome we wanted.
+      // NOT "raced with its own expiry" — that case returns an empty result
+      // above, not an exception. Reaching here means the question could not be
+      // asked at all, so the backend may well still be holding the key.
+      terminated = false
     }
   }
 
@@ -176,7 +201,11 @@ function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null) {
   // Format validation cannot help here: 12345 is a well-formed pid whoever owns
   // it. Only the lock answers ownership, and when it declines to, the answer is
   // to do nothing.
-  if (backendPid !== null && Number.isInteger(localPid) && localPid > 0) {
+  // Gated on `terminated`, not merely on having had a pid. If the terminate
+  // could not be confirmed, the local psql is the one thing still tying a name
+  // to that backend — killing it discards the last handle on a lock we may still
+  // be holding.
+  if (terminated && Number.isInteger(localPid) && localPid > 0) {
     try {
       process.kill(localPid)
     } catch {
@@ -199,13 +228,18 @@ function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null) {
   // BOTH keys, and a stale nonce matches no current holder, so it refuses rather
   // than acting on the old pid. The cost of keeping it is a file to delete by
   // hand; the cost of removing it is an unnameable lock.
-  if (backendPid === null) return
+  // Widened from `backendPid === null` to "did not provably release". The
+  // narrower test missed the case the fifth review found: a non-null pid whose
+  // terminate FAILED. That path had a pid, so it deleted the record, and the
+  // backend it could not kill went on holding the shared key anonymously.
+  if (!terminated) return false
 
   try {
     fs.rmSync(SEED_LOCK_PID_FILE)
   } catch {
     /* nothing to clean up */
   }
+  return true
 }
 
 /**
@@ -339,8 +373,10 @@ export default function globalTeardown() {
   if (!lock) {
     throw new Error(
       'e2e: this run cannot prove it holds the seed lock, so nothing was removed.\n' +
-        'No lock was recorded, which means setup never acquired one — so this run never seeded ' +
-        'and no rows here are its own to delete.\n' +
+        'No usable lock record was found. Either setup never acquired one, or the record was ' +
+        'unreadable — readSeedLock() returns null for a missing file and for a malformed one ' +
+        'alike, and this refusal deliberately does not guess which.\n' +
+        'Either way this run cannot show that any row here is its own.\n' +
         'Any pwtest rows belong to a run that is still going, or are a leak from an older one.\n' +
         'Once you are certain nothing is running: npm run db:psql -- -f e2e/cleanup.sql',
     )
@@ -357,6 +393,10 @@ export default function globalTeardown() {
   // the survivor finds out: without it, deleting a live run's fixtures is
   // silent and the symptom lands on them with no way back to the cause.
   let lostLockDuringCleanup = false
+  // Seeded with the pre-cleanup answer so the `finally` has something usable if
+  // cleanup throws before the re-check runs.
+  let postCleanupHeldPid: number | null = heldPid
+  let released = false
   try {
     execFileSync(
       'bash',
@@ -366,7 +406,8 @@ export default function globalTeardown() {
     // No `lock !== null` guard: the refusal above makes that unreachable. It used
     // to be here, and it was the reason the one path that wrongly deleted was
     // also the one path that could not report it.
-    lostLockDuringCleanup = heldBackendPid(lock) === null
+    postCleanupHeldPid = heldBackendPid(lock)
+    lostLockDuringCleanup = postCleanupHeldPid === null
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string }
     throw new Error(
@@ -382,10 +423,29 @@ export default function globalTeardown() {
     // minutes and then failing, for a fault that was not theirs. Releasing here
     // costs the diagnosis nothing — the rows are still there to look at.
     //
-    // heldPid is the pre-cleanup answer and may be stale by now. That is safe
-    // only because the terminate carries its own predicate: a backend that
-    // stopped being ours matches nothing and is left alone.
-    releaseSeedLock(lock, heldPid)
+    // The POST-cleanup answer, not the pre-cleanup one. We re-ask who holds the
+    // lock immediately after cleanup and then used to throw that answer away,
+    // releasing against a reading from before the delete. Passing the fresh one
+    // means a hold that lapsed during cleanup arrives here as null, which
+    // terminates nothing — the correct action for a backend that is no longer
+    // ours.
+    released = releaseSeedLock(lock, postCleanupHeldPid)
+  }
+
+  // A release we could not confirm fails the run. Exiting green here is what
+  // would strand the next suite: it waits out LOCK_WAIT_MS on a key whose holder
+  // nobody can name, and the fault would look like theirs.
+  if (!released) {
+    throw new Error(
+      'e2e: the seed lock could not be provably released, so this run is failing rather than ' +
+        'reporting success.\n' +
+        'Terminating the holding backend either failed or could not be attempted, and killing ' +
+        'the local psql does NOT release a pooled session lock.\n' +
+        `The lock record was kept at ${SEED_LOCK_PID_FILE} so the backend can still be named:\n` +
+        `  <localPid> <backendPid> <nonceKey> — terminate it with ` +
+        `select pg_terminate_backend(<backendPid>)\n` +
+        'Until it is gone or its pg_sleep expires, the next run will wait and then fail.',
+    )
   }
 
   if (lostLockDuringCleanup) {
