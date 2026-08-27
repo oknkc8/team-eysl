@@ -137,6 +137,31 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['setup'],
+      // The screenshot specs are not smoke tests and must not run here — they
+      // exist to produce PNGs for a PR, and adding their cost to every suite run
+      // is a tax on everyone for something only the author needs.
+      testIgnore: /.*\.shots\.ts/,
+    },
+    {
+      // Screenshots for PR bodies. Run with `npm run shots`, never by default:
+      // it is NOT in the chromium project above and nothing depends on it.
+      //
+      // It reuses this file's globalSetup, so the pwtest fixtures and the
+      // per-run password are seeded and torn down by the same machinery the
+      // suite uses. That is the whole reason it lives here rather than in a
+      // script of its own — a second way to seed would be a second thing to keep
+      // correct, and this repository has paid for that lesson twice.
+      name: 'screenshots',
+      testMatch: /.*\.shots\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        // MOBILE, because the app is. A desktop viewport spends two thirds of
+        // the frame on grey margin and shows the product smaller than a phone
+        // does. 430x932 is an iPhone 14 Pro Max in CSS pixels.
+        viewport: { width: 430, height: 932 },
+        isMobile: false,
+      },
+      dependencies: ['setup'],
     },
   ],
   // `npm run dev` cannot start on this machine: fs.inotify.max_user_instances is
