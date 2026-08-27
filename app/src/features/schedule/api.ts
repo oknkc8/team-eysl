@@ -50,6 +50,20 @@ export type Activity = {
    * anyone was attributed.
    */
   created_by: string | null
+  /**
+   * Per-kind extras (0001). Read for one thing today: `details.relays`, the
+   * relay events a 대회 opens, which 대회 신청 offers as choices.
+   *
+   * `unknown` on purpose. It is jsonb that predates us -- our rows carry import
+   * provenance (`source`, `half`, `label`) and his carry coach, gear and plan --
+   * so the only safe readers are narrow parsers that return a default for
+   * anything they do not recognise. Typing it would invite a cast.
+   *
+   * Nothing writes `relays` in either app: his 일정 등록 has 14 controls and not
+   * one touches it, and the single write is a carry-forward on edit. A race
+   * offers relays only if somebody seeded them out of band.
+   */
+  details: unknown
 }
 
 export type MyApplication = {
@@ -77,7 +91,7 @@ export type ScheduleEntry = Seats & {
 }
 
 const ACTIVITY_COLUMNS =
-  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by'
+  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by, details'
 const APPLICATION_COLUMNS =
   'id, activity_id, application_type, wait_order, offer_status, offer_expires_at, details'
 
@@ -116,9 +130,14 @@ type ActivityRow = {
   place: string | null
   capacity: number | null
   created_by: string | null
+  details?: unknown
 }
 
-const toActivity = (row: ActivityRow): Activity => ({ ...row, kind: toKind(row.kind) })
+const toActivity = (row: ActivityRow): Activity => ({
+  ...row,
+  kind: toKind(row.kind),
+  details: row.details ?? null,
+})
 
 type ApplicationRow = {
   id: string
