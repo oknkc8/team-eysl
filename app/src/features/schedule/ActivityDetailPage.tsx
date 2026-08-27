@@ -17,6 +17,7 @@ import {
   respondToOffer,
   type MyApplication,
   type ScheduleEntry,
+  type TrainingDetail,
 } from './api'
 
 const CARD = {
@@ -161,6 +162,8 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
         </p>
       </article>
 
+      <TrainingDetailCard detail={activity.detail} />
+
       <div style={{ marginTop: 14 }}>
         {isPast ? (
           <p style={{ ...META, textAlign: 'center' }}>지난 일정입니다</p>
@@ -169,6 +172,74 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
         )}
       </div>
     </>
+  )
+}
+
+/**
+ * Coach, gear, notes, plan and link — shown only when there is something to show.
+ *
+ * Renders nothing at all when every field is empty, rather than a card of dashes.
+ * His app prints '-' for each missing field (index.html:3319-3320), which fills
+ * a training that has no detail with rows that say nothing.
+ *
+ * The plan keeps its line breaks: it is written as a numbered set and collapsing
+ * it to one paragraph would make it unreadable. `white-space: pre-wrap` is what
+ * does that, not a <br> loop over user text.
+ */
+function TrainingDetailCard({ detail }: { detail: TrainingDetail }) {
+  const rows: Array<[string, string]> = []
+  if (detail.coach) rows.push(['코치', detail.coach])
+  if (detail.gear) rows.push(['준비물', detail.gear])
+  if (detail.info) rows.push(['상세 내용', detail.info])
+  if (rows.length === 0 && !detail.plan && !detail.link) return null
+
+  return (
+    <article style={{ ...CARD, marginTop: 14 }}>
+      {rows.map(([label, value]) => (
+        <div key={label} style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
+          <span style={{ ...META, minWidth: 64, flexShrink: 0 }}>{label}</span>
+          <span style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{value}</span>
+        </div>
+      ))}
+
+      {detail.plan && (
+        <div style={{ marginTop: rows.length > 0 ? 12 : 0 }}>
+          <p style={{ ...META, margin: '0 0 6px' }}>훈련표</p>
+          <pre
+            style={{
+              margin: 0,
+              fontFamily: 'inherit',
+              fontSize: 14,
+              lineHeight: 1.7,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
+            {detail.plan}
+          </pre>
+        </div>
+      )}
+
+      {detail.link && (
+        // rel="noreferrer" because the target is a URL a staffer typed, and
+        // window.opener would otherwise be reachable from whatever it points at.
+        // The scheme was checked by 0048 before this ever got stored.
+        <a
+          href={detail.link}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: 'inline-block',
+            marginTop: 12,
+            fontSize: 14,
+            color: '#2b6cb0',
+            wordBreak: 'break-all',
+          }}
+        >
+          {detail.link}
+        </a>
+      )}
+    </article>
   )
 }
 
