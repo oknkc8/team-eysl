@@ -282,10 +282,22 @@ function assertSignupBudget() {
       stdio: 'pipe',
       encoding: 'utf8',
     }).trim()
-  } catch {
+  } catch (err) {
     // Not fatal. The seed just succeeded against this database, so a failure to
     // read one small table is a hiccup, and refusing the run over it would trade
     // a clear diagnostic for a new flake.
+    //
+    // BUT IT SAYS SO. Returning in silence would make a check that stopped
+    // running indistinguishable from a check that ran and found nothing — the
+    // exact shape this function was written to avoid one paragraph up. A rename
+    // of the table or a change of grants would disable it permanently and
+    // nobody would learn that from a green run.
+    const e = err as { stderr?: string; message?: string }
+    process.stderr.write(
+      'e2e: could not read signup_attempt_quota, so the signup budget was NOT checked. ' +
+        'Continuing anyway — if signup.spec fails, read that table by hand before believing ' +
+        `the assertions.\n  ${(e.stderr ?? e.message ?? '').trim().split('\n')[0]}\n`,
+    )
     return
   }
 
