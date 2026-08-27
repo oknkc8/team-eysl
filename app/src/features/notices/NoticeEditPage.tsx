@@ -395,10 +395,14 @@ function NoticeForm({
             lineHeight: 1.6,
           }}
         >
-          공지는 저장됐지만 아래 파일은 올라가지 않았습니다. 목록에서 제거하고 다시 올려주세요.
+          공지는 저장됐지만 아래 파일은 올라가지 않았습니다. 저장을 다시 누르면 이 파일만 다시 올립니다.
           <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
-            {uploadFailures.map((name) => (
-              <li key={name} style={{ wordBreak: 'break-all' }}>
+            {/* Keyed on name AND index: two files chosen at once can share a
+                name, and a duplicate React key drops one row from this list.
+                Resend identity is not here — that is the row id, carried in
+                `files` — so this is a rendering fix only. */}
+            {uploadFailures.map((name, index) => (
+              <li key={`${name}-${index}`} style={{ wordBreak: 'break-all' }}>
                 {name}
               </li>
             ))}

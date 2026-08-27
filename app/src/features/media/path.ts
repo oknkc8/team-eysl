@@ -87,10 +87,41 @@ export function chatObjectPath(input: {
   return objectPath({ ...input, prefix: 'chat' })
 }
 
+/**
+ * The same key again, under `records/` — a 결과지, the meet sheet the record
+ * importer read.
+ *
+ * A third library rather than a third naming scheme, and 0043 says why: one
+ * bucket with two conventions in it buys nothing, and the uniqueness the
+ * paragraph above calls load-bearing is exactly what a 결과지 needs too.
+ *
+ * The library is the only thing separating these objects from 자료실 files —
+ * `record_uploads` rows and `media_files` rows both name a path and nothing in
+ * the row shape distinguishes them. `team_file_library_allows_me` (0043) reads
+ * this prefix to decide that a 결과지 needs `can_manage_records()`, so the
+ * prefix is an authorization input, not a label.
+ */
+export function recordSheetObjectPath(input: {
+  memberId: string
+  fileName: string
+  now?: number
+  nonce?: string
+}): string {
+  return objectPath({ ...input, prefix: 'records' })
+}
+
+// TWO PREFIX COMMENTS ABOVE SAY OPPOSITE-SOUNDING THINGS, and both are right.
+// `records/` IS an authorization input — team_file_library_allows_me reads it to
+// require can_manage_records(). `chat/` is NOT a boundary — what keeps a direct
+// message private is messages_read, reached through team_file_is_readable.
+//
+// So a prefix means whatever a policy is written to make it mean, and the only
+// way to know which is which is to read the policy. Do not generalise from
+// either comment to the other.
 function objectPath(input: {
   memberId: string
   fileName: string
-  prefix: 'media' | 'resources' | 'chat'
+  prefix: 'media' | 'resources' | 'records' | 'chat'
   now?: number
   nonce?: string
 }): string {
