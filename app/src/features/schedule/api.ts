@@ -9,6 +9,8 @@ import { dedupeRaceHistory, type RaceHistoryRow } from './raceHistory'
 // from under it. Re-exported so call sites keep a single import.
 export { ACTIVITY_KINDS, KIND_LABEL, toKind } from './kinds'
 export type { ActivityKind } from './kinds'
+export type { TrainingDetail } from './trainingDetail'
+import { toTrainingDetail, type TrainingDetail } from './trainingDetail'
 
 // Same reason as kinds.ts: the dedupe rule is testable without a client.
 export { isFinished, isWaiting } from './raceHistory'
@@ -118,40 +120,6 @@ type ActivityRow = {
   created_by: string | null
   details: unknown
   updated_at: string
-}
-
-/**
- * The training-detail keys, and only those.
- *
- * `details` also carries keys this feature has no business reading — the
- * importer's `source`, and the backfilled `historical_*` registers — so it is
- * narrowed here rather than handed to the screens whole. Reading it as a
- * Record<string, unknown> and picking six names means a key added by somebody
- * else cannot appear on a training screen by accident.
- */
-export type TrainingDetail = {
-  coach: string | null
-  gear: string | null
-  info: string | null
-  link: string | null
-  plan: string | null
-  plan_by: string | null
-  plan_at: string | null
-}
-
-const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null)
-
-const toTrainingDetail = (raw: unknown): TrainingDetail => {
-  const d = (raw ?? {}) as Record<string, unknown>
-  return {
-    coach: str(d.coach),
-    gear: str(d.gear),
-    info: str(d.info),
-    link: str(d.link),
-    plan: str(d.plan),
-    plan_by: str(d.plan_by),
-    plan_at: str(d.plan_at),
-  }
 }
 
 const toActivity = (row: ActivityRow): Activity => ({

@@ -5,6 +5,7 @@ import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { SaveState } from '../../components/ui/SaveState'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { canEditActivity } from './permissions'
+import { isEmptyTrainingDetail } from './trainingDetail'
 import { formatCountdown, msUntil } from './countdown'
 import { formatDateLabel, formatTimeRange, hasFinished, todayKey } from './order'
 import { viewerKey } from '../../lib/queryKeys'
@@ -187,11 +188,12 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
  * does that, not a <br> loop over user text.
  */
 function TrainingDetailCard({ detail }: { detail: TrainingDetail }) {
+  if (isEmptyTrainingDetail(detail)) return null
+
   const rows: Array<[string, string]> = []
   if (detail.coach) rows.push(['코치', detail.coach])
   if (detail.gear) rows.push(['준비물', detail.gear])
   if (detail.info) rows.push(['상세 내용', detail.info])
-  if (rows.length === 0 && !detail.plan && !detail.link) return null
 
   return (
     <article style={{ ...CARD, marginTop: 14 }}>
