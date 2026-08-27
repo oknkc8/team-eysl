@@ -164,5 +164,29 @@ delete from auth.users
 where id in (select id from pwtest_auth_ids)
    or email like 'pwtest%@eysl.local';
 
+-- The signup rate limiter's bookkeeping, which the suite fills and nothing else
+-- empties.
+--
+-- WHY THIS BELONGS TO CLEANUP, AND ON WHAT GROUNDS. Not foreign-key ordering:
+-- signup_attempt_quota has no FK to members at all (0028:84 — the key is a
+-- client IP, not a member), so it can never block the members delete above, and
+-- justifying it that way would fall apart on the first look. The grounds are
+-- narrower and hold: signup.spec.ts drives real signups, every one of them
+-- writes here, and this is residue the suite created. A suite that cleans up
+-- after itself cleans this up too.
+--
+-- UNCONDITIONAL, AND NOT "the two keys". The rows are keyed by
+-- signup_client_key() — the client IP — and our traffic does not leave by one
+-- address. Two keys were observed at first and a third appeared later the same
+-- day, so any predicate naming a count would have gone stale within hours. All
+-- rows on this database are ours: dev has no real members signing up, and
+-- scripts/_env.sh is what keeps this pointed away from production.
+--
+-- THAT GUARD IS LOAD-BEARING. If _env.sh ever stops refusing a production ref,
+-- this delete stops being safe — it would clear a real person's rate-limit
+-- window, which is a security control and not bookkeeping. Revisit this
+-- statement if that changes.
+delete from public.signup_attempt_quota;
+
 drop table pwtest_auth_ids;
 drop table pwtest_member_ids;
