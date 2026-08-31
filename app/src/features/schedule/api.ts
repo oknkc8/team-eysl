@@ -1,4 +1,6 @@
 import { supabase } from '../../lib/supabase'
+import type { Json } from '../../types/database'
+import type { RaceEntry } from './raceEntry'
 import { lastDayOfMonth, monthPrefix } from './calendar'
 import { hasFinished, shiftDays, sortUpcomingFirst, todayKey } from './order'
 import { toKind, type ActivityKind } from './kinds'
@@ -49,6 +51,20 @@ export type Activity = {
    * anyone was attributed.
    */
   created_by: string | null
+  /**
+   * Per-kind extras (0001). Read for one thing today: `details.relays`, the
+   * relay events a 대회 opens, which 대회 신청 offers as choices.
+   *
+   * `unknown` on purpose. It is jsonb that predates us -- our rows carry import
+   * provenance (`source`, `half`, `label`) and his carry coach, gear and plan --
+   * so the only safe readers are narrow parsers that return a default for
+   * anything they do not recognise. Typing it would invite a cast.
+   *
+   * Nothing writes `relays` in either app: his 일정 등록 has 14 controls and not
+   * one touches it, and the single write is a carry-forward on edit. A race
+   * offers relays only if somebody seeded them out of band.
+   */
+  details: unknown
 }
 
 export type MyApplication = {
@@ -58,6 +74,13 @@ export type MyApplication = {
   wait_order: number | null
   offer_status: OfferStatus
   offer_expires_at: string | null
+  /**
+   * 대회 신청 내용 — which events this member entered (0045). `unknown` rather
+   * than a shape: the column is jsonb and the only safe reader is
+   * `raceEntry.parseEntry`, which returns null for anything it does not
+   * recognise. Typing it here would let a caller trust a cast instead.
+   */
+  details: unknown
 }
 
 export type Seats = { participant_count: number; waitlist_count: number }
@@ -69,9 +92,9 @@ export type ScheduleEntry = Seats & {
 }
 
 const ACTIVITY_COLUMNS =
-  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by'
+  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by, details'
 const APPLICATION_COLUMNS =
-  'id, activity_id, application_type, wait_order, offer_status, offer_expires_at'
+  'id, activity_id, application_type, wait_order, offer_status, offer_expires_at, details'
 
 // Far enough back that last month's training is still reachable, near enough
 // that the list stays a schedule rather than an archive.
@@ -108,9 +131,14 @@ type ActivityRow = {
   place: string | null
   capacity: number | null
   created_by: string | null
+  details?: unknown
 }
 
-const toActivity = (row: ActivityRow): Activity => ({ ...row, kind: toKind(row.kind) })
+const toActivity = (row: ActivityRow): Activity => ({
+  ...row,
+  kind: toKind(row.kind),
+  details: row.details ?? null,
+})
 
 type ApplicationRow = {
   id: string
@@ -119,6 +147,7 @@ type ApplicationRow = {
   wait_order: number | null
   offer_status: string
   offer_expires_at: string | null
+  details?: unknown
 }
 
 const toApplication = (row: ApplicationRow): MyApplication => ({
@@ -128,6 +157,7 @@ const toApplication = (row: ApplicationRow): MyApplication => ({
   wait_order: row.wait_order,
   offer_status: toOfferStatus(row.offer_status),
   offer_expires_at: row.offer_expires_at,
+  details: row.details ?? null,
 })
 
 // ------------------------------------------------------------------- reads
@@ -501,6 +531,36 @@ export async function applyToActivity(activityId: string): Promise<MyApplication
  * Returns nothing: whether a freed seat moved to the next person in line is the
  * server's business, and the caller learns it by refetching.
  */
+/**
+ * 대회 신청 종목을 저장한다 (0045).
+ *
+ * Deliberately NOT a parameter on `applyToActivity`. That RPC has four early
+ * returns before it writes anything, each one added to fix a real defect --
+ * re-applying must not move a queued member up the line (0007), an outstanding
+ * offer must go through respond_waitlist_offer, a seated member's re-tap is
+ * idempotent. Threading an entry write through all four would mean editing every
+ * branch of the one function whose branches are load-bearing.
+ *
+ * `set_race_entry_v1` calls `apply_to_activity` itself when there is no row yet,
+ * so the seat decision still has exactly one implementation and this call is all
+ * the screen needs -- first entry and later edit are the same request.
+ *
+ * The server validates the shape and refuses a non-race, so a failure here is
+ * showable: it raises in Korean.
+ */
+export async function setRaceEntry(
+  activityId: string,
+  entry: RaceEntry,
+): Promise<MyApplication> {
+  const { data, error } = await supabase.rpc('set_race_entry_v1', {
+    p_activity_id: activityId,
+    p_entry: entry,
+  })
+  if (error) throw error
+  if (!data) throw new Error('대회 신청을 저장하지 못했습니다')
+  return toApplication(data as ApplicationRow)
+}
+
 export async function cancelApplication(applicationId: string): Promise<void> {
   const { error } = await supabase.from('activity_applications').delete().eq('id', applicationId)
   if (error) throw error
@@ -607,6 +667,14 @@ export type ActivityInput = {
   end_time: string | null
   place: string | null
   capacity: number | null
+  /**
+   * Per-kind extras. Sent only when a form actually edits one of them, and
+   * always MERGED from the row it loaded rather than rebuilt -- see
+   * `raceEntry.withRelays`. Rebuilding this object from scratch on save is the
+   * legacy defect that destroyed backfilled attendance registers, and our own
+   * rows carry import provenance no form here knows about.
+   */
+  details?: Json
 }
 
 /**

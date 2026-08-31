@@ -5,6 +5,7 @@ import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { SaveState } from '../../components/ui/SaveState'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { canEditActivity, creatableKinds, MEMBER_KIND } from './permissions'
+import { formatRelayInput, parseRelayInput, relayOptions, withRelays } from './raceEntry'
 import {
   createActivity,
   deleteActivity,
@@ -193,6 +194,13 @@ function ActivityForm({
       ? ''
       : String(activity.capacity),
   )
+  // 대회가 여는 단체전 종목, one per line. Only a 대회 has any.
+  //
+  // This input exists because the picker it feeds was otherwise always empty:
+  // `details.relays` is read by 대회 신청 and written by nothing -- his 일정
+  // 등록 has 14 controls and not one touches it. Same judgement as end_date in
+  // #19: port the feature, and give the field a writer so it is not decoration.
+  const [relayText, setRelayText] = useState(formatRelayInput(relayOptions(activity?.details)))
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
   const save = useMutation({
@@ -267,6 +275,13 @@ function ActivityForm({
       end_time: fromTimeInput(endTime),
       place: trimToNull(place),
       capacity: capacityValue,
+      // Merged into whatever the row already holds, never rebuilt: our imported
+      // activities carry `source`/`half`/`label` that no field here knows about,
+      // and rebuilding this object is exactly how the legacy app destroyed
+      // backfilled attendance registers.
+      ...(kind === 'race'
+        ? { details: withRelays(activity?.details, parseRelayInput(relayText)) }
+        : {}),
     })
   }
 
@@ -462,6 +477,30 @@ function ActivityForm({
           <p role="alert" style={{ fontSize: 12, color: '#a33', margin: '8px 0 0' }}>
             이미 {reservedSeats}명이 자리를 확보했습니다. 정원을 그보다 적게 줄일 수 없습니다.
           </p>
+        )}
+
+        {kind === 'race' && (
+          <>
+            <label htmlFor="activity-relays" style={{ ...LABEL, marginTop: 14 }}>
+              단체전 종목{' '}
+              <span style={{ color: '#6b7076', fontWeight: 400 }}>(한 줄에 하나씩)</span>
+            </label>
+            <textarea
+              id="activity-relays"
+              value={relayText}
+              onChange={(e) => {
+                setRelayText(e.target.value)
+                touched()
+              }}
+              rows={3}
+              placeholder={'예: 계영 200m\n혼계영 200m'}
+              style={{ ...FIELD, minHeight: 88, paddingTop: 10, resize: 'vertical' }}
+            />
+            <p style={NOTE}>
+              여기 적은 종목이 회원의 대회 신청 화면에 선택지로 나옵니다. 비워 두면 그 대회는
+              단체전 없이 개인종목만 받습니다.
+            </p>
+          </>
         )}
       </div>
 

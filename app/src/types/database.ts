@@ -1454,6 +1454,27 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      set_race_entry_v1: {
+        Args: { p_activity_id: string; p_entry: Json }
+        Returns: {
+          activity_id: string
+          application_type: string
+          created_at: string
+          details: Json
+          id: string
+          member_id: string
+          offer_expires_at: string | null
+          offer_status: string
+          updated_at: string
+          wait_order: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_applications"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       set_signup_pass_v1: {
         Args: { p_allowed: boolean; p_member_id: string }
         Returns: {
@@ -1492,6 +1513,10 @@ export type Database = {
       stroke_rankings_v1: { Args: never; Returns: Json }
       team_event_rankings_v1: { Args: never; Returns: Json }
       team_file_is_readable: { Args: { p_path: string }; Returns: boolean }
+      team_file_library_allows_me: {
+        Args: { p_path: string }
+        Returns: boolean
+      }
       update_board_post_v1: {
         Args: {
           p_body: string

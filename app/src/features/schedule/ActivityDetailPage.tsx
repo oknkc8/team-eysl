@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
+import { RaceEntryCard } from './RaceEntryCard'
 import { SaveState } from '../../components/ui/SaveState'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { canEditActivity } from './permissions'
@@ -178,9 +179,32 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
 // the legacy race (index.html:2384) rebuilt in a new file.
 function ApplicationSection({ entry, activityId }: { entry: ScheduleEntry; activityId: string }) {
   const { mine } = entry
-  if (!mine) return <NotApplied entry={entry} activityId={activityId} />
-  if (mine.application_type === 'participant') return <Seated mine={mine} activityId={activityId} />
-  return <Waitlisted mine={mine} activityId={activityId} />
+  // 대회 신청 sits under whichever of the four bodies applies, not instead of
+  // one: the seat and the events are separate answers, and a member who is
+  // waitlisted still needs to say what they would swim. It is only offered for a
+  // 대회 — a 훈련 has no events to enter (0045 refuses one anyway).
+  const events = entry.activity.kind === 'race' ? <RaceEntryCard entry={entry} /> : null
+
+  if (!mine)
+    return (
+      <>
+        <NotApplied entry={entry} activityId={activityId} />
+        {events}
+      </>
+    )
+  if (mine.application_type === 'participant')
+    return (
+      <>
+        <Seated mine={mine} activityId={activityId} />
+        {events}
+      </>
+    )
+  return (
+    <>
+      <Waitlisted mine={mine} activityId={activityId} />
+      {events}
+    </>
+  )
 }
 
 function NotApplied({ entry, activityId }: { entry: ScheduleEntry; activityId: string }) {
