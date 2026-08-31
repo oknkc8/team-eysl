@@ -213,10 +213,25 @@ delete from public.media_folders where created_by in (select id from pwtest_memb
 --       set ..., marked_by = excluded.marked_by
 --
 -- A pwtest staff account tapping a member who was ALREADY marked rewrites marked_by
--- on a row the club owns. The row then looked like ours and this file deleted it.
--- Fifteen real attendance rows went that way before anybody counted (249 -> 234 over
--- five days; every surviving row belongs to a real member). The upsert destroys the
--- evidence, so no predicate written after the fact can separate the two cases.
+-- on a row the club owns. The row then looks like ours, and this predicate deleted it.
+--
+-- HOW FAR THAT IS ESTABLISHED, because the two halves are not equally proven.
+-- Fifteen real attendance rows ARE gone -- 249 on 2026-08-26 against 234 now, with
+-- members, no_login and with_login identical in both snapshots, so neither reading
+-- was taken mid-run (a run would show 11 with_login, not 5) and no member was
+-- removed. The split matches too: 198 -> 188 for members who never log in, 51 -> 46
+-- for those who do, and 10 + 5 = 15.
+--
+-- The MECHANISM above is verified by construction and has not been shown to be what
+-- took them. Every attendance-writing spec was read afterwards and all of them mark
+-- a fixture member on a fixture activity, so this path has no live trigger today.
+-- The route those fifteen rows took is unknown; a deleted activity cascading is the
+-- likelier candidate and was not confirmed. Arithmetic proves the loss. It does not
+-- name the cause, and this comment used to claim it did.
+--
+-- The change stands anyway, because the hazard is real and cheap to close, and
+-- because the fixture work now in flight -- a login-less member fixture, so tests
+-- stop reaching the 36 real ones -- is what would give this path its first trigger.
 --
 -- So key on what the row IS, not on who last touched it. member_id and activity_id
 -- are identity and no foreign write can change them; marked_by is a mutable column
