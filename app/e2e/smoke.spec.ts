@@ -1,7 +1,20 @@
 import { SEED, STATE, expect, test, waitForScreen } from './fixtures'
 
 /**
- * One test per route in src/app/router.tsx.
+ * The routes that can be opened with no fixture id — not every route, though
+ * this line used to say so.
+ *
+ * Measured 2026-08-31: the router declares 45 route patterns; this file names 28
+ * paths, of which 24 are declared patterns and 4 are concrete instantiations
+ * (/events/attendance, /events/improve, /events/late for /events/:kind, plus
+ * /no-such-route-exists for the 404). So 21 patterns are not named here. Most
+ * are dynamic — /board/:postId, /members/:memberId — and belong to the feature
+ * specs that own their fixtures, which is the right place for them.
+ *
+ * What was NOT deliberate: five reachable routes that no spec opened at all
+ * until sweep.spec.ts. The old sentence claimed one test per route, so nobody
+ * went to look. A docstring asserting complete coverage is worth less than no
+ * docstring — it answers the question somebody would otherwise go and check.
  *
  * Each loads the route and asserts two things: a heading the screen can only
  * produce by reaching its own render, and an empty console. The second is what

@@ -1218,10 +1218,28 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      save_activity_details_v1: {
+        Args: {
+          p_activity_id: string
+          p_coach: string
+          p_expected_updated_at: string
+          p_gear: string
+          p_info: string
+          p_link: string
+          p_plan: string
+        }
+        Returns: Json
+      }
       save_notice_v1: {
         Args: {
           p_attachments: Json
           p_body: string
+          // Restored by hand after `npm run db:types`, which drops it. A plpgsql
+          // parameter is nullable and the generator cannot see that:
+          // save_notice_v1 signals "create" by passing p_notice_id as null and
+          // branches on `p_notice_id is null`, so the generated `string` forbids
+          // the very call the function is written to accept. Same for the
+          // expected version, which must be null when creating.
           p_expected_updated_at: string | null
           p_notice_id: string | null
           p_title: string
@@ -1459,6 +1477,27 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      set_race_entry_v1: {
+        Args: { p_activity_id: string; p_entry: Json }
+        Returns: {
+          activity_id: string
+          application_type: string
+          created_at: string
+          details: Json
+          id: string
+          member_id: string
+          offer_expires_at: string | null
+          offer_status: string
+          updated_at: string
+          wait_order: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_applications"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       set_signup_pass_v1: {
         Args: { p_allowed: boolean; p_member_id: string }
         Returns: {
@@ -1497,6 +1536,10 @@ export type Database = {
       stroke_rankings_v1: { Args: never; Returns: Json }
       team_event_rankings_v1: { Args: never; Returns: Json }
       team_file_is_readable: { Args: { p_path: string }; Returns: boolean }
+      team_file_library_allows_me: {
+        Args: { p_path: string }
+        Returns: boolean
+      }
       update_board_post_v1: {
         Args: {
           p_body: string

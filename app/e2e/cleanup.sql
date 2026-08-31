@@ -82,6 +82,55 @@ select m.id
  where u.email like 'pwtest%@eysl.local'
 on conflict (id) do nothing;
 
+-- The orphans an EARLIER RUN OF THIS FILE made, which neither list above can
+-- reach.
+--
+-- NOT a signup path that forgets to make an auth user. register_member_v1 is a
+-- trigger on auth.users and its insert is
+-- `insert into public.members (auth_user_id, nickname) values (new.id, ...)`
+-- (0028:192), so auth_user_id is set at creation and no member row is ever born
+-- with a null link. The null is put there afterwards, and it is this file that
+-- puts it there.
+--
+-- members_auth_user_id_fkey is ON DELETE SET NULL (0001:16), chosen so that
+-- deleting a login cannot take that member's attendance and record history with
+-- it. Now read the bottom of this file against the middle: the auth.users delete
+-- matches on the email shape UNCONDITIONALLY, while the members delete is
+-- conditional on this id list. Before the signup block above existed, that
+-- asymmetry fired on every run -- the auth row went on its email, the member row
+-- was not in the list, and what survived was a member with auth_user_id set to
+-- null. Those are the fourteen orphans the block above was written to stop.
+--
+-- It does stop new ones. It cannot reach the ones already made, because the link
+-- it joins through is precisely what was nulled. One such row survived 3.8 days
+-- and many full suite runs, and two agents each found it, correctly checked that
+-- no runner was live, correctly called it a leak, and had no way to remove it.
+--
+-- THE PREFIX IS DOING THE WORK HERE, AND `auth_user_id is null` IS NOT THE
+-- SAFETY PROPERTY. 36 of this database's 41 members have a null auth_user_id --
+-- they came from the club workbook and have never logged in -- so that conjunct
+-- on its own would delete most of the real roster. What makes this safe is the
+-- nickname prefix, resting on the same two facts the email predicate at the
+-- bottom already rests on: signup.spec.ts builds the address and the nickname
+-- from one `pwtest...` string and names the prefix "the contract cleanup.sql
+-- matches", and the importer refuses that prefix outright, case-insensitively,
+-- on both source names before disambiguation (scripts/import/parse.ts,
+-- ReservedNicknameError), so no imported member can carry it.
+--
+-- This is the one statement in this file that reads a nickname, and the header
+-- above explains at length why the others must not. Two things keep it from
+-- being the thing that header warns about. It is confined to rows that have
+-- ALREADY lost their auth link, so a member who can sign in is out of its reach
+-- whatever they are called. And it adds to the id list rather than deleting, so
+-- the row leaves through the same ordered deletes as every other fixture and
+-- cannot strand a foreign key.
+insert into pwtest_member_ids (id)
+select m.id
+  from public.members m
+ where m.auth_user_id is null
+   and m.nickname like 'pwtest%'
+on conflict (id) do nothing;
+
 -- Captured before the member rows go, because auth_user_id is the only link
 -- from a seeded member to the auth.users row 0027's trigger created for it.
 create temporary table pwtest_auth_ids as

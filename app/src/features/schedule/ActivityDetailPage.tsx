@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
+import { RaceEntryCard } from './RaceEntryCard'
 import { SaveState } from '../../components/ui/SaveState'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { canEditActivity } from './permissions'
+import { isEmptyTrainingDetail } from './trainingDetail'
 import { formatCountdown, msUntil } from './countdown'
 import { formatDateLabel, formatTimeRange, hasFinished, todayKey } from './order'
 import { viewerKey } from '../../lib/queryKeys'
@@ -17,6 +19,7 @@ import {
   respondToOffer,
   type MyApplication,
   type ScheduleEntry,
+  type TrainingDetail,
 } from './api'
 
 const CARD = {
@@ -161,6 +164,8 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
         </p>
       </article>
 
+      <TrainingDetailCard detail={activity.detail} />
+
       <div style={{ marginTop: 14 }}>
         {isPast ? (
           <p style={{ ...META, textAlign: 'center' }}>지난 일정입니다</p>
@@ -172,15 +177,107 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
   )
 }
 
+/**
+ * Coach, gear, notes, plan and link — shown only when there is something to show.
+ *
+ * Renders nothing at all when every field is empty, rather than a card of dashes.
+ * His app prints '-' for each missing field (index.html:3319-3320), which fills
+ * a training that has no detail with rows that say nothing.
+ *
+ * The plan keeps its line breaks: it is written as a numbered set and collapsing
+ * it to one paragraph would make it unreadable. `white-space: pre-wrap` is what
+ * does that, not a <br> loop over user text.
+ */
+function TrainingDetailCard({ detail }: { detail: TrainingDetail }) {
+  if (isEmptyTrainingDetail(detail)) return null
+
+  const rows: Array<[string, string]> = []
+  if (detail.coach) rows.push(['코치', detail.coach])
+  if (detail.gear) rows.push(['준비물', detail.gear])
+  if (detail.info) rows.push(['상세 내용', detail.info])
+
+  return (
+    <article style={{ ...CARD, marginTop: 14 }}>
+      {rows.map(([label, value]) => (
+        <div key={label} style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
+          <span style={{ ...META, minWidth: 64, flexShrink: 0 }}>{label}</span>
+          <span style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{value}</span>
+        </div>
+      ))}
+
+      {detail.plan && (
+        <div style={{ marginTop: rows.length > 0 ? 12 : 0 }}>
+          <p style={{ ...META, margin: '0 0 6px' }}>훈련표</p>
+          <pre
+            style={{
+              margin: 0,
+              fontFamily: 'inherit',
+              fontSize: 14,
+              lineHeight: 1.7,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
+            {detail.plan}
+          </pre>
+        </div>
+      )}
+
+      {detail.link && (
+        // rel="noreferrer" because the target is a URL a staffer typed, and
+        // window.opener would otherwise be reachable from whatever it points at.
+        // The scheme was checked by 0048 before this ever got stored.
+        <a
+          href={detail.link}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: 'inline-block',
+            marginTop: 12,
+            fontSize: 14,
+            color: '#2b6cb0',
+            wordBreak: 'break-all',
+          }}
+        >
+          {detail.link}
+        </a>
+      )}
+    </article>
+  )
+}
+
 // One of four bodies, chosen by the viewer's own application row. The counts
 // above never take part in this decision — apply_to_activity() made it under a
 // row lock, and re-deciding it here from participant_count against capacity is
 // the legacy race (index.html:2384) rebuilt in a new file.
 function ApplicationSection({ entry, activityId }: { entry: ScheduleEntry; activityId: string }) {
   const { mine } = entry
-  if (!mine) return <NotApplied entry={entry} activityId={activityId} />
-  if (mine.application_type === 'participant') return <Seated mine={mine} activityId={activityId} />
-  return <Waitlisted mine={mine} activityId={activityId} />
+  // 대회 신청 sits under whichever of the four bodies applies, not instead of
+  // one: the seat and the events are separate answers, and a member who is
+  // waitlisted still needs to say what they would swim. It is only offered for a
+  // 대회 — a 훈련 has no events to enter (0045 refuses one anyway).
+  const events = entry.activity.kind === 'race' ? <RaceEntryCard entry={entry} /> : null
+
+  if (!mine)
+    return (
+      <>
+        <NotApplied entry={entry} activityId={activityId} />
+        {events}
+      </>
+    )
+  if (mine.application_type === 'participant')
+    return (
+      <>
+        <Seated mine={mine} activityId={activityId} />
+        {events}
+      </>
+    )
+  return (
+    <>
+      <Waitlisted mine={mine} activityId={activityId} />
+      {events}
+    </>
+  )
 }
 
 function NotApplied({ entry, activityId }: { entry: ScheduleEntry; activityId: string }) {

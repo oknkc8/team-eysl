@@ -26,9 +26,20 @@ test('chat attachment: pick, send, and see it in the thread', async ({ page }) =
   await waitForScreen(page)
   // AND the thread has finished loading. waitForScreen only proves the screen
   // painted; the message list is a separate query, and shooting before it
-  // resolves puts loading skeletons behind the subject of the frame. Fourth
-  // instance of the same rule in this file: wait for what you are photographing.
-  await expect(page.getByText('아직 메시지가 없습니다', { exact: false })).toBeVisible()
+  // resolves puts loading skeletons behind the subject of the frame.
+  //
+  // THIS USED TO ASSERT THE ROOM WAS EMPTY, and that was wrong in a way only a
+  // full run could show. writes.spec.ts:845 sends a pwtest message to this same
+  // 단체 채팅 room, so under `--project=screenshots` alone the room was empty and
+  // the assertion held, while a whole-suite run put another spec's message in it
+  // and this failed. The bug was never in either spec — it was in the pair, and
+  // the pair had never run together.
+  //
+  // So it waits on the absence of the LOADING state rather than the absence of
+  // other people's data: AsyncSection renders Shimmer with aria-busy while the
+  // query is pending, and that is true or false regardless of what the room
+  // holds. Asserting emptiness is asserting something no spec here owns.
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
 
   // A file that is its own explanation when someone opens the PNG and wonders
   // what was uploaded. Built here rather than committed: a fixture file in the
@@ -83,7 +94,7 @@ test('chat attachment: pick, send, and see it in the thread', async ({ page }) =
 test('chat attachment: a file with no caption is a message', async ({ page }) => {
   await page.goto('/chat')
   await waitForScreen(page)
-  await expect(page.getByText('아직 메시지가 없습니다', { exact: false })).toBeVisible()
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
 
   // send_message_v1 takes text OR an attachment, so the send button must enable
   // on a file alone. Worth its own frame: it is the rule most likely to be
