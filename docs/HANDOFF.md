@@ -4,7 +4,7 @@
 누가 무엇을 들고 있는지, 어떤 마이그레이션 번호가 나갔는지, 무엇을 왜 그렇게 정했는지,
 그리고 아직 답을 못 받은 질문들.
 
-**마지막 갱신: 2026-08-31 · `origin/dev` = `62e50c6`**
+**마지막 갱신: 2026-08-31 · `origin/dev` = `730469e`**
 
 갱신 규칙은 `CLAUDE.md`의 「Handoff log」 절에 있습니다.
 
@@ -47,7 +47,8 @@ dev 머지          55건
 |---|---|---|
 | `feat/chat-attachment-name` | `messages.attachment_name`, `0049_a` | **PR #53 머지됨** |
 | `chore/e2e-fixture-namespacing` | fixture namespace · 로그인 없는 회원 등록 · signup exact-id cleanup | **PR #58 머지됨** |
-| `fix/e2e-teardown-residue` | teardown residue read-only 진단 | 진행 중 |
+| `fix/e2e-teardown-residue` | teardown residue read-only 진단 | **PR #59 머지됨** |
+| `test/e2e-screenshot-project` | 일반 E2E와 screenshot 생성 분리 | 진행 중 |
 
 **그 외는 전부 머지됐습니다** — 훈련 상세(`#45`) · 라우트 커버리지(`#47`) · 활동 댓글과 푸시
 (`#54`) · 채팅 첨부 이름(`#53`) · 정리 결함 둘(`#50`·`#55`) · 문서 넷(`#46`·`#48`·`#52`·`#56`·`#57`).
@@ -131,8 +132,9 @@ ledger를 비워 다음 실행에 stale ID를 남기지 않는다. 프로세스�
 
 **검증 (2026-08-31)**: 정적 TypeScript 게이트 4종, Vitest **670개**, namespace된
 signup·활동 댓글 E2E **27개**, 전체 Playwright **149개 통과 / 1개 조건부 skip**. 전체 실행은
-스크린샷 8장을 현재 namespace 데이터로 갱신했다. 이미지가 fixture 문자열을 보여 주므로, 다른
-worktree에서 `npm run test:e2e`를 다시 실행하기 전에는 screenshot churn 정책을 확인할 것.
+스크린샷 8장을 현재 namespace 데이터로 갱신했다. 일반 `npm run test:e2e`는 chromium project만
+실행해 PNG를 쓰지 않는다. 스크린샷은 `npm run shots`로 명시 실행하고, 이미지가 fixture namespace를
+보이므로 커밋 전에는 diff를 확인한다.
 
 **2. 정리가 teardown 없이 끝나는 실행.** 러너 0인데 `attendance`에 pwtest 잔여 15행이 남는
 경로는 아직 조사 대상이다. 현재 reporter는 모든 `pwtest%`가 아니라 **자기 namespace만** 세므로
@@ -145,13 +147,13 @@ seed lock 수를 함께 출력한다. 재현 전에는 이 결과를 남기고, 
 
 - Claude 세션 `f10128c2-fb0f-408f-8b2a-caab67bcda74`는 사용량 한도로 중단됐다. 이후 작업은
   Codex가 이 branch에서 재개했다.
-- 기준은 로컬 루트가 아니라 `origin/dev` `62e50c6`다. 루트 `dev`는 이 기준보다 뒤처져 있을 수
+- 기준은 로컬 루트가 아니라 `origin/dev` `730469e`다. 루트 `dev`는 이 기준보다 뒤처져 있을 수
   있으므로, 기존 `free-board` worktree 또는 최신 `origin/dev`에서 새 worktree를 만든다.
 - 이 branch는 `origin/dev` 위로 rebase됐다. push 전에는 `git diff --check`, TypeScript 4종,
   Vitest, `npm run test:e2e`를 다시 확인한다. `npm run shots`는 PNG를 쓴다.
 - 사용자가 만든 untracked 파일과 git-ignored `.env`는 절대 정리 대상으로 취급하지 않는다.
-- screenshot이 fixture namespace를 화면에 표시한다. 이미지 안정화 방법을 정하기 전에는 자동으로
-  새 PNG를 커밋하거나 되돌리지 말고, diff를 먼저 확인한다.
+- 일반 E2E는 screenshot project를 실행하지 않는다. 새 PNG가 필요할 때만 `npm run shots`를 쓰고,
+  fixture namespace가 보이는 이미지 diff를 확인한 뒤 커밋 여부를 정한다.
 
 ## 5. 방장님께 여쭐 것 — 다섯
 
