@@ -44,14 +44,22 @@ test.describe('운영진 화면 — 아무 스펙도 열어본 적 없는 것들
     await open.waitFor({ state: 'visible', timeout: 15_000 })
     await open.click()
 
-    // Either the list or its empty state — both mean the RPC answered. A
-    // spinner that never resolves is the failure this catches.
+    // The list or its empty state — both mean activity_enrollable_members_v1
+    // answered. The RPC's own error message is NOT in this set, and that is the
+    // point: an earlier draft accepted 회원 목록을 불러오지 못했습니다 as a pass,
+    // so the test went green exactly when the thing it claims to exercise
+    // failed. A comment promising coverage and an assertion buying something
+    // weaker is the defect this sweep exists to find.
+    //
+    // exact:true because Playwright matches accessible names by substring, and
+    // 명단 추가 contains 추가 — without it the locator resolves to the panel
+    // toggle rather than a member's button.
     await expect(
       page
         .getByText('추가할 수 있는 회원이 없습니다')
-        .or(page.getByRole('button', { name: '추가' }).first())
-        .or(page.getByText('회원 목록을 불러오지 못했습니다')),
+        .or(page.getByRole('button', { name: '추가', exact: true }).first()),
     ).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('회원 목록을 불러오지 못했습니다')).toHaveCount(0)
 
     expect(consoleWatcher.errors, 'console after opening 명단 추가').toEqual([])
   })
@@ -72,6 +80,9 @@ test.describe('운영진 화면 — 아무 스펙도 열어본 적 없는 것들
   test('회원 연결이 렌더된다', async ({ page, consoleWatcher }) => {
     await page.goto('/members/link')
     await waitForScreen(page)
+    // A heading, not just a quiet console: a different screen settling in this
+    // one's place is silent, and the console cannot tell them apart.
+    await expect(page.getByRole('heading', { name: '회원 연결' })).toBeVisible()
     expect(consoleWatcher.errors, 'console on /members/link').toEqual([])
   })
 })
@@ -86,12 +97,14 @@ test.describe('회원 화면', () => {
   test('영법별 랭킹이 렌더된다', async ({ page, consoleWatcher }) => {
     await page.goto('/events/stroke')
     await waitForScreen(page)
+    await expect(page.getByRole('heading', { name: '영법별 랭킹' })).toBeVisible()
     expect(consoleWatcher.errors, 'console on /events/stroke').toEqual([])
   })
 
   test('글쓰기 화면이 렌더된다', async ({ page, consoleWatcher }) => {
     await page.goto('/board/new')
     await waitForScreen(page)
+    await expect(page.getByRole('button', { name: '등록하기' })).toBeVisible()
     expect(consoleWatcher.errors, 'console on /board/new').toEqual([])
   })
 })

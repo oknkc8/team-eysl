@@ -1,4 +1,4 @@
-import { SEED, STATE, expect, test, waitForScreen } from './fixtures'
+import { SEED, STATE, directRequest, expect, test, waitForScreen } from './fixtures'
 
 /**
  * Round two: the write paths and the cascades, not the renders.
@@ -35,41 +35,55 @@ test.describe('자유게시판 글쓰기 — 쓰고, 목록에 나타나고, 지
 
   test('쓴 글이 목록과 상세에 나타나고, 지우면 사라진다', async ({ page, consoleWatcher }) => {
     const title = `pwtest sweep ${Date.now()}`
+    let postId = ''
 
-    await page.goto('/board/new')
-    await waitForScreen(page)
-    await page.getByLabel('제목').fill(title)
-    await page.getByLabel('내용').fill('pwtest 본문입니다.')
-    await page.getByRole('button', { name: '등록하기' }).click()
-    // Wait for the app to land on the new post before navigating. Without this
-    // the goto below aborts the in-flight mutation and the list is empty — which
-    // reads exactly like "the write silently failed" and is really a race in
-    // the test. board.spec.ts:54 waits the same way.
-    await page.waitForURL(/\/board\/[0-9a-f-]{36}$/, { timeout: 20_000 })
+    // try/finally, because board.spec.ts wraps all eight of its write tests and
+    // this one did not. The assertion this test exists FOR (does the post reach
+    // the list) is also the one most likely to fail, and without the finally a
+    // failure there dies before the delete and leaves a row behind on a
+    // database three other suites are using.
+    try {
+      await page.goto('/board/new')
+      await waitForScreen(page)
+      await page.getByLabel('제목').fill(title)
+      await page.getByLabel('내용').fill('pwtest 본문입니다.')
+      await page.getByRole('button', { name: '등록하기' }).click()
+      // Wait for the app to land on the new post before navigating away.
+      // Without this the goto below aborts the in-flight mutation and the list
+      // comes up empty, which reads exactly like "the write silently failed"
+      // and is really a race in the test. board.spec.ts:54 waits the same way.
+      await page.waitForURL(/\/board\/[0-9a-f-]{36}$/, { timeout: 20_000 })
+      postId = page.url().split('/').pop() ?? ''
 
-    // THE CASCADE, and the reason this test exists: the write is not the claim,
-    // the list is. A create that returns 200 and never appears is the shape of
-    // defect this whole track is looking for.
-    await page.goto('/board')
-    await waitForScreen(page)
-    await expect(page.getByText(title)).toBeVisible({ timeout: 15_000 })
+      // THE CASCADE, and the reason this test exists: the write is not the
+      // claim, the list is. A create that returns 200 and never appears is the
+      // shape of defect this whole track is looking for.
+      await page.goto('/board')
+      await waitForScreen(page)
+      await expect(page.getByText(title)).toBeVisible({ timeout: 15_000 })
 
-    await page.getByText(title).first().click()
-    await waitForScreen(page)
-    await expect(page.getByRole('heading', { name: title })).toBeVisible()
+      await page.getByText(title).first().click()
+      await waitForScreen(page)
+      await expect(page.getByRole('heading', { name: title })).toBeVisible()
 
-    // And it has to be removable by the person who wrote it, or the suite has
-    // left a row behind on a shared database.
-    page.once('dialog', (d) => void d.accept())
-    await page.getByRole('button', { name: '삭제' }).first().click()
+      page.once('dialog', (d) => void d.accept())
+      await page.getByRole('button', { name: '삭제' }).first().click()
 
-    // The app redirects to the list once the delete lands. Waiting for that —
-    // rather than navigating there myself — is what separates "deleted" from
-    // "navigated away mid-delete". My draft did the latter twice, on create and
-    // on delete, and both times it read as a broken write.
-    await page.waitForURL('**/board', { timeout: 20_000 })
-    await waitForScreen(page)
-    await expect(page.getByRole('link', { name: new RegExp(title) })).toHaveCount(0)
+      await page.waitForURL('**/board', { timeout: 20_000 })
+      await waitForScreen(page)
+      await expect(page.getByRole('link', { name: new RegExp(title) })).toHaveCount(0)
+      // Deleted through the UI, which is what this test came to prove, so the
+      // finally has nothing left to do.
+      postId = ''
+    } finally {
+      if (postId) {
+        await directRequest(page, {
+          path: '/rest/v1/rpc/delete_board_post_v1',
+          method: 'POST',
+          body: { p_post_id: postId },
+        })
+      }
+    }
 
     expect(consoleWatcher.errors, 'console across the board lifecycle').toEqual([])
   })
