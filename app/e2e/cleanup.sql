@@ -82,6 +82,42 @@ select m.id
  where u.email like 'pwtest%@eysl.local'
 on conflict (id) do nothing;
 
+-- And the ones whose auth account is already gone.
+--
+-- THE ARM ABOVE CANNOT REACH THESE. It identifies a suite account by joining to
+-- auth.users, so a member row whose auth_user_id is null joins to nothing and
+-- falls out — while the two fixed-id lists never held it either, because a
+-- signup made it and its id is random. It is reachable by neither, which is why
+-- one survived 3.8 days in the shared database and was found by hand.
+--
+-- members_auth_user_id_fkey is ON DELETE SET NULL, so losing the auth row does
+-- not remove the member; it severs the only link this file had to it.
+--
+-- WHY A NICKNAME IS ACCEPTABLE HERE, given the note above says it is not.
+-- That note is about identifying a suite account by its name ALONE, which would
+-- put every real member one bad LIKE away from deletion. This predicate is the
+-- conjunction: pwtest-shaped AND no login at all. A real member cannot satisfy
+-- the second half — signing up creates the auth row, and the only thing in this
+-- file that removes an auth row matches `pwtest%@eysl.local`, an address the
+-- signup form cannot produce for a real person.
+--
+-- TWO LIMITS OF THAT ARGUMENT, both measured rather than assumed:
+--
+--   * register_member_v1 does NOT reserve the prefix — checked, its source does
+--     not mention pwtest. So a real person COULD sign up as `pwtest…`. They
+--     would keep their auth row, so this predicate still would not match them;
+--     the protection is the conjunction, not the prefix.
+--   * LIKE is case-sensitive, so `PWtest…` is missed here. parse.ts:280-281
+--     already says this about the importer's own check, which is deliberately
+--     case-INsensitive. A row of that shape is not reachable by this file and
+--     would need removing by hand.
+insert into pwtest_member_ids (id)
+select m.id
+  from public.members m
+ where m.auth_user_id is null
+   and m.nickname like 'pwtest%'
+on conflict (id) do nothing;
+
 -- Captured before the member rows go, because auth_user_id is the only link
 -- from a seeded member to the auth.users row 0027's trigger created for it.
 create temporary table pwtest_auth_ids as
