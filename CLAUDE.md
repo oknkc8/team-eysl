@@ -313,6 +313,22 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 
 **This is one deliberate exception, not a policy.** Do not generalise it into "strip every ungranted function" — `gen-types.sh` is supposed to describe the whole schema, and a rule that quietly narrows it would make the generated file lie about the database. If another function ever earns the same treatment, it earns its own line here.
 
+**A second thing `db:types` reverts, found the hard way on 2026-08-31.** `save_notice_v1`'s
+`p_notice_id` and `p_expected_updated_at` are `string | null` in the committed
+`database.ts`, and **the generator has never produced that.** It was hand-written in
+`2ab2153` (#24); `gen-types.sh` pipes `supabase gen types` straight over the file with no
+post-step. A DEFAULT makes the generator emit an *optional* parameter — `p_attachment_path?:
+string`, as `send_message_v1` shows — never a nullable one. So a regeneration silently
+narrows both to bare `string`, and `notices/api.ts`'s deliberate `?? null` (which its own
+comment explains: null means "create rather than update") stops compiling.
+
+**The dangerous part is how that failure presents.** It looks exactly like `dev` being red,
+because the two broken lines are in a file the regenerator never touched. It was reported
+that way. The check that would have settled it is `git diff origin/dev -- <file>` — and the
+one that was used, `git diff HEAD`, answers a different question once the regenerated file
+is committed: not "does this match dev" but "has anything changed since my last commit".
+Its empty output is the same shape as every other empty result on this page.
+
 **The worktree anchor moves to a different worktree mid-session.** Seen twice on 2026-08-26. Once, `git add … && git commit` ran in **`feat/admin-claim`** instead of `fix/media-delete-orphans`; the other time, `claim2`'s `git mv` succeeded in `admin-claim` and the very next `git commit` ran in **`fix/media-delete-orphans`**. **Neither committed anything, and that is purely because the other tree happened to be clean.** Had it been dirty, somebody else's work would have gone in under our commit message.
 
 It takes two forms, and they need different detection.
@@ -678,6 +694,40 @@ applies the liveness rule correctly will find no runner, conclude "leak", and sp
 time again.
 
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
+
+## Handoff log
+
+**`docs/HANDOFF.md` is where the work state lives, and keeping it current is part of the job.**
+
+This file explains the repository. `HANDOFF.md` explains the *session* — who is holding which
+branch, which migration numbers are spoken for, what the next three tasks are and why, what we
+decided that the code cannot show, and the questions still waiting on the president. None of
+that is recoverable from `git log`.
+
+**It exists because none of the local state travels.** `~/.claude/projects/…/memory/` is on one
+machine. So are the worktrees, the two git-ignored `.env` files, and every conversation. Picking
+this project up on another machine means reading the repository and nothing else, so anything a
+newcomer needs has to be **in the repository** — in `CLAUDE.md` if it is a durable rule, in
+`HANDOFF.md` if it is the current state.
+
+**Update it when the state it describes changes**, in the same PR that changes it:
+
+| What moved | What to edit |
+|---|---|
+| A branch opened, merged, or changed hands | §2 진행 중 |
+| A migration number claimed or applied | §3 대장 |
+| A next-task finished, or a new one jumped the queue | §4 다음에 할 것 |
+| A question answered by the president | §5 — delete it, and put the answer where the work is |
+| A decision made that the diff will not explain | §8 |
+
+Stamp the date and `dev`'s SHA at the top on every edit. **A handoff file nobody can date is
+worse than none** — a reader has no way to tell which parts are still true, so they either
+re-derive everything or trust something stale.
+
+Two things stay out of it. **Secrets and connection details** — the repository is public, and
+`.env.example` documents the shape. And **anything already true in the code**: a schema, a
+function body, a file list. Those are answerable by looking, and a copy of them here just
+becomes a second version to keep in sync.
 
 ## Environments
 
