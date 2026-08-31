@@ -11,7 +11,7 @@ TEAM EYSL — a Korean swimming club's member/training-management PWA ("TEAM EYS
 - `index.html` (~3,850 lines) **is** the app: markup, all CSS (one `<style>` block), and all JS (five `<script>` blocks, ~270 flat global functions) in one file.
 - `sw.js` — service worker (network-first fetch, web push handling).
 - `manifest.webmanifest`, `icon-*.png` — PWA manifest/icons.
-- The legacy app has no build step of its own: no bundler, no framework, no tests. Every commit on `upstream` is "Add files via upload" — the president maintains it by uploading edited files through the GitHub web UI. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
+- The legacy app has no build step of its own: no bundler, no framework, no tests. Most of `upstream`'s history is "Add files via upload" — **79 of 130 commits, measured 2026-08-31** — because the president maintains it by uploading edited files through the GitHub web UI. **He stopped doing that on 2026-08-26.** Every commit since 08-27 carries a real subject, 41 in a row, and 29 of them landed on 08-30 alone. Two commits are not his at all: `0149d73` and `bd3a7b4` are authored by **`team-eysl-bot`**, a GitHub Action he set up to patch the app shell directly. So "who wrote this" is now a question with two possible answers. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
 - The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
 - **There is no linter.** `app/package.json` has no eslint dependency and no `lint` script — `npx eslint` silently resolves to an unrelated global v6.4.0 and fails on the config. The only gates that exist are `./node_modules/.bin/tsc --noEmit` (which reads `src` only), `./node_modules/.bin/tsc -p tsconfig.functions.json` (which reads `supabase/functions`), and `./node_modules/.bin/vitest run`. Do not claim a lint pass; three separate agents reported running one before this was checked.
 
@@ -62,7 +62,7 @@ VAPID public key is hardcoded at `index.html:1341`. Subscribe/unsubscribe (~1350
 
 `origin` is **oknkc8/team-eysl**, a fork we own (ADMIN). `upstream` is **cutepms123-blip/team-eysl**, the club president's original — we have READ only there and must never assume push access. Work happens on `dev` and branches off it. Both repos are **public**, so no key, token, or `.env` may ever be committed.
 
-The president edits `upstream` by uploading files through the GitHub web UI (every upstream commit is "Add files via upload"), so `upstream/main` can move without warning and without a merge-friendly history. Pull from it; don't expect to rebase onto it cleanly.
+The president edits `upstream` mostly by uploading files through the GitHub web UI (79 of 130 commits; the reality check above says when and how that changed), so `upstream/main` can move without warning and without a merge-friendly history. Pull from it; don't expect to rebase onto it cleanly.
 
 **He is still actively building.** 13 commits landed between 2026-08-24 17:11 and 2026-08-25 12:30 alone, adding ~410 lines. Assume upstream has moved since you last looked, and re-check before assuming a feature is missing from his app rather than merely missing from the copy you read.
 
@@ -457,7 +457,7 @@ All verified in source. Do not quietly "fix" them as a side effect of other work
 
 | Defect | Where | Note |
 |---|---|---|
-| Admin attendance check-in never persisted | `setAtt`/`togglePaid` `index.html:3780-3781`, state in `attRecords` `:1178` | No DB call anywhere in the path, and no attendance table exists. Lost on every refresh. |
+| ~~Admin attendance check-in never persisted~~ — **fixed upstream 2026-08-30** | was `setAtt`/`togglePaid`, state in `attRecords` | Fixed by a **new path beside the old one, not by repairing it**. `setAtt` is still memory-only; `saveAttendanceEvent(id)` resolves nicknames through `team_roster` and upserts into `attendance`, behind an explicit 출석 저장 button. So a check-in is still lost if the admin never presses save. **Ours must persist on the tap.** And the commit that claims this fix does not contain it — see the sidecar section below. |
 | Notice comments overwrite each other | `addComment()` `:2001` | Whole jsonb array replaced from a stale client copy, so concurrent comments silently destroy one another. Author is stored as a nickname string, not `member_id`. |
 | Training capacity race | `applyTraining()` `:2384` | Browser decides seat-vs-waitlist and computes `wait_order` from a cached count, then sends it. Simultaneous applicants overbook or collide on order. |
 | Attribute-context XSS in an admin render path | *(location withheld)* | A member-controlled value reaches a script context unescaped. A near-identical render a few lines away escapes correctly, so this is an omission rather than a policy. |
@@ -571,6 +571,72 @@ What was genuinely missing was narrower: staff could *mark attended* a member wh
 **He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. **Closed in `0021`** — `media_folders_update`, `media_files_update` and `media_files_delete` are owner-only, `media_folders` has no DELETE policy at all (deletion goes through `delete_media_folder_v1`, which checks ownership), and the screens no longer offer staff a control the database would refuse. The cost is real and is his to revisit: no admin can take down another member's folder or file from inside the app any more.
 
 `0021` settled the other half of the same question too. **Creation in 미디어 and 자료실 is open to every approved member**, because his app is: `createFolder` (`upstream:2939`), `uploadToFolder` (`upstream:2946`) and `uploadResourceFiles` (`upstream:2960`) carry no role check, their buttons are always rendered (`upstream:1185-1187`), and `applyRole` (`upstream:1984-1994`) never touches a media control. Our screens had hidden all three behind `isStaff()` while RLS admitted anyone — the legacy flaw rebuilt — so the screens moved, not the policy. What `0021` did add is ours: an object may only be written at `<own member id>/(media|resources)/<name>`, and only where a `media_files` row already claims that exact path, so the bucket can no longer hold bytes nothing points at. `team_files_delete` keeps its staff arm on purpose — a folder owner cannot sweep another member's object, so somebody has to be able to.
+
+## His app is no longer one file, and three of the pieces are dead
+
+Measured at `upstream/main` `bd3a7b4`, 2026-08-31.
+
+`index.html` is still there, but **13 sidecar `.js` files now sit beside it**, and
+`index.html` **references none of them** — all 13 score 0 in it. They are reached
+one way only: `sw.js` precaches them and injects them.
+
+```
+13 sidecars
+   10  named by sw.js  ->  they really run, in any browser that installs the worker
+    3  named by nothing at all:
+          enhancements-v93.js        12,955 bytes
+          notice-fix-v95.js           7,032 bytes
+          attendance-sync-v104.js     1,417 bytes
+```
+
+**All 13 parse, and so does `sw.js`** (`node --check`, exit 0). That matters twice
+over. The 56-version bracket era documented above is **finished** — the worker
+installs now, so the 10 injected files are genuinely live. And the three dead ones
+are dead by **non-reference, not by syntax**: `enhancements-v93.js` is nearly 13KB
+of perfectly valid code that nothing loads.
+
+**So "does it parse" is no longer the question to ask about his code.** It was the
+right question while one character on line 3 broke everything; it now answers `ok`
+for a file that has never run. The question is whether anything names the file, and
+`grep -c '<basename>' sw.js index.html` settles it in one command.
+
+**And a commit message can promise a fix that its own diff does not contain.** This
+is the sharpest instance yet, because both halves shipped on the same day:
+
+```
+f639033  cutepms123-blip  2026-08-30  "Persist admin attendance changes"
+         -> attendance-sync-v104.js | 33 +++   and nothing else
+            that file is one of the three nothing references
+
+0149d73  team-eysl-bot    2026-08-30  "Persist attendance and late-fee status"
+         -> index.html | 97 +++ 5 ---          the actual fix
+```
+
+The commit whose subject names the defect **shipped dead code**; the fix arrived in
+a different commit, by a different author, through a different mechanism. `sw.js`'s
+VERSION string and `historicalTrainingRes` were the first two members of this family
+and both were about a *release* being misdescribed. This one is a single commit
+misdescribing itself, which no amount of reading subject lines can catch. **Read the
+diff, then check that the file the diff touches is reachable.**
+
+### Two changes to the gap list
+
+**활동 댓글 + 푸시 is a real gap, and it is his.** `activity-comments-v98.js` is one
+of the 10 that run: an `activity_comments` table, comments on the application screen
+of 훈련·대회·기타, and a `push-notify` call on each new comment. On our side
+`activity_comments`, `activityComment` and `ActivityComment` are **0 files** across
+the 155 under `app/src`, against `useState` at 37 files and `notice_comments` at 2
+as positive controls. The zero is real. It is already assigned —
+`feat/activity-comments` holds `0050`.
+
+**활동 취합본 runs the scope rule backwards: he deleted it, and we still have it.**
+`remove-aggregation-v113.js` strips the menu and the page with a MutationObserver,
+and the v114 patch workflow enforces the removal in CI with
+`if grep -q "활동 취합본" index.html; then exit 1`. That is a verified deliberate
+deletion, not an omission. The scope rule says an implemented feature is a
+requirement — but that rule reads from *his* app, and his app now says no. **Ask him
+before removing ours.** A feature he cut and we kept is a question for him, not a
+defect to quietly fix.
 
 ## External integrations
 
