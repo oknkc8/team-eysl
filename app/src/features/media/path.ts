@@ -107,6 +107,29 @@ export function resourceObjectPath(input: {
 }
 
 /**
+ * The same key again, under `chat/`.
+ *
+ * A chat attachment is not a media library file and must not appear in one: the
+ * prefix is what 미디어 and 자료실 read to decide what to list, so filing a
+ * direct-message photo under `media/` would put it on a screen its sender never
+ * chose to post to.
+ *
+ * THE PREFIX IS NOT WHAT KEEPS IT PRIVATE. team_file_is_readable is SECURITY
+ * INVOKER over messages_read, and that is the whole of the boundary — only the
+ * two participants of a dm can read the row that claims this path, so only they
+ * can read the object. `chat/` is filing. 0047 says the same thing in the
+ * database, in the place somebody reasoning about access will actually look.
+ */
+export function chatObjectPath(input: {
+  memberId: string
+  fileName: string
+  now?: number
+  nonce?: string
+}): string {
+  return objectPath({ ...input, prefix: 'chat' })
+}
+
+/**
  * The same key again, under `records/` — a 결과지, the meet sheet the record
  * importer read.
  *
@@ -129,10 +152,18 @@ export function recordSheetObjectPath(input: {
   return objectPath({ ...input, prefix: 'records' })
 }
 
+// TWO PREFIX COMMENTS ABOVE SAY OPPOSITE-SOUNDING THINGS, and both are right.
+// `records/` IS an authorization input — team_file_library_allows_me reads it to
+// require can_manage_records(). `chat/` is NOT a boundary — what keeps a direct
+// message private is messages_read, reached through team_file_is_readable.
+//
+// So a prefix means whatever a policy is written to make it mean, and the only
+// way to know which is which is to read the policy. Do not generalise from
+// either comment to the other.
 function objectPath(input: {
   memberId: string
   fileName: string
-  prefix: 'media' | 'resources' | 'records'
+  prefix: 'media' | 'resources' | 'records' | 'chat'
   now?: number
   nonce?: string
 }): string {

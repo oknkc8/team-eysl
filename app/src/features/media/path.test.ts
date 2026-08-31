@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mediaObjectPath, resourceObjectPath, safeObjectName } from './path'
+import { chatObjectPath, mediaObjectPath, resourceObjectPath, safeObjectName } from './path'
 
 const MEMBER_ID = '00000000-0000-4000-8000-000000000001'
 const NOW = 1_756_090_034_969
@@ -116,5 +116,33 @@ describe('resourceObjectPath', () => {
     expect(
       resourceObjectPath({ memberId: MEMBER_ID, fileName: '사진.jpg', now: NOW, nonce: NONCE }),
     ).not.toBe(mediaObjectPath({ memberId: MEMBER_ID, fileName: '사진.jpg', now: NOW, nonce: NONCE }))
+  })
+})
+
+describe('chatObjectPath', () => {
+  it('files a chat attachment under chat/, away from the media libraries', () => {
+    // The stem slugs to `file` because safeObjectName is ASCII-only — Supabase
+    // Storage refuses a key containing Hangul. Asserted with a Korean input
+    // rather than an ASCII one on purpose: this is the case a member actually
+    // has, and the pairing of the two rules is what a reader needs to see.
+    const path = chatObjectPath({ memberId: MEMBER_ID, fileName: '사진.png', now: 1, nonce: 'aaaaaa' })
+    expect(path).toBe(`${MEMBER_ID}/chat/1_aaaaaa_file.png`)
+  })
+
+  // The prefix is what 미디어 and 자료실 list on. A chat photo filed under
+  // media/ would appear on a screen its sender never posted to.
+  it('does not collide with the media or resource prefixes', () => {
+    const args = { memberId: MEMBER_ID, fileName: '사진.png', now: 1, nonce: 'aaaaaa' } as const
+    const chat = chatObjectPath(args)
+    expect(chat).not.toBe(mediaObjectPath(args))
+    expect(chat).not.toBe(resourceObjectPath(args))
+  })
+
+  // is_my_media_object_path (0047) matches `^<id>/(…|chat)/[^/]+$`, so a key with
+  // a second slash in it is refused by the database rather than the client.
+  it('produces exactly one segment after the prefix, whatever the file name', () => {
+    const path = chatObjectPath({ memberId: MEMBER_ID, fileName: 'a/b/c.png', now: 1, nonce: 'aaaaaa' })
+    expect(path.split('/')).toHaveLength(3)
+    expect(path.startsWith(`${MEMBER_ID}/chat/`)).toBe(true)
   })
 })
