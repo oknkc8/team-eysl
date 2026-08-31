@@ -431,6 +431,252 @@ The local pass is therefore not evidence about CI, and the failure direction is 
 
 `.github/workflows/app.yml` supplies two synthetic values scoped to the Unit tests step alone rather than to the job. Job-wide would have been shorter and would have quietly guaranteed that a step which genuinely needs real configuration passes anyway; granting the env only where the need was demonstrated keeps every other step failing honestly.
 
+### A write that succeeds without writing anything
+
+Everything above is a **read** that returned nothing and looked like an absence.
+The write side has the same failure, and it is quieter.
+
+```
+BEGIN
+INSERT 0 0     <- here
+COMMIT
+```
+
+`INSERT 0 0`. The transaction succeeded, `ON_ERROR_STOP` did not fire, `COMMIT`
+printed. A `cross join lateral` had selected zero members because the `pwtest%`
+rows had been cleaned up in between - and **an INSERT that matches nothing is not
+an error, it is an ordinary zero-row insert.**
+
+Without reading the count back, the next step was photographing an empty screen -
+and an empty screen does not look like a failure, it looks like *"there must not
+be any data yet."* So: **a successful `INSERT`/`UPDATE`/`DELETE` does not mean rows
+were affected, and `COMMIT` does not mean the intended thing happened.** Read it
+back with `select count(*)`.
+
+### `str.replace` fails silently in both directions
+
+Patch scripts are how source gets edited here, because the worktree pin bounces
+`Write`/`Edit` at random. One line makes them safe:
+
+```python
+n = src.count(old)
+assert n == 1, 'anchor appears %d times, expected exactly 1' % n
+src = src.replace(old, new)
+```
+
+**Both directions are needed and both fired within ten minutes.** Without the
+assertion, an import was added on an anchor that did not exist in that file: zero
+matches, the script printed success, the file was rewritten unchanged, and only
+`tsc` caught it. With the assertion, a patch to `details?: unknown` followed by a
+closing brace was refused because it matched **three** places in one file - it
+would have silently retyped `ActivityRow` and `ApplicationRow` as a side effect of
+editing `ActivityInput`.
+
+This is the `0024` trap in a different costume. There, a function body was
+reconstructed from a description and lost `p_user_agent`; here a block is replaced
+from memory and lands nowhere. Both are **failing to confirm the target is the
+thing you think it is.** Pair it with `assert len(src) > 0` after reading, so an
+empty read cannot be written over a real file.
+
+### A pipe replaces the exit code with the last command's
+
+`tsc --noEmit | head` reports `head`'s status, which is `0` whether or not the
+compiler found errors - and the errors scroll past looking like ordinary output.
+Redirect to a file and check `$?`, or read `${PIPESTATUS[0]}`. **Any tool whose
+exit code you care about must not be the left-hand side of a pipe.** Same family as
+the `| tail -N` false green above: the tool answered honestly and the shell threw
+the answer away.
+
+### Some APIs answer the question next to the one you asked
+
+Three, all met while photographing screens:
+
+| asked | actually answered |
+|---|---|
+| `waitForLoadState('networkidle')` | the network went quiet - **not** that the screen finished rendering |
+| `scrollIntoViewIfNeeded()` | the element's *label* was visible, so nothing was "needed"; the input stayed behind the fixed nav |
+| `screenshot({fullPage: true})` | the whole document - painting `position: fixed` chrome through the middle of it |
+
+The first one's fix generalises: our `Shimmer` sets `aria-busy="true"`, so
+`expect(page.locator('[aria-busy="true"]')).toHaveCount(0)` means *rendered*, names
+no screen's content, and cannot rot when a caption changes. **Prefer a wait that
+asserts the state you mean over one that asserts a proxy for it.**
+
+### Empty because the data is missing, or empty because the code is right
+
+These need opposite responses, and telling them apart is the whole of it.
+
+Three screens photographed empty in one sitting on 2026-08-27. **All three were
+empty because our code was correct:**
+
+- 월간 활동 요약 showed `0회 / 0%` - the fixture's attendance is anchored to March
+  and July, so August is legitimately empty.
+- 나의 대회 신청 내역 was blank - every seeded race falls on days 10-12 and 20-22,
+  and the run was on the 27th, so `hasFinished` correctly removed 신청하기.
+- The board list read as junk - `cleanup.sql` scopes by `author_id`, not a title
+  prefix, so natural titles are torn down identically and the epoch suffix that made
+  it look like test debris was never needed.
+
+Seeding more data fixes none of them: **the question was wrong, not the answer.**
+Compare the `INSERT 0 0` case above, which *is* missing data and *is* fixed by
+seeding. Treating the second kind as the first leads to seeding harder, watching it
+stay empty, and eventually suspecting code that was right all along.
+
+And the assertion that let all three through was the same one:
+`expect(h1).toBeVisible()` is **true of an empty screen**. An assertion that cannot
+fail on the emptiness you are guarding against is not guarding against it.
+
+### Words on a screen are not code, so no gate is aiming at them
+
+Two people hit this independently. It is a different family from everything above -
+not *"a check that cannot find it"* but **"no check is looking at this layer."**
+
+- A record-upload screen said 「파일은 이 기기 안에서만 읽습니다. **서버로 올라가지
+  않으며**...」. It was true when written. **A PR made it false** - the same PR whose
+  author had that file open.
+- A notice-attachment failure said 「목록에서 제거하고 다시 올려주세요」. A retry fix
+  made that false too: failed files now re-upload on save. It survived three review
+  passes.
+
+```
+typecheck   passes - it is a string
+tests       pass   - nothing asserts the sentence
+review      passes - reviewers check that the code is right, not that the code
+                     agrees with the Korean beside it
+git diff    silent - the line was never touched, so it never appears
+```
+
+**The dangerous case is not somebody else's stale copy. It is your own change making
+a sentence false that you did not edit** - precisely what a diff cannot show, because
+a diff shows what changed and this is a thing that *should* have changed and did not.
+
+So when you change behaviour, **search for sentences that describe that behaviour**
+instead of trusting the diff. One of the two was found by accident; the other was
+found because a screenshot had to be taken - which is a reason to keep the screenshot
+step even where nobody asked for a picture.
+
+### A gate that never touched the code path at all
+
+`safeObjectName` left Korean in storage object keys, and Supabase Storage rejects
+those with `400 InvalidKey`. **Five upload paths were broken for Korean filenames** -
+media, 자료실, notice attachments, result sheets, chat - which is the default case in
+this club. Four were already merged. Two agents reproduced it independently.
+
+Every gate was green, and honestly so:
+
+```
+typecheck, all trees   pass - it is a string
+unit tests             pass - they assert what safeObjectName RETURNS, never that
+                              storage accepts it
+browser e2e            pass - not one of them uploads a file
+```
+
+**The `team-files` bucket held zero objects.** No test in the repository had ever
+sent bytes to storage.
+
+**Code that talks to an external service is unverified until one test makes that
+round trip.** Asserting its inputs and outputs as tightly as you like says nothing
+about whether the other side accepts them. Three cheap symptoms: **is there zero data
+on the far side** (bucket objects, table rows), **is there a test that makes the round
+trip**, and **does that test assert the response.** Zero is the strongest of the
+three - an empty destination after months means nobody has walked the path end to
+end, and green gates then are not evidence of safety but evidence that the gates do
+not reach it.
+
+### Two migrations that `create or replace` the same function
+
+`create or replace` rewrites the whole body; it is not a delta. When two in-flight
+migrations both redefine one function **the later one erases the earlier**, and
+"later" means two different things:
+
+- **a fresh database** applies in filename order, so the higher number wins
+- **the shared dev database** applies in *wall-clock* order, so whoever re-applied
+  most recently wins - and re-applying an older migration silently reverts a newer one
+
+Two rules, and the second is the one that gets skipped:
+
+1. **Writing:** include the union, not your delta - carry the other migration's arm
+   even if it has not merged.
+2. **After applying:** read the live definition back and confirm your arm survived -
+   `select prosrc from pg_proc where proname = '<function>';`
+
+Without step 2 nobody learns their migration was quietly undone.
+
+### Applying an unmerged migration to the shared dev database
+
+It is legitimate - verifying a migration requires applying it. But **from that moment
+every agent's e2e reflects somebody's unmerged branch**, and the schema and the
+deployed code point at different commits.
+
+This cost a full investigation: notices could not be created, in the app as well as in
+tests, because an unmerged migration had revoked `notices_write` in favour of an RPC
+that only the unmerged code calls. The investigator scanned all 41 migrations on their
+own branch, found the policy created and never dropped, and concluded somebody had
+hand-edited the database. **A reasonable inference, and wrong** - the file was on a
+branch their `ls` could not see, which is the same blind spot that makes a local
+listing useless for claiming a migration number.
+
+So: **when the live database disagrees with the migrations, suspect an unmerged
+migration before suspecting a hand edit.** The question is answerable only across every
+branch:
+
+```bash
+git log --all -S '<policy or function name>' -- app/supabase/migrations/
+```
+
+The duty runs the other way too: **if you apply an unmerged migration to the shared
+database, tell the team**, or somebody else pays for a state only you can see.
+
+### A new worktree starts with three things missing, not one
+
+The fresh-checkout trap above is about `app/.env`. A new worktree is missing three:
+
+```
+node_modules            absent -> ./node_modules/.bin/tsc: No such file or directory
+<worktree>/.env         absent -> scripts/psql.sh refuses with ".env not found"
+<worktree>/app/.env     absent -> vitest dies in env.ts's zod validation
+```
+
+**There are two `.env` files and they are different.** The root one drives the psql
+scripts; `app/.env` drives vite and vitest. **psql working tells you nothing about
+whether vitest will run.** Each satisfies a different gate, and one succeeding does not
+license an inference about the others - which is the same shape as "say which tree you
+checked" two sections up.
+
+This is `.gitignore` behaving correctly, so it is a cost to pay rather than a defect to
+fix, but knowing it in advance saves three separate failures.
+
+### Ask git by a named ref, not by `HEAD`
+
+While the anchor is drifting, `git rev-parse HEAD` answers about whatever tree it is
+standing in - honestly, which is the problem. **Asking by branch name gets the right
+answer regardless of where the command is standing**, because the name resolves through
+the ref rather than through the current directory. Same lesson as `git -C`, and cheaper
+than either that or `EnterWorktree`.
+
+### `cleanup.sql` cannot see a signup row that has no auth user
+
+One `pwtest` member survived every teardown for **3.8 days**, outliving many full suite
+runs. Two agents each read `pwtest members = 1`, correctly paired it with a liveness
+check, and correctly left it alone - because a run really was live both times.
+
+It is unreachable for a structural reason:
+
+```
+nickname       pwtest.../98/남/관악
+status         pending
+auth_user_id   NULL          <- the reason
+```
+
+`cleanup.sql` reaches button-created accounts through a `pwtest%@eysl.local` **auth
+join**, and reaches the fixed fixtures by their known ids. This row has neither: its id
+is random and it has no auth user for the join to find, so it falls between both arms.
+
+Any signup path that writes a `members` row without an `auth.users` row produces one.
+Until the predicate covers it, **`pwtest members = 1` is that row** - and everybody who
+applies the liveness rule correctly will find no runner, conclude "leak", and spend the
+time again.
+
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
 ## Handoff log
