@@ -158,6 +158,52 @@ export type Database = {
           },
         ]
       }
+      activity_comments: {
+        Row: {
+          activity_id: string
+          body: string
+          created_at: string
+          id: string
+          member_id: string
+        }
+        Insert: {
+          activity_id: string
+          body: string
+          created_at?: string
+          id?: string
+          member_id: string
+        }
+        Update: {
+          activity_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+          member_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_comments_activity_id_fkey"
+            columns: ["activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_comments_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_comments_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attendance: {
         Row: {
           activity_id: string
@@ -443,6 +489,7 @@ export type Database = {
       }
       messages: {
         Row: {
+          attachment_name: string | null
           attachment_path: string | null
           attachment_type: string | null
           body: string | null
@@ -453,6 +500,7 @@ export type Database = {
           sender_id: string
         }
         Insert: {
+          attachment_name?: string | null
           attachment_path?: string | null
           attachment_type?: string | null
           body?: string | null
@@ -463,6 +511,7 @@ export type Database = {
           sender_id: string
         }
         Update: {
+          attachment_name?: string | null
           attachment_path?: string | null
           attachment_type?: string | null
           body?: string | null
@@ -1016,6 +1065,22 @@ export type Database = {
         Args: { p_activity_id: string; p_member_id: string }
         Returns: boolean
       }
+      append_activity_comment: {
+        Args: { p_activity_id: string; p_body: string }
+        Returns: {
+          activity_id: string
+          body: string
+          created_at: string
+          id: string
+          member_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_comments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       append_notice_comment: {
         Args: { p_body: string; p_notice_id: string }
         Returns: {
@@ -1215,18 +1280,31 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      save_activity_details_v1: {
+        Args: {
+          p_activity_id: string
+          p_coach: string
+          p_expected_updated_at: string
+          p_gear: string
+          p_info: string
+          p_link: string
+          p_plan: string
+        }
+        Returns: Json
+      }
       save_notice_v1: {
         Args: {
           p_attachments: Json
           p_body: string
-          p_expected_updated_at: string | null
-          p_notice_id: string | null
+          p_expected_updated_at: string
+          p_notice_id: string
           p_title: string
         }
         Returns: Json
       }
       send_message_v1: {
         Args: {
+          p_attachment_name?: string
           p_attachment_path?: string
           p_attachment_type?: string
           p_body?: string
@@ -1234,6 +1312,7 @@ export type Database = {
           p_room_type: string
         }
         Returns: {
+          attachment_name: string | null
           attachment_path: string | null
           attachment_type: string | null
           body: string | null

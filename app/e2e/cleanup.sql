@@ -137,6 +137,10 @@ where marked_by in (select id from pwtest_member_ids)
 -- that braces, so a test that ever points at a club activity cannot strand a row
 -- and wedge every later cleanup.
 delete from public.activity_applications where member_id in (select id from pwtest_member_ids);
+-- Same reasoning as activity_applications above: activity_comments.activity_id
+-- cascades when its own activity goes, but a pwtest member's comment on a real
+-- club activity would not, and member_id has no cascade at all (0050).
+delete from public.activity_comments where member_id in (select id from pwtest_member_ids);
 delete from public.activities where created_by in (select id from pwtest_member_ids);
 
 -- members before auth.users: members_auth_user_id_fkey is ON DELETE SET NULL, so

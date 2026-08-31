@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  activityCommentPayload,
   activityPayload,
   buildPayload,
   formatActivityDate,
@@ -8,6 +9,7 @@ import {
   noticePayload,
   offerPayload,
   selfTestPayload,
+  truncate,
 } from './payload'
 
 /**
@@ -152,6 +154,51 @@ describe('offerPayload', () => {
   })
 })
 
+describe('truncate', () => {
+  it('leaves a short string alone', () => {
+    expect(truncate('짧은 댓글', 60)).toBe('짧은 댓글')
+  })
+
+  it('cuts a long string and marks the cut', () => {
+    const long = '가'.repeat(80)
+    const result = truncate(long, 60)
+    expect(result).toBe(`${'가'.repeat(60)}…`)
+  })
+
+  it('trims surrounding whitespace before measuring length', () => {
+    expect(truncate('  댓글  ', 60)).toBe('댓글')
+  })
+})
+
+describe('activityCommentPayload', () => {
+  const fact = {
+    activity_id: 'a-7',
+    kind: 'training',
+    title: '자유형 강화 훈련',
+    activity_date: '2026-09-01',
+    body: '내일 준비물이 뭔가요?',
+  }
+
+  it('names the kind and links to the activity', () => {
+    const payload = activityCommentPayload(fact)
+    expect(payload.title).toBe('TEAM EYSL 훈련 새 댓글')
+    expect(payload.body).toBe('자유형 강화 훈련 · 내일 준비물이 뭔가요?')
+    expect(payload.url).toBe('/schedule/a-7')
+  })
+
+  // One live notification per thread, the same rule offerPayload uses for a
+  // repeated offer on the same activity.
+  it('keys the tag to the activity so repeated comments do not stack', () => {
+    expect(activityCommentPayload(fact).tag).toBe('activity-comment-a-7')
+    expect(activityCommentPayload({ ...fact, body: '다른 댓글' }).tag).toBe('activity-comment-a-7')
+  })
+
+  it('truncates a long comment body', () => {
+    const payload = activityCommentPayload({ ...fact, body: '가'.repeat(100) })
+    expect(payload.body).toBe(`자유형 강화 훈련 · ${'가'.repeat(60)}…`)
+  })
+})
+
 describe('selfTestPayload', () => {
   it('uses a constant tag so repeated presses do not pile up', () => {
     expect(selfTestPayload().tag).toBe('push-test')
@@ -163,6 +210,15 @@ describe('buildPayload', () => {
   it('dispatches on the event name', () => {
     expect(buildPayload('notice_created', { notice_id: 'n', title: 't' }).url).toBe('/notices/n')
     expect(buildPayload('self_test', {}).title).toBe('TEAM EYSL 알림 테스트')
+    expect(
+      buildPayload('activity_comment_created', {
+        activity_id: 'a',
+        kind: 'training',
+        title: 't',
+        activity_date: '2026-09-01',
+        body: '댓글',
+      }).url,
+    ).toBe('/schedule/a')
   })
 
   // Whatever the event, src/sw.js reads all six of these off event.data.json().

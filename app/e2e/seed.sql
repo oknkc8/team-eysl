@@ -328,6 +328,30 @@ select
   m.id
 from public.members m where m.nickname = 'pwtestadmin';
 
+-- Its own activity, same reason as the notice above (0050) — the comment
+-- count and push-audience assertions need a thread nothing else writes to.
+-- pwtestmember applies as a participant, which is what makes them part of the
+-- push audience push_notify_context_v1 computes for activity_comment_created:
+-- the activity's own applicants and waitlisters, not the whole club.
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  'training',
+  'pwtest 댓글 훈련',
+  current_date + 11,
+  '19:00',
+  'pwtest 수영장',
+  10,
+  m.id
+from public.members m where m.nickname = 'pwtestadmin';
+
+insert into public.activity_applications (activity_id, member_id, application_type)
+select
+  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  m.id,
+  'participant'
+from public.members m where m.nickname = 'pwtestmember';
+
 -- ---------------------------------------------------------------------------
 -- A roster with depth: twelve synthetic members.
 --

@@ -44,6 +44,7 @@ export const SEED = {
   attendanceActivityId: '55555555-5555-4555-8555-555555555555',
   commentNoticeId: '66666666-6666-4666-8666-666666666666',
   walkInActivityId: '77777777-7777-4777-8777-777777777777',
+  commentActivityId: '84850e06-0ca7-4641-b800-a182e907ee6b',
   multiDayRaceId: '99999999-9999-4999-8999-0000000000b1',
   // A second one, because the edit tests save while the calendar test reads.
   multiDayEditRaceId: '99999999-9999-4999-8999-0000000000b2',
@@ -53,6 +54,7 @@ export const SEED = {
   capacityOneActivityTitle: 'pwtest 정원1 훈련',
   attendanceActivityTitle: 'pwtest 출석 훈련',
   commentNoticeTitle: 'pwtest 댓글 공지',
+  commentActivityTitle: 'pwtest 댓글 훈련',
   multiDayRaceTitle: 'pwtest 다중일 대회',
   multiDayEditRaceTitle: 'pwtest 다중일 수정 대회',
   // The three days it occupies, and one it must not. Strings because the
