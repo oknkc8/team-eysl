@@ -278,6 +278,7 @@ function releaseSeedLock(lock: SeedLock, verifiedBackendPid: number | null): boo
  */
 function reportSurvivingRows() {
   let out: string
+  const fixtureNickname = `pwtest${FIXTURE_NS}%`
   try {
     out = execFileSync(
       'bash',
@@ -295,9 +296,20 @@ function reportSurvivingRows() {
         // pg_advisory_lock stores its key as classid 0 / objsubid 1, and the
         // two-int form uses objsubid 2 — so objid on its own could match an
         // unrelated advisory lock that happens to share the low half.
-        "select (select count(*) from public.members where nickname like 'pwtest" +
-          FIXTURE_NS +
-          "%')" +
+        "select (select count(*) from public.members where nickname like '" +
+          fixtureNickname +
+          "')" +
+          " || ' ' || (select count(*) from public.attendance a" +
+          " left join public.members member on member.id = a.member_id" +
+          " left join public.activities activity on activity.id = a.activity_id" +
+          " left join public.members marker on marker.id = a.marked_by" +
+          " where member.nickname like '" +
+          fixtureNickname +
+          "' or activity.title like '" +
+          fixtureNickname +
+          "' or marker.nickname like '" +
+          fixtureNickname +
+          "')" +
           " || ' ' || (select count(*) = 0 from pg_locks" +
           ` where locktype = 'advisory' and classid = 0 and objsubid = 1` +
           ` and objid = ${LOCK_KEY} and granted)`,
@@ -308,22 +320,26 @@ function reportSurvivingRows() {
     return // The count is a courtesy; failing to read it is not a run failure.
   }
 
-  const [countText, freeText] = out.split(' ')
-  const count = Number(countText)
-  if (!Number.isFinite(count) || count === 0) return
+  const [memberText, attendanceText, freeText] = out.split(' ')
+  const memberCount = Number(memberText)
+  const attendanceCount = Number(attendanceText)
+  if (!Number.isFinite(memberCount) || !Number.isFinite(attendanceCount)) return
+  if (memberCount === 0 && attendanceCount === 0) return
+
+  const residue = `${memberCount} fixture member rows and ${attendanceCount} fixture attendance rows`
 
   // Taking it proves nobody else holds it. The lock dies with this psql, so
   // there is nothing to release.
   const nobodyElseIsRunning = freeText === 't'
   if (!nobodyElseIsRunning) {
     console.log(
-      `e2e: ${count} pwtest rows remain and another suite holds the seed lock — ` +
-        'they are that run’s. Not a leak, and not ours to delete.',
+      `e2e: ${residue} remain and another suite holds the seed lock — ` +
+      'they are that run’s. Not a leak, and not ours to delete.',
     )
     return
   }
   console.warn(
-    `e2e: ${count} pwtest rows remain and no suite holds the seed lock, so they are OURS. ` +
+    `e2e: ${residue} remain and no suite holds the seed lock, so they are OURS. ` +
       'This is a leak. Remove them with: npm run db:psql -- -f e2e/cleanup.sql',
   )
 }
