@@ -10,7 +10,10 @@
 --
 -- Builds on 0001 (activities, activity_applications), 0004 (append_notice_comment,
 -- the pattern this copies), 0022 (push_notify_context_v1, request_push_notify,
--- the trigger shape this extends).
+-- the trigger shape this extends) and 0023 (the CURRENT push_notify_context_v1
+-- body — it replaced 0022's, adding the member_is_staff guard on
+-- activity_created below. Reproduced from 0023, not 0022: sourcing an
+-- old body here would have silently dropped that guard.
 
 create table if not exists public.activity_comments (
   id           uuid primary key default gen_random_uuid(),
@@ -76,11 +79,13 @@ revoke all on function public.append_activity_comment(uuid, text) from public, a
 grant execute on function public.append_activity_comment(uuid, text) to authenticated;
 
 -- ============================================================ push: the event
--- push_notify_context_v1 is reproduced here in full, from 0022, with one new
--- branch added (activity_comment_created) and every existing branch left
--- byte-for-byte unchanged. CREATE OR REPLACE means a body written from memory
--- would silently drop whatever it forgot — this one was copied out of 0022,
--- not reconstructed.
+-- push_notify_context_v1 is reproduced here in full, from 0023 (its current
+-- owner — 0022 defined it first, but 0023 replaced the body, and copying 0022's
+-- instead would have silently reverted 0023's member_is_staff guard below), with
+-- one new branch added (activity_comment_created) and every existing branch
+-- left byte-for-byte unchanged. CREATE OR REPLACE means a body written from
+-- memory would silently drop whatever it forgot — this one was copied out of
+-- 0023, not reconstructed.
 create or replace function public.push_notify_context_v1(p_event text, p_id uuid)
 returns jsonb
 language plpgsql security definer set search_path = public
@@ -106,7 +111,10 @@ begin
                     and m.id is distinct from a.created_by)
       into v_fact, v_audience
       from public.activities a
-     where a.id = p_id;
+     where a.id = p_id
+       -- The half of the broadcast rule that survives the trigger being
+       -- bypassed. Null created_by notifies for the reason the trigger gives.
+       and (a.created_by is null or public.member_is_staff(a.created_by));
 
   elsif p_event = 'waitlist_offered' then
     select jsonb_build_object('activity_id', a.id, 'kind', a.kind, 'title', a.title,
@@ -175,7 +183,7 @@ begin
 end $$;
 
 comment on function public.push_notify_context_v1(text, uuid) is
-  '알림 대상과 문구 근거를 이벤트 한 건에서 직접 읽어 돌려준다. 호출자는 수신자를 지정할 수 없고, 문구도 행에서만 나온다.';
+  '알림 대상과 문구 근거를 이벤트 한 건에서 직접 읽어 돌려준다. 호출자는 수신자를 지정할 수 없고, 문구도 행에서만 나온다. 일정 알림은 운영진이 등록한 것만 대상이 된다.';
 
 -- ==================================================================== trigger
 create or replace function public.activity_comments_notify_created()

@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   APP_ENV,
   MISSING_UUID,
@@ -10,6 +13,8 @@ import {
   waitForScreen,
 } from './fixtures'
 import type { Page } from '@playwright/test'
+
+const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /**
  * 일정(훈련/대회/기타) 댓글 (0050), driven the way a member drives it.
@@ -53,6 +58,24 @@ async function removeComment(admin: Page, commentId: string) {
     path: `/rest/v1/activity_comments?id=eq.${commentId}`,
     method: 'DELETE',
   })
+}
+
+/**
+ * What push_notify_context_v1('activity_comment_created', commentId) actually
+ * returns — the one thing no client request can ask, because the function is
+ * granted to service_role alone (0022/0023). Shelled to psql the same way
+ * global-setup.ts reaches the database for its own privileged checks: there is
+ * no REST path for this that a member's session, or even the anon key, can
+ * take.
+ */
+function pushContextFor(commentId: string): { member_count: number; recipients: { endpoint: string }[] } {
+  const sql = `select public.push_notify_context_v1('activity_comment_created', '${commentId}')`
+  const out = execFileSync('bash', ['scripts/psql.sh', '-tAX', '-c', sql], {
+    cwd: appDir,
+    encoding: 'utf8',
+  }).trim()
+  const context = JSON.parse(out) as { fact: unknown; member_count: number; recipients: { endpoint: string }[] }
+  return context
 }
 
 /**
@@ -111,10 +134,14 @@ test.describe('일정 댓글 — 작성과 목록', () => {
       await page.reload()
       await waitForScreen(page)
       await expect(page.getByText(body)).toBeVisible()
-      // The author's own name, read through member_public_v. A row fresh
-      // from append_activity_comment carries no nickname at all, so this
-      // only appears if the refetch and its embed both worked.
-      await expect(page.getByText('pwtestmember', { exact: false }).first()).toBeVisible()
+      // The author's own name, read through member_public_v — exact, and
+      // scoped to this specific comment's <li>, not `{ exact: false }`
+      // anywhere on the page, which pwtestmember2 (this fixture activity's
+      // waitlister, seed.sql) would also satisfy. A row fresh from
+      // append_activity_comment carries no nickname at all, so this only
+      // appears if the refetch and its embed both worked.
+      const posted = page.locator('.comment', { has: page.locator('.body', { hasText: body }) })
+      await expect(posted.locator('.commentHead b')).toHaveText('pwtestmember')
 
       const stored = await directRequest(page, {
         path: `/rest/v1/activity_comments?activity_id=eq.${SEED.commentActivityId}&body=eq.${encodeURIComponent(body)}&select=id,member_id`,
@@ -133,24 +160,71 @@ test.describe('일정 댓글 — 작성과 목록', () => {
     }
   })
 
-  test('활동에 참여하지 않은 승인 회원도 댓글 목록을 읽을 수 있다', async ({ page }) => {
+  test('승인 회원이면 이 활동 참여 여부와 무관하게 댓글을 읽을 수 있다', async ({ page }) => {
     // activity_comments_read is `current_member_id() is not null` — any
-    // approved member, not just this activity's applicants. member2 never
-    // applies to the fixture activity, which is exactly what makes this
-    // read a test of the read policy rather than of participation.
+    // approved member, participant or not. Proven by content, not by an
+    // absence of error: RLS hiding every row and a genuinely empty thread
+    // render the identical "아직 댓글이 없습니다" screen, so a real comment has
+    // to exist and actually appear for this to mean anything.
     const other = await openAs(page.context().browser()!, STATE.member2)
+    let commentId = ''
+    // Navigated first: directRequest reads the session out of localStorage,
+    // which throws SecurityError on a fresh context still on about:blank.
+    await page.goto('/')
     try {
+      const body = `${PREFIX} 읽기확인 ${Date.now()}`
+      const created = await insertComment(page, body)
+      expect(created.status).toBe(200)
+      commentId = (JSON.parse(created.body) as { id: string }).id
+
       await other.page.goto(`/schedule/${SEED.commentActivityId}`)
       await waitForScreen(other.page)
       await expect(
         other.page.getByRole('heading', { name: SEED.commentActivityTitle }),
       ).toBeVisible()
-      // No prior comment needed for this assertion — an empty or populated
-      // thread both prove the read succeeded, so this only checks the screen
-      // did not fall into the error state.
-      await expect(other.page.getByText('댓글을 불러오지 못했습니다')).toHaveCount(0)
+      await expect(other.page.locator('.comment .body', { hasText: body })).toBeVisible()
     } finally {
+      if (commentId) await removeComment(page, commentId)
       await other.close()
+    }
+  })
+})
+
+test.describe('일정 댓글 — 푸시 대상', () => {
+  test.use({ storageState: STATE.member })
+
+  /**
+   * The one thing every other test in this file cannot reach: whether
+   * push_notify_context_v1's activity_comment_created branch actually computes
+   * the audience the design promises — that activity's own applicants AND
+   * waitlisters, excluding the commenter, and nobody outside that set even if
+   * they hold a device and even if they are staff.
+   *
+   * The fixture (seed.sql) gives three members a push_subscriptions row:
+   * pwtestmember (the commenter here — must be excluded despite having a
+   * device), pwtestmember2 (waitlisted on this same activity — must be
+   * included, which is the participant-only regression this guards), and
+   * pwtestadmin (staff, but never applied to this activity — must be excluded,
+   * which is the "not the whole club" regression this guards).
+   */
+  test('참가자·대기자만 대상이고, 작성자와 무관한 운영진은 빠진다', async ({ page }) => {
+    let commentId = ''
+    // Navigated first: directRequest reads the session out of localStorage,
+    // which throws SecurityError on a fresh context still on about:blank.
+    await page.goto('/')
+    try {
+      const created = await insertComment(page, `${PREFIX} 푸시대상 ${Date.now()}`)
+      expect(created.status).toBe(200)
+      commentId = (JSON.parse(created.body) as { id: string }).id
+
+      const context = pushContextFor(commentId)
+      expect(context.member_count).toBe(1)
+      expect(context.recipients).toHaveLength(1)
+      expect(context.recipients[0]!.endpoint).toBe(
+        'https://fcm.googleapis.com/fcm/send/pwtest-pwtestmember2',
+      )
+    } finally {
+      if (commentId) await removeComment(page, commentId)
     }
   })
 })

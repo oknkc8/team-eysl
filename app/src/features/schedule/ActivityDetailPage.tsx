@@ -540,8 +540,12 @@ function Comments({ activityId }: { activityId: string }) {
   const add = useMutation({
     mutationFn: appendActivityComment,
     onMutate: () => setSaveState('saving'),
-    onSuccess: async () => {
-      setDraft('')
+    onSuccess: async (_data, variables) => {
+      // Clears only if the draft still matches what was just submitted. The
+      // request stays in flight for a moment, and the box does not lock
+      // during it (see the textarea's onChange below) — a member who typed a
+      // second comment while the first was saving must not lose it here.
+      setDraft((current) => (current.trim() === variables.body ? '' : current))
       await qc.invalidateQueries({ queryKey: ['activity-comments', activityId] })
       setSaveState('saved')
     },
@@ -594,7 +598,11 @@ function Comments({ activityId }: { activityId: string }) {
           value={draft}
           onChange={(e) => {
             setDraft(e.target.value)
-            if (saveState !== 'idle') setSaveState('idle')
+            // Clears a stale 저장됨/실패 indicator once the member starts a
+            // new comment. Deliberately NOT while saving() — canSubmit reads
+            // this state too, so resetting it here would re-enable 등록
+            // mid-request and let the same click fire the RPC twice.
+            if (saveState === 'saved' || saveState === 'error') setSaveState('idle')
           }}
           placeholder="댓글을 입력하세요"
           rows={3}
