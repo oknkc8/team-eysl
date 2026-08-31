@@ -1296,8 +1296,14 @@ export type Database = {
         Args: {
           p_attachments: Json
           p_body: string
-          p_expected_updated_at: string
-          p_notice_id: string
+          // Restored by hand after `npm run db:types`, which drops it. A plpgsql
+          // parameter is nullable and the generator cannot see that:
+          // save_notice_v1 signals "create" by passing p_notice_id as null and
+          // branches on `p_notice_id is null`, so the generated `string` forbids
+          // the very call the function is written to accept. Same for the
+          // expected version, which must be null when creating.
+          p_expected_updated_at: string | null
+          p_notice_id: string | null
           p_title: string
         }
         Returns: Json
