@@ -139,6 +139,33 @@ select m.auth_user_id as id
  where m.id in (select id from pwtest_member_ids)
    and m.auth_user_id is not null;
 
+-- The case the arm above deliberately does not cover, made loud instead of silent.
+--
+-- A pwtest staffer marking a REAL member on a REAL activity leaves a row this file
+-- must not delete (it may be the club's) and cannot leave (attendance_marked_by_fkey
+-- is ON DELETE NO ACTION, so the members delete below would fail with a bare 23503
+-- naming a constraint instead of the problem). Neither outcome should be reached by
+-- accident, so refuse here with a sentence that says what to do.
+--
+-- The real fix is upstream and belongs to seed.sql: there is no login-less member
+-- fixture, so any test that touches the 명단 추가 panel reaches the 36 real members.
+-- Until that fixture exists, this check is what stands between a stray tap and the
+-- club register.
+do $$
+declare n int;
+begin
+  select count(*) into n
+    from public.attendance a
+   where a.marked_by in (select id from pwtest_member_ids)
+     and a.member_id not in (select id from pwtest_member_ids)
+     and a.activity_id not in (select id from public.activities
+                               where created_by in (select id from pwtest_member_ids));
+  if n > 0 then
+    raise exception
+      'cleanup refuses: % attendance row(s) are the club''s but were last marked by a pwtest account. A test marked a real member on a real activity. Deleting them would destroy real data and leaving them wedges the members delete. Fix the test, then repair marked_by on those rows by hand.', n;
+  end if;
+end $$;
+
 delete from public.notice_comments where member_id in (select id from pwtest_member_ids);
 delete from public.notices where created_by in (select id from pwtest_member_ids);
 -- board_posts.author_id is NOT NULL and carries no cascade (0033), so a post a
@@ -176,11 +203,35 @@ delete from public.record_uploads where uploaded_by in (select id from pwtest_me
 -- could have swept is gone.
 delete from public.media_files where uploader_id in (select id from pwtest_member_ids);
 delete from public.media_folders where created_by in (select id from pwtest_member_ids);
--- Same reasoning: marked_by is the staffer who tapped, member_id is who was
--- marked, and the write suite creates rows where only the second is ours.
+-- REFUSE RATHER THAN DESTROY. This used to delete on `marked_by in (ours)` too,
+-- with the reasoning that marked_by is the staffer who tapped and the write suite
+-- creates rows where only member_id is ours. That reasoning is true about rows the
+-- suite CREATES and false about rows it UPDATES, and attendance_mark_v1 cannot tell
+-- you which happened:
+--
+--     on conflict (activity_id, member_id) do update
+--       set ..., marked_by = excluded.marked_by
+--
+-- A pwtest staff account tapping a member who was ALREADY marked rewrites marked_by
+-- on a row the club owns. The row then looked like ours and this file deleted it.
+-- Fifteen real attendance rows went that way before anybody counted (249 -> 234 over
+-- five days; every surviving row belongs to a real member). The upsert destroys the
+-- evidence, so no predicate written after the fact can separate the two cases.
+--
+-- So key on what the row IS, not on who last touched it. member_id and activity_id
+-- are identity and no foreign write can change them; marked_by is a mutable column
+-- another statement can stamp.
+--
+-- Both arms below are strictly redundant -- attendance_member_id_fkey and
+-- attendance_activity_id_fkey are both ON DELETE CASCADE, so the members and
+-- activities deletes further down would take these rows anyway. They stay because
+-- they say out loud which rows this file considers its own, and because a future
+-- change to either FK would otherwise silently widen what cleanup leaves behind.
 delete from public.attendance
-where marked_by in (select id from pwtest_member_ids)
-   or member_id in (select id from pwtest_member_ids);
+where member_id in (select id from pwtest_member_ids)
+   or activity_id in (select id from public.activities
+                      where created_by in (select id from pwtest_member_ids));
+
 -- Applications onto activities we did not create. The suite only applies to its
 -- own fixtures, where the activity delete below cascades — this is the belt to
 -- that braces, so a test that ever points at a club activity cannot strand a row
