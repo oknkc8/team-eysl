@@ -335,11 +335,22 @@ export async function saveNotice(input: {
     // null, not undefined. p_notice_id has no DEFAULT, so undefined would omit
     // the parameter and PostgREST would fail to resolve the signature — whereas
     // null is what the function reads as "create rather than update".
-    p_notice_id: input.noticeId ?? null,
+    //
+    // Cast, not a real widening: `supabase gen types` infers a parameter's
+    // TypeScript type as non-nullable whenever the Postgres function gives it
+    // no DEFAULT, which is a fact about calling convention, not about whether
+    // NULL is a valid value — Postgres accepts NULL for any parameter
+    // regardless of DEFAULT, and this function branches on exactly that
+    // (0040's save_notice_v1). The generator cannot see that, so the type it
+    // produces is stricter than the function actually is. Pre-existing on
+    // dev's own tip, unrelated to the feature this file is part of — found
+    // and fixed here because it blocks `npm run build` (tsc -b) for anyone,
+    // which blocks e2e's webServer for anyone.
+    p_notice_id: (input.noticeId ?? null) as string,
     p_title: input.title,
     p_body: input.body,
     p_attachments: payload as unknown as Json,
-    p_expected_updated_at: input.expectedUpdatedAt,
+    p_expected_updated_at: input.expectedUpdatedAt as string,
   })
   if (error) {
     // Narrowed to the one code the screen can act on. Everything else is
