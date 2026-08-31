@@ -17,6 +17,25 @@
 -- creates an approved master_admin — published working administrator credentials
 -- for whatever database this last ran against. global-setup.ts now generates one
 -- per run into the git-ignored e2e/.auth/password and passes it here.
+\getenv ns PWTEST_NS
+\if :{?ns}
+\else
+\set ns ''
+\endif
+
+-- REFUSED RATHER THAN DEFAULTED, and this is the only silent failure this
+-- design has. An empty namespace is not a harmless fallback: every worktree
+-- would seed and delete the SAME ids again, which is exactly the collision
+-- this file was namespaced to end -- and it would look like it worked.
+select case when btrim(:'ns') = '' then 'true' else 'false' end as ns_missing \gset
+\if :ns_missing
+\echo ''
+\echo 'PWTEST_NS is not set.'
+\echo 'Run `npm run test:e2e`, which derives it from the worktree path, or export'
+\echo 'one yourself (six hex characters) before running this file by hand.'
+select 'PWTEST_NS is not set'::int;
+\endif
+
 \getenv pwtest_password PWTEST_PASSWORD
 
 -- \getenv leaves the variable unset when the environment has nothing, and an
@@ -92,14 +111,14 @@ create temporary table pwtest_accounts (
 
 insert into pwtest_accounts (nickname, status, role, member_id, birth_year, gender) values
   -- 총관리자: reaches every screen, including the three master-admin ones.
-  ('pwtestadmin',   'approved', 'master_admin', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1980, '남'),
+  (('pwtest' || :'ns' || 'admin'),   'approved', 'master_admin', ('aa' || :'ns' || '-aaaa-4aaa-8aaa-aaaaaaaaaaaa')::uuid, 1980, '남'),
   -- An ordinary approved member: the refusal case for the admin routes, and the
   -- roster row 0032's signup guard is tested against. 1970 so the two-digit year
   -- in that test (`70`) is unambiguous.
-  ('pwtestmember',  'approved', 'member',       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 1970, '남'),
+  (('pwtest' || :'ns' || 'member'),  'approved', 'member',       ('bb' || :'ns' || '-bbbb-4bbb-8bbb-bbbbbbbbbbbb')::uuid, 1970, '남'),
   -- Signed up, not yet admitted. The state a real first user meets, so it gets
   -- an account rather than being tested only as an absence.
-  ('pwtestpending', 'pending',  'member',       'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 1990, '여'),
+  (('pwtest' || :'ns' || 'pending'), 'pending',  'member',       ('cc' || :'ns' || '-cccc-4ccc-8ccc-cccccccccccc')::uuid, 1990, '여'),
   -- A second ordinary member, which only the write suite needs.
   --
   -- Two of the legacy app's data-loss bugs are races between two people, and a
@@ -108,14 +127,14 @@ insert into pwtest_accounts (nickname, status, role, member_id, birth_year, gend
   -- branches through apply_to_activity() and every RLS policy they touch. The
   -- bug the president's members actually hit is two members, so the fixture is
   -- two members.
-  ('pwtestmember2', 'approved', 'member',       'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 1995, '여'),
+  (('pwtest' || :'ns' || 'member2'), 'approved', 'member',       ('dd' || :'ns' || '-dddd-4ddd-8ddd-dddddddddddd')::uuid, 1995, '여'),
   -- Turned away, and shown the door after being let in. Neither is a variant of
   -- 'pending': all three are simply "not approved", and that is the point —
   -- current_member_id() is the single predicate every RPC in this schema leans
   -- on, and this repository has lost it once already (restored in 0010). Three
   -- rows here is what lets a test say so in three states rather than one.
-  ('pwtestrejected','rejected', 'member',       'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 1988, '남'),
-  ('pwtestblocked', 'blocked',  'member',       'ffffffff-ffff-4fff-8fff-ffffffffffff', 1992, '여');
+  (('pwtest' || :'ns' || 'rejected'),'rejected', 'member',       ('ee' || :'ns' || '-eeee-4eee-8eee-eeeeeeeeeeee')::uuid, 1988, '남'),
+  (('pwtest' || :'ns' || 'blocked'), 'blocked',  'member',       ('ff' || :'ns' || '-ffff-4fff-8fff-ffffffffffff')::uuid, 1992, '여');
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
@@ -211,30 +230,60 @@ where m.auth_user_id = a.auth_id;
 -- glance which rows are ours.
 insert into public.notices (id, title, body, created_by)
 select
-  '11111111-1111-4111-8111-111111111111',
-  'pwtest 공지 제목',
-  E'pwtest 공지 본문입니다.\n두 번째 줄.',
+  ('11' || :'ns' || '-1111-4111-8111-111111111111')::uuid,
+  ('pwtest' || :'ns' || ' 공지 제목'),
+  ('pwtest' || :'ns' || E' 공지 본문입니다.\n두 번째 줄.'),
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
-  '22222222-2222-4222-8222-222222222222',
+  ('22' || :'ns' || '-2222-4222-8222-222222222222')::uuid,
   'training',
-  'pwtest 훈련',
+  ('pwtest' || :'ns' || ' 훈련'),
   current_date + 7,
   '19:00',
-  'pwtest 수영장',
+  ('pwtest' || :'ns' || ' 수영장'),
   10,
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 insert into public.media_folders (id, name, created_by)
 select
-  '33333333-3333-4333-8333-333333333333',
-  'pwtest 폴더',
+  ('33' || :'ns' || '-3333-4333-8333-333333333333')::uuid,
+  ('pwtest' || :'ns' || ' 폴더'),
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
+
+-- A member deliberately without an Auth account, used only by the staff
+-- enrolment test below. The production roster has many people in this state;
+-- the test must never pick one of them merely because no fixture models it.
+insert into public.members (id, nickname, short_name, real_name, birth_year, gender, status, role)
+values (
+  ('0f' || :'ns' || '-0000-4000-8000-000000000001')::uuid,
+  ('pwtest' || :'ns' || ' 명단 회원'),
+  ('pwtest' || :'ns' || ' 명단 회원'),
+  ('pwtest' || :'ns' || ' 명단 회원'),
+  1992,
+  '여',
+  'approved',
+  'member'
+);
+
+-- Its own activity means the enrolment test cannot change a roster any other
+-- spec reads. Keeping capacity well above one makes the test about staff
+-- enrolment, not the waitlist handoff path covered elsewhere.
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  ('0f' || :'ns' || '-0000-4000-8000-000000000002')::uuid,
+  'training',
+  ('pwtest' || :'ns' || ' 명단 훈련'),
+  current_date + 6,
+  '18:00',
+  ('pwtest' || :'ns' || ' 수영장'),
+  10,
+  m.id
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 -- ---------------------------------------------------------------------------
 -- Fixtures the write suite owns (writes.spec.ts).
@@ -250,15 +299,15 @@ from public.members m where m.nickname = 'pwtestadmin';
 -- "there was room for both".
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
-  '44444444-4444-4444-8444-444444444444',
+  ('44' || :'ns' || '-4444-4444-8444-444444444444')::uuid,
   'training',
-  'pwtest 정원1 훈련',
+  ('pwtest' || :'ns' || ' 정원1 훈련'),
   current_date + 8,
   '20:00',
-  'pwtest 수영장',
+  ('pwtest' || :'ns' || ' 수영장'),
   1,
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 -- The attendance roster. Since 0030 attendance_for_activity_v1 lists the union
 -- of application_type = 'participant' and anyone already marked, so an activity
@@ -272,22 +321,22 @@ from public.members m where m.nickname = 'pwtestadmin';
 -- point of it.
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
-  '55555555-5555-4555-8555-555555555555',
+  ('55' || :'ns' || '-5555-4555-8555-555555555555')::uuid,
   'training',
-  'pwtest 출석 훈련',
+  ('pwtest' || :'ns' || ' 출석 훈련'),
   current_date + 9,
   '21:00',
-  'pwtest 수영장',
+  ('pwtest' || :'ns' || ' 수영장'),
   10,
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 insert into public.activity_applications (activity_id, member_id, application_type)
 select
-  '55555555-5555-4555-8555-555555555555',
+  ('55' || :'ns' || '-5555-4555-8555-555555555555')::uuid,
   m.id,
   'participant'
-from public.members m where m.nickname = 'pwtestmember';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'member');
 
 -- The walk-in roster. Since 0030, attendance_for_activity_v1 returns the union
 -- of the participant list and everyone already marked — two arms that can break
@@ -301,32 +350,32 @@ from public.members m where m.nickname = 'pwtestmember';
 -- row for the test that owns it.
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
-  '77777777-7777-4777-8777-777777777777',
+  ('77' || :'ns' || '-7777-4777-8777-777777777777')::uuid,
   'training',
-  'pwtest 워크인 훈련',
+  ('pwtest' || :'ns' || ' 워크인 훈련'),
   current_date + 10,
   '22:00',
-  'pwtest 수영장',
+  ('pwtest' || :'ns' || ' 수영장'),
   10,
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 insert into public.activity_applications (activity_id, member_id, application_type)
 select
-  '77777777-7777-4777-8777-777777777777',
+  ('77' || :'ns' || '-7777-4777-8777-777777777777')::uuid,
   m.id,
   'participant'
-from public.members m where m.nickname = 'pwtestmember';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'member');
 
 -- Its own notice, so the concurrent-comment test counts the comments it wrote
 -- and not whatever else the run has left on the shared one.
 insert into public.notices (id, title, body, created_by)
 select
-  '66666666-6666-4666-8666-666666666666',
-  'pwtest 댓글 공지',
-  'pwtest 동시 댓글 시험용 공지입니다.',
+  ('66' || :'ns' || '-6666-4666-8666-666666666666')::uuid,
+  ('pwtest' || :'ns' || ' 댓글 공지'),
+  ('pwtest' || :'ns' || ' 동시 댓글 시험용 공지입니다.'),
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 -- Its own activity, same reason as the notice above (0050) — the comment
 -- count and push-audience assertions need a thread nothing else writes to.
@@ -335,33 +384,33 @@ from public.members m where m.nickname = 'pwtestadmin';
 -- the activity's own applicants and waitlisters, not the whole club.
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
-  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  ('84' || :'ns' || '-0ca7-4641-b800-a182e907ee6b')::uuid,
   'training',
-  'pwtest 댓글 훈련',
+  ('pwtest' || :'ns' || ' 댓글 훈련'),
   current_date + 11,
   '19:00',
-  'pwtest 수영장',
+  ('pwtest' || :'ns' || ' 수영장'),
   10,
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 insert into public.activity_applications (activity_id, member_id, application_type)
 select
-  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  ('84' || :'ns' || '-0ca7-4641-b800-a182e907ee6b')::uuid,
   m.id,
   'participant'
-from public.members m where m.nickname = 'pwtestmember';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'member');
 
 -- A waitlister on the same activity, so the push-audience test can prove
 -- push_notify_context_v1's 'activity_comment_created' branch reaches
 -- activity_applications regardless of application_type — not participants only.
 insert into public.activity_applications (activity_id, member_id, application_type, wait_order)
 select
-  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  ('84' || :'ns' || '-0ca7-4641-b800-a182e907ee6b')::uuid,
   m.id,
   'waitlist',
   1
-from public.members m where m.nickname = 'pwtestmember2';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'member2');
 
 -- Fixture devices for the same test: pwtestmember (the commenter, so the test
 -- can prove the author is excluded despite holding one), pwtestmember2 (the
@@ -375,7 +424,11 @@ select m.id,
        'pwtest-auth-' || m.nickname,
        'pwtest'
 from public.members m
-where m.nickname in ('pwtestmember', 'pwtestmember2', 'pwtestadmin');
+where m.nickname in (
+  ('pwtest' || :'ns' || 'member'),
+  ('pwtest' || :'ns' || 'member2'),
+  ('pwtest' || :'ns' || 'admin')
+);
 
 -- ---------------------------------------------------------------------------
 -- A roster with depth: twelve synthetic members.
@@ -407,12 +460,12 @@ create temporary table pwtest_dummies (
 
 insert into pwtest_dummies (n, nickname, gender, birth_year, member_id)
 select n,
-       'pwtest더미' || to_char(n, 'FM00'),
+       ('pwtest' || :'ns' || '더미') || to_char(n, 'FM00'),
        case when n % 2 = 0 then '여' else '남' end,
        (1985 + n)::smallint,
        -- Fixed and readable, for the same reason the four accounts above have
        -- fixed ids: a spec that needs /members/:memberId cannot query for one.
-       ('e0000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
+       ('e0' || :'ns' || '-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
 from generate_series(1, 12) as n;
 
 insert into public.members (
@@ -432,7 +485,7 @@ from pwtest_dummies d;
 -- ------------------------------------------------------------------ 대기 순번
 --
 -- Capacity 3 with 8 applicants, so the waitlist is five deep and has an order
--- that can be read back. 'pwtest 정원1 훈련' above is capacity 1 and answers a
+-- that can be read back. ('pwtest' || :'ns' || ' 정원1 훈련') above is capacity 1 and answers a
 -- different question — whether the server arbitrates a single seat — which is
 -- why it cannot also be the fixture for an ordered queue.
 --
@@ -441,19 +494,19 @@ from pwtest_dummies d;
 -- the very seat handout the tests exist to check.
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
-  '88888888-8888-4888-8888-888888888888',
+  ('88' || :'ns' || '-8888-4888-8888-888888888888')::uuid,
   'training',
-  'pwtest 대기 훈련',
+  ('pwtest' || :'ns' || ' 대기 훈련'),
   current_date + 11,
   '20:30',
-  'pwtest 수영장',
+  ('pwtest' || :'ns' || ' 수영장'),
   3,
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 insert into public.activity_applications (activity_id, member_id, application_type, wait_order)
 select
-  '88888888-8888-4888-8888-888888888888',
+  ('88' || :'ns' || '-8888-4888-8888-888888888888')::uuid,
   d.member_id,
   case when d.n <= 3 then 'participant' else 'waitlist' end,
   -- wait_order_only_for_waitlist (0001) refuses an order on a participant, and
@@ -473,18 +526,18 @@ create temporary table pwtest_rank_days (slot int primary key, activity_id uuid,
 on commit drop;
 
 insert into pwtest_rank_days (slot, activity_id, on_date) values
-  (1, '99999999-9999-4999-8999-999999999991',
+  (1, ('99' || :'ns' || '-9999-4999-8999-999999999991')::uuid,
       make_date(extract(year from current_date)::int, 3, 2)),   -- 상반기
-  (2, '99999999-9999-4999-8999-999999999992',
+  (2, ('99' || :'ns' || '-9999-4999-8999-999999999992')::uuid,
       make_date(extract(year from current_date)::int, 7, 20)),  -- 하반기
-  (3, '99999999-9999-4999-8999-999999999993',
+  (3, ('99' || :'ns' || '-9999-4999-8999-999999999993')::uuid,
       make_date(extract(year from current_date)::int, 7, 30));  -- 하반기
 
 insert into public.activities (id, kind, title, activity_date, place, capacity, created_by)
-select r.activity_id, 'training', 'pwtest 랭킹 훈련 ' || r.slot, r.on_date, 'pwtest 수영장', 20, m.id
+select r.activity_id, 'training', ('pwtest' || :'ns' || ' 랭킹 훈련 ') || r.slot, r.on_date, ('pwtest' || :'ns' || ' 수영장'), 20, m.id
 from pwtest_rank_days r
 cross join public.members m
-where m.nickname = 'pwtestadmin';
+where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 -- The tallies are deliberately uneven, and deliberately not all distinct:
 --
@@ -506,7 +559,7 @@ from (values
 ) as v(slot, n, status)
 join pwtest_rank_days r on r.slot = v.slot
 join pwtest_dummies d on d.n = v.n
-cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+cross join (select id from public.members where nickname = ('pwtest' || :'ns' || 'admin')) adm;
 
 -- 단축왕 reads records, not attendance, and only category='meet',
 -- subcategory='personal', stroke in the four pool strokes. It builds two lists:
@@ -523,21 +576,21 @@ insert into public.records (
 select d.member_id, 'meet', 'personal', v.stroke, 50,
        v.event_name, v.event_date, v.result_display, v.result_centiseconds, adm.id
 from (values
-  (1, '자유형', 'pwtest 봄 대회',
+  (1, '자유형', ('pwtest' || :'ns' || ' 봄 대회'),
       make_date(extract(year from current_date)::int, 3, 2), '35.00', 3500),
-  (1, '자유형', 'pwtest 여름 대회',
+  (1, '자유형', ('pwtest' || :'ns' || ' 여름 대회'),
       make_date(extract(year from current_date)::int, 7, 20), '33.50', 3350),
-  (2, '배영', 'pwtest 작년 대회',
+  (2, '배영', ('pwtest' || :'ns' || ' 작년 대회'),
       make_date(extract(year from current_date)::int - 1, 6, 15), '42.00', 4200),
-  (2, '배영', 'pwtest 여름 대회',
+  (2, '배영', ('pwtest' || :'ns' || ' 여름 대회'),
       make_date(extract(year from current_date)::int, 7, 20), '40.50', 4050),
-  (3, '평영', 'pwtest 봄 대회',
+  (3, '평영', ('pwtest' || :'ns' || ' 봄 대회'),
       make_date(extract(year from current_date)::int, 3, 2), '48.00', 4800),
-  (3, '평영', 'pwtest 여름 대회',
+  (3, '평영', ('pwtest' || :'ns' || ' 여름 대회'),
       make_date(extract(year from current_date)::int, 7, 20), '47.00', 4700)
 ) as v(n, stroke, event_name, event_date, result_display, result_centiseconds)
 join pwtest_dummies d on d.n = v.n
-cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+cross join (select id from public.members where nickname = ('pwtest' || :'ns' || 'admin')) adm;
 
 -- ---------------------------------------------------------------------------
 -- 나의 성과 · 배지 fixture (0034)
@@ -560,24 +613,24 @@ cross join (select id from public.members where nickname = 'pwtestadmin') adm;
 insert into public.activities (id, kind, title, activity_date, created_by)
 select v.id::uuid, 'training', v.title, v.on_date, adm.id
 from (values
-  ('99999999-9999-4999-8999-0000000000a1', 'pwtest 성과 훈련 1',
+  (('99' || :'ns' || '-9999-4999-8999-0000000000a1')::uuid, ('pwtest' || :'ns' || ' 성과 훈련 1'),
       make_date(extract(year from current_date)::int, 3, 9)),
-  ('99999999-9999-4999-8999-0000000000a2', 'pwtest 성과 훈련 2',
+  (('99' || :'ns' || '-9999-4999-8999-0000000000a2')::uuid, ('pwtest' || :'ns' || ' 성과 훈련 2'),
       make_date(extract(year from current_date)::int, 3, 16))
 ) as v(id, title, on_date)
-cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+cross join (select id from public.members where nickname = ('pwtest' || :'ns' || 'admin')) adm;
 
 insert into public.attendance (activity_id, member_id, status, marked_by)
 select v.activity_id::uuid, mem.id, v.status, adm.id
 from (values
-  ('99999999-9999-4999-8999-999999999991', 'present'),
-  ('99999999-9999-4999-8999-999999999992', 'present'),
-  ('99999999-9999-4999-8999-999999999993', 'late'),
-  ('99999999-9999-4999-8999-0000000000a1', 'present'),
-  ('99999999-9999-4999-8999-0000000000a2', 'present')
+  (('99' || :'ns' || '-9999-4999-8999-999999999991')::uuid, 'present'),
+  (('99' || :'ns' || '-9999-4999-8999-999999999992')::uuid, 'present'),
+  (('99' || :'ns' || '-9999-4999-8999-999999999993')::uuid, 'late'),
+  (('99' || :'ns' || '-9999-4999-8999-0000000000a1')::uuid, 'present'),
+  (('99' || :'ns' || '-9999-4999-8999-0000000000a2')::uuid, 'present')
 ) as v(activity_id, status)
-cross join (select id from public.members where nickname = 'pwtestmember') mem
-cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+cross join (select id from public.members where nickname = ('pwtest' || :'ns' || 'member')) mem
+cross join (select id from public.members where nickname = ('pwtest' || :'ns' || 'admin')) adm;
 
 -- Three swims of the same event across two years, so my_achievement_v1 finds
 -- exactly TWO PB moments in the current year:
@@ -596,15 +649,15 @@ insert into public.records (
 select mem.id, 'meet', 'personal', '자유형', 50,
        v.event_name, v.event_date, v.result_display, v.result_centiseconds, adm.id
 from (values
-  ('pwtest 작년 대회',
+  (('pwtest' || :'ns' || ' 작년 대회'),
       make_date(extract(year from current_date)::int - 1, 6, 15), '40.00', 4000),
-  ('pwtest 봄 대회',
+  (('pwtest' || :'ns' || ' 봄 대회'),
       make_date(extract(year from current_date)::int, 3, 9), '38.50', 3850),
-  ('pwtest 여름 대회',
+  (('pwtest' || :'ns' || ' 여름 대회'),
       make_date(extract(year from current_date)::int, 7, 20), '37.25', 3725)
 ) as v(event_name, event_date, result_display, result_centiseconds)
-cross join (select id from public.members where nickname = 'pwtestmember') mem
-cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+cross join (select id from public.members where nickname = ('pwtest' || :'ns' || 'member')) mem
+cross join (select id from public.members where nickname = ('pwtest' || :'ns' || 'admin')) adm;
 
 -- ---------------------------------------------------------------------------
 -- 다중일 대회 fixture
@@ -626,19 +679,19 @@ select v.id::uuid,
        v.title,
        make_date(extract(year from current_date)::int, extract(month from current_date)::int, v.d1),
        make_date(extract(year from current_date)::int, extract(month from current_date)::int, v.d2),
-       'pwtest 수영장',
+       ('pwtest' || :'ns' || ' 수영장'),
        adm.id
   from (values
     -- Read-only: the calendar test asserts which squares it occupies.
-    ('99999999-9999-4999-8999-0000000000b1', 'pwtest 다중일 대회', 10, 12),
+    (('99' || :'ns' || '-9999-4999-8999-0000000000b1')::uuid, ('pwtest' || :'ns' || ' 다중일 대회'), 10, 12),
     -- Written to: the edit tests save through the real form. A separate row,
     -- because playwright.config sets fullyParallel — a test that saves and a test
     -- that reads would otherwise race over one activity, which is the reason the
     -- block at the foot of this file gives every write test a fixture of its own.
-    ('99999999-9999-4999-8999-0000000000b2', 'pwtest 다중일 수정 대회', 20, 22)
+    (('99' || :'ns' || '-9999-4999-8999-0000000000b2')::uuid, ('pwtest' || :'ns' || ' 다중일 수정 대회'), 20, 22)
   ) as v(id, title, d1, d2)
- cross join (select id from public.members where nickname = 'pwtestadmin') adm;
+ cross join (select id from public.members where nickname = ('pwtest' || :'ns' || 'admin')) adm;
 
 commit;
 
-select nickname, status, role from public.members where nickname like 'pwtest%' order by nickname;
+select nickname, status, role from public.members where nickname like ('pwtest' || :'ns' || '%') order by nickname;

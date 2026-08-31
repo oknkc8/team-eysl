@@ -2,7 +2,7 @@ import { test as base, expect, type Browser, type Page } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BASE_URL } from '../playwright.config'
+import { BASE_URL, FIXTURE_NS, FIXTURE_NICK_PREFIX } from '../playwright.config'
 import { readRunPassword } from './runPassword'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -30,33 +30,57 @@ export const STATE = {
 export const PASSWORD = readRunPassword()
 
 /** Ids seed.sql pins, so the route table can name them literally. */
+/**
+ * Namespace a fixture id into this worktree's own.
+ *
+ * The six hex characters replace the TAIL of the first group, never the last
+ * one: the twelve seeded dummies encode their index there
+ * (`e0000000-...-000000000007`), so writing the namespace into the last group
+ * would collapse twelve fixtures into one -- and silently, because a seed of
+ * one dummy succeeds just as well as a seed of twelve. Only the capacity and
+ * waitlist tests would have started passing for the wrong reason.
+ *
+ * The leading two characters still name the fixture, so a row in the shared
+ * database is still identifiable by eye, and the version/variant nibbles are
+ * untouched so the result is still a well-formed v4.
+ */
+const nsId = (id: string) => id.slice(0, 2) + FIXTURE_NS + id.slice(8)
+
+/** Titles carry the namespace too: two worktrees seed at once, and a
+ *  getByText(`${FIXTURE_NICK_PREFIX} 훈련`) would otherwise match the other one's row. */
+const nsTitle = (rest: string) => `${FIXTURE_NICK_PREFIX} ${rest}`
+
 export const SEED = {
-  adminMemberId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-  memberMemberId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-  pendingMemberId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-  member2MemberId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-  noticeId: '11111111-1111-4111-8111-111111111111',
-  activityId: '22222222-2222-4222-8222-222222222222',
-  folderId: '33333333-3333-4333-8333-333333333333',
+  adminMemberId: nsId('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+  memberMemberId: nsId('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+  pendingMemberId: nsId('cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
+  member2MemberId: nsId('dddddddd-dddd-4ddd-8ddd-dddddddddddd'),
+  noticeId: nsId('11111111-1111-4111-8111-111111111111'),
+  activityId: nsId('22222222-2222-4222-8222-222222222222'),
+  folderId: nsId('33333333-3333-4333-8333-333333333333'),
+  enrolMemberId: nsId('0f000000-0000-4000-8000-000000000001'),
+  enrolActivityId: nsId('0f000000-0000-4000-8000-000000000002'),
   // One fixture per write test — see the block at the foot of seed.sql for why
   // they are not shared.
-  capacityOneActivityId: '44444444-4444-4444-8444-444444444444',
-  attendanceActivityId: '55555555-5555-4555-8555-555555555555',
-  commentNoticeId: '66666666-6666-4666-8666-666666666666',
-  walkInActivityId: '77777777-7777-4777-8777-777777777777',
-  commentActivityId: '84850e06-0ca7-4641-b800-a182e907ee6b',
-  multiDayRaceId: '99999999-9999-4999-8999-0000000000b1',
+  capacityOneActivityId: nsId('44444444-4444-4444-8444-444444444444'),
+  attendanceActivityId: nsId('55555555-5555-4555-8555-555555555555'),
+  commentNoticeId: nsId('66666666-6666-4666-8666-666666666666'),
+  walkInActivityId: nsId('77777777-7777-4777-8777-777777777777'),
+  commentActivityId: nsId('84850e06-0ca7-4641-b800-a182e907ee6b'),
+  multiDayRaceId: nsId('99999999-9999-4999-8999-0000000000b1'),
   // A second one, because the edit tests save while the calendar test reads.
-  multiDayEditRaceId: '99999999-9999-4999-8999-0000000000b2',
-  noticeTitle: 'pwtest 공지 제목',
-  activityTitle: 'pwtest 훈련',
-  folderName: 'pwtest 폴더',
-  capacityOneActivityTitle: 'pwtest 정원1 훈련',
-  attendanceActivityTitle: 'pwtest 출석 훈련',
-  commentNoticeTitle: 'pwtest 댓글 공지',
-  commentActivityTitle: 'pwtest 댓글 훈련',
-  multiDayRaceTitle: 'pwtest 다중일 대회',
-  multiDayEditRaceTitle: 'pwtest 다중일 수정 대회',
+  multiDayEditRaceId: nsId('99999999-9999-4999-8999-0000000000b2'),
+  noticeTitle: nsTitle('공지 제목'),
+  activityTitle: nsTitle('훈련'),
+  folderName: nsTitle('폴더'),
+  enrolMemberNickname: nsTitle('명단 회원'),
+  enrolActivityTitle: nsTitle('명단 훈련'),
+  capacityOneActivityTitle: nsTitle('정원1 훈련'),
+  attendanceActivityTitle: nsTitle('출석 훈련'),
+  commentNoticeTitle: nsTitle('댓글 공지'),
+  commentActivityTitle: nsTitle('댓글 훈련'),
+  multiDayRaceTitle: nsTitle('다중일 대회'),
+  multiDayEditRaceTitle: nsTitle('다중일 수정 대회'),
   // The three days it occupies, and one it must not. Strings because the
   // calendar's day labels are unpadded — '9일', '10일'.
   multiDayRaceDays: ['10', '11', '12'],

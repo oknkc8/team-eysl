@@ -1,3 +1,4 @@
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -47,7 +48,7 @@ test('chat attachment: pick, send, and see it in the thread', async ({ page }) =
   const upload = {
     name: '훈련일지.txt',
     mimeType: 'text/plain',
-    buffer: Buffer.from('pwtest 첨부 파일\n', 'utf8'),
+    buffer: Buffer.from(`${FIXTURE_NICK_PREFIX} 첨부 파일\n`, 'utf8'),
   }
 
   // 1. The composer with a file chosen and not yet sent. This is the state the

@@ -1,3 +1,4 @@
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import {
   SEED,
   STATE,
@@ -33,8 +34,8 @@ import type { Page } from '@playwright/test'
 
 // Distinctive enough to find in a failure screenshot, and prefixed so a row that
 // escapes cleanup is recognisable in the shared dev database.
-const ADMIN_COMMENT = 'pwtest 관리자가 동시에 쓴 댓글'
-const MEMBER_COMMENT = 'pwtest 회원이 동시에 쓴 댓글'
+const ADMIN_COMMENT = `${FIXTURE_NICK_PREFIX} 관리자가 동시에 쓴 댓글`
+const MEMBER_COMMENT = `${FIXTURE_NICK_PREFIX} 회원이 동시에 쓴 댓글`
 
 /** Far enough out that no seeded fixture shares the date. */
 const FUTURE_DATE = '2027-03-14'
@@ -124,8 +125,8 @@ test.describe('공지 댓글', () => {
         await waitForScreen(target)
         await expect(target.getByText(ADMIN_COMMENT), `${label}: 관리자 댓글`).toBeVisible()
         await expect(target.getByText(MEMBER_COMMENT), `${label}: 회원 댓글`).toBeVisible()
-        await expect(target.getByText('pwtestadmin', { exact: true })).toBeVisible()
-        await expect(target.getByText('pwtestmember', { exact: true })).toBeVisible()
+        await expect(target.getByText(`${FIXTURE_NICK_PREFIX}admin`, { exact: true })).toBeVisible()
+        await expect(target.getByText(`${FIXTURE_NICK_PREFIX}member`, { exact: true })).toBeVisible()
       }
 
       // And what the table holds, asked of the server rather than read off the
@@ -325,7 +326,7 @@ test.describe('출석 체크', () => {
 
       // The roster is the activity's participants; seed.sql applied this member
       // so there is somebody to check in.
-      await expect(page.getByText('pwtestmember', { exact: true })).toBeVisible()
+      await expect(page.getByText(`${FIXTURE_NICK_PREFIX}member`, { exact: true })).toBeVisible()
       await expect(present, '체크 전 출석 버튼').toHaveAttribute('aria-pressed', 'false')
 
       await present.click()
@@ -443,9 +444,9 @@ test.describe('출석 체크', () => {
     // file: the applicant proves the roster rendered at all, which is what makes
     // the walk-in's absence here mean "has not been marked yet" rather than
     // "nothing has loaded".
-    await expect(page.getByText('pwtestmember', { exact: true }), '체크 전 신청자').toBeVisible()
+    await expect(page.getByText(`${FIXTURE_NICK_PREFIX}member`, { exact: true }), '체크 전 신청자').toBeVisible()
     await expect(
-      page.getByText('pwtestmember2', { exact: true }),
+      page.getByText(`${FIXTURE_NICK_PREFIX}member2`, { exact: true }),
       '체크 전 워크인',
     ).toHaveCount(0)
 
@@ -469,7 +470,7 @@ test.describe('출석 체크', () => {
 
     // The assertion the pre-0030 function could not pass: somebody with no
     // application, on the admin's own roster, carrying the status that was set.
-    const walkIn = rosterCard(page, 'pwtestmember2')
+    const walkIn = rosterCard(page, `${FIXTURE_NICK_PREFIX}member2`)
     await expect(
       walkIn.getByRole('button', { name: '지각', exact: true }),
       '워크인 지각 버튼',
@@ -482,7 +483,7 @@ test.describe('출석 체크', () => {
     // The application arm, unmarked and still listed. A union that lost this
     // side would leave the coach unable to check in anybody who had not turned
     // up yet, which is most of the roster at the moment they open the screen.
-    const applicant = rosterCard(page, 'pwtestmember')
+    const applicant = rosterCard(page, `${FIXTURE_NICK_PREFIX}member`)
     for (const label of ['출석', '지각', '불참']) {
       await expect(
         applicant.getByRole('button', { name: label, exact: true }),
@@ -564,13 +565,13 @@ test.describe('기록 등록', () => {
       // roster today — the fixture had simply never resembled a real row before.
       await page
         .getByLabel('회원', { exact: true })
-        .selectOption({ label: 'pwtestmember2 (pwtestmember2)' })
+        .selectOption({ label: `${FIXTURE_NICK_PREFIX}member2 (${FIXTURE_NICK_PREFIX}member2)` })
       // 일반 수영대회 · 개인전 are the form's defaults; pressing them anyway would
       // test the chips rather than the write.
       await page.getByRole('button', { name: '자유형', exact: true }).click()
       await page.getByLabel('거리 (m)').fill('50')
       await page.getByLabel('날짜').fill(RECORD_DATE)
-      await page.getByLabel('대회명').fill('pwtest 기록회')
+      await page.getByLabel('대회명').fill(`${FIXTURE_NICK_PREFIX} 기록회`)
       await page.getByLabel('기록', { exact: true }).fill(RECORD_TIME)
 
       // The form reads the parsed number back before anything is saved, so a
@@ -591,7 +592,7 @@ test.describe('기록 등록', () => {
       await expect(swimmer.page.getByText('자유형 50m', { exact: true })).toBeVisible()
       await expect(swimmer.page.getByRole('heading', { name: '자유형 50M 개인전 · 1건' })).toBeVisible()
       await expect(swimmer.page.getByText(RECORD_TIME).first(), '회원 화면의 기록').toBeVisible()
-      await expect(swimmer.page.getByText('pwtest 기록회')).toBeVisible()
+      await expect(swimmer.page.getByText(`${FIXTURE_NICK_PREFIX} 기록회`)).toBeVisible()
       // Their first swim of this event, so the screen says so rather than
       // inventing a delta against nothing.
       await expect(swimmer.page.getByText('첫 기록')).toBeVisible()
@@ -667,7 +668,7 @@ test.describe('일반회원이 쓸 수 없는 것', () => {
     const attempt = await directRequest(page, {
       path: `/rest/v1/activities?id=eq.${SEED.activityId}`,
       method: 'PATCH',
-      body: { title: 'pwtest 권한 없는 제목' },
+      body: { title: `${FIXTURE_NICK_PREFIX} 권한 없는 제목` },
     })
     expect(attempt.status, 'PATCH 응답 코드').toBe(200)
     expect(rows(attempt.body, 'activities PATCH'), '일반회원이 고쳐 쓴 훈련 일정 행').toHaveLength(0)
@@ -739,7 +740,7 @@ test.describe('일반회원이 쓸 수 없는 것', () => {
       await page.goto('/schedule/new')
       await waitForScreen(page)
       await expect(page.getByRole('heading', { name: '기타 등록' })).toBeVisible()
-      await page.getByLabel('제목').fill('pwtest 회원이 만든 기타')
+      await page.getByLabel('제목').fill(`${FIXTURE_NICK_PREFIX} 회원이 만든 기타`)
       await page.getByLabel('날짜').fill(FUTURE_DATE)
       await page.getByRole('button', { name: '등록' }).click()
 
@@ -750,7 +751,7 @@ test.describe('일반회원이 쓸 수 없는 것', () => {
       // The member opens their own edit form and leaves it sitting there.
       await page.goto(`/schedule/${activityId}/edit`)
       await waitForScreen(page)
-      await expect(page.getByLabel('제목')).toHaveValue('pwtest 회원이 만든 기타')
+      await expect(page.getByLabel('제목')).toHaveValue(`${FIXTURE_NICK_PREFIX} 회원이 만든 기타`)
 
       // Meanwhile a staffer turns it into a 훈련.
       await staff.page.goto(`/schedule/${activityId}/edit`)
@@ -760,7 +761,7 @@ test.describe('일반회원이 쓸 수 없는 것', () => {
       await staff.page.waitForURL(`**/schedule/${activityId}`, { timeout: 20_000 })
 
       // The member saves the form they were already holding.
-      await page.getByLabel('제목').fill('pwtest 회원이 다시 고친 제목')
+      await page.getByLabel('제목').fill(`${FIXTURE_NICK_PREFIX} 회원이 다시 고친 제목`)
       await page.getByRole('button', { name: '수정', exact: true }).click()
 
       await expect(page.getByText('저장 실패')).toBeVisible({ timeout: 20_000 })
@@ -780,7 +781,7 @@ test.describe('일반회원이 쓸 수 없는 것', () => {
       })
       const saved = rows<{ title: string; kind: string }>(stored.body, 'activities')
       expect(saved[0]?.kind, '운영진이 바꾼 종류').toBe('training')
-      expect(saved[0]?.title, '거절된 뒤의 제목').toBe('pwtest 회원이 만든 기타')
+      expect(saved[0]?.title, '거절된 뒤의 제목').toBe(`${FIXTURE_NICK_PREFIX} 회원이 만든 기타`)
 
       // The refused write is a 4xx, which Chromium logs regardless; an exception
       // of ours while rendering the failure is what would matter.
@@ -799,8 +800,8 @@ test.describe('공지 작성', () => {
   test.use({ storageState: STATE.admin })
 
   test('새 공지가 목록과 상세에 남는다', async ({ page, consoleWatcher }) => {
-    const title = 'pwtest 새로 쓴 공지'
-    const body = 'pwtest 공지 본문\n두 번째 줄'
+    const title = `${FIXTURE_NICK_PREFIX} 새로 쓴 공지`
+    const body = `${FIXTURE_NICK_PREFIX} 공지 본문\n두 번째 줄`
 
     await page.goto('/notices/new')
     await waitForScreen(page)
@@ -847,7 +848,7 @@ test.describe('단체 채팅', () => {
 
   test('보낸 메시지가 상대 화면에도 남는다', async ({ page, consoleWatcher, browser }) => {
     const other = await openAs(browser, STATE.member)
-    const message = 'pwtest 단체 채팅 메시지'
+    const message = `${FIXTURE_NICK_PREFIX} 단체 채팅 메시지`
 
     try {
       await page.goto('/chat')

@@ -1,6 +1,6 @@
 import { test as setup } from '@playwright/test'
 import { STATE, signIn } from './fixtures'
-import { STAMP_PATH, STAMP_VALUE } from '../playwright.config'
+import { STAMP_PATH, STAMP_VALUE, FIXTURE_NICK_PREFIX } from '../playwright.config'
 
 /**
  * Signs each seeded role in once and saves its session, so the smoke suite pays
@@ -62,22 +62,22 @@ setup('the server on this port is our build', async ({ baseURL }) => {
 })
 
 setup('authenticate as 총관리자', async ({ page }) => {
-  await signIn(page, 'pwtestadmin')
+  await signIn(page, `${FIXTURE_NICK_PREFIX}admin`)
   await page.context().storageState({ path: STATE.admin })
 })
 
 setup('authenticate as 일반회원', async ({ page }) => {
-  await signIn(page, 'pwtestmember')
+  await signIn(page, `${FIXTURE_NICK_PREFIX}member`)
   await page.context().storageState({ path: STATE.member })
 })
 
 setup('authenticate as 두 번째 일반회원', async ({ page }) => {
-  await signIn(page, 'pwtestmember2')
+  await signIn(page, `${FIXTURE_NICK_PREFIX}member2`)
   await page.context().storageState({ path: STATE.member2 })
 })
 
 setup('authenticate as 승인 대기 회원', async ({ page }) => {
-  await signIn(page, 'pwtestpending')
+  await signIn(page, `${FIXTURE_NICK_PREFIX}pending`)
   await page.context().storageState({ path: STATE.pending })
 })
 
@@ -86,11 +86,11 @@ setup('authenticate as 승인 대기 회원', async ({ page }) => {
 // — it waits for the URL to leave /login, not for a screen the app will never
 // give them.
 setup('authenticate as 거절된 회원', async ({ page }) => {
-  await signIn(page, 'pwtestrejected')
+  await signIn(page, `${FIXTURE_NICK_PREFIX}rejected`)
   await page.context().storageState({ path: STATE.rejected })
 })
 
 setup('authenticate as 내보내진 회원', async ({ page }) => {
-  await signIn(page, 'pwtestblocked')
+  await signIn(page, `${FIXTURE_NICK_PREFIX}blocked`)
   await page.context().storageState({ path: STATE.blocked })
 })

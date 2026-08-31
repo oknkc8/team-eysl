@@ -7,7 +7,7 @@
 --
 -- Run with:  bash scripts/psql.sh -v ON_ERROR_STOP=1 -f e2e/cleanup.sql
 --
--- WHY FIXED IDS RATHER THAN `nickname like 'pwtest%'`.
+-- WHY FIXED IDS RATHER THAN `nickname like ('pwtest' || :'ns' || '%')`.
 --
 -- The prefix was doing load-bearing work it was never designed for. It meant
 -- "test-owned, delete it and everything filed against it" — and it decided that
@@ -31,113 +31,90 @@
 -- account authored has to go before the account does or the delete raises 23503.
 -- The suite is almost entirely read-only, but a flow test that files a notice or
 -- an activity would otherwise wedge every later cleanup.
+\getenv ns PWTEST_NS
+\if :{?ns}
+\else
+\set ns ''
+\endif
+
+-- REFUSED RATHER THAN DEFAULTED, and this is the only silent failure this
+-- design has. An empty namespace is not a harmless fallback: every worktree
+-- would seed and delete the SAME ids again, which is exactly the collision
+-- this file was namespaced to end -- and it would look like it worked.
+select case when btrim(:'ns') = '' then 'true' else 'false' end as ns_missing \gset
+\if :ns_missing
+\echo ''
+\echo 'PWTEST_NS is not set.'
+\echo 'Run `npm run test:e2e`, which derives it from the worktree path, or export'
+\echo 'one yourself (six hex characters) before running this file by hand.'
+select 'PWTEST_NS is not set'::int;
+\endif
+
+-- Dynamic signup accounts are owned by exact ids written locally by the test
+-- that created them. Empty is valid; malformed input must fail before deletes.
+\getenv owned_member_ids PWTEST_OWNED_SIGNUP_MEMBER_IDS
+\if :{?owned_member_ids}
+\else
+\set owned_member_ids ''
+\endif
+\getenv owned_auth_ids PWTEST_OWNED_SIGNUP_AUTH_IDS
+\if :{?owned_auth_ids}
+\else
+\set owned_auth_ids ''
+\endif
+
 create temporary table pwtest_member_ids (id uuid primary key);
 
 -- The six sign-in accounts, at the ids fixtures.ts imports.
 insert into pwtest_member_ids (id) values
-  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),  -- pwtestadmin
-  ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),  -- pwtestmember
-  ('cccccccc-cccc-4ccc-8ccc-cccccccccccc'),  -- pwtestpending
-  ('dddddddd-dddd-4ddd-8ddd-dddddddddddd'),  -- pwtestmember2
+  (('aa' || :'ns' || '-aaaa-4aaa-8aaa-aaaaaaaaaaaa')::uuid),  -- pwtestadmin
+  (('bb' || :'ns' || '-bbbb-4bbb-8bbb-bbbbbbbbbbbb')::uuid),  -- pwtestmember
+  (('cc' || :'ns' || '-cccc-4ccc-8ccc-cccccccccccc')::uuid),  -- pwtestpending
+  (('dd' || :'ns' || '-dddd-4ddd-8ddd-dddddddddddd')::uuid),  -- pwtestmember2
+  (('0f' || :'ns' || '-0000-4000-8000-000000000001')::uuid),  -- pwtest 명단 회원 (no login)
   -- Named here even though the signup block further down would also reach them
   -- through the pwtest%@eysl.local auth join. That reach is incidental — it
   -- exists for accounts whose ids are random because a button made them — and
   -- leaning on it for a fixture whose id we chose ourselves would be depending
   -- on a coincidence. These two are seeded exactly like the four above, so they
   -- are removed exactly like the four above.
-  ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'),  -- pwtestrejected
-  ('ffffffff-ffff-4fff-8fff-ffffffffffff');  -- pwtestblocked
+  (('ee' || :'ns' || '-eeee-4eee-8eee-eeeeeeeeeeee')::uuid),  -- pwtestrejected
+  (('ff' || :'ns' || '-ffff-4fff-8fff-ffffffffffff')::uuid);  -- pwtestblocked
 
 -- The twelve roster/waitlist/ranking dummies, built by the same expression
 -- seed.sql uses so the two cannot drift apart silently.
 insert into pwtest_member_ids (id)
-select ('e0000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
+select ('e0' || :'ns' || '-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
 from generate_series(1, 12) as n;
 
--- The accounts signup.spec.ts creates by pressing the button.
---
--- THIS BLOCK EXISTS BECAUSE THE SUITE WAS LEAKING. Those accounts are made
--- through the real 가입 신청 flow, so their ids are random and appear in neither
--- list above; the deletes below removed their auth.users rows on the email
--- shape and left the members rows behind. members_auth_user_id_fkey is ON
--- DELETE SET NULL, so each run stranded an approved-or-pending member with no
--- login in a database that also holds the real club roster. Measured after two
--- runs: 41 members became 55, fourteen of them orphans, two of them `approved`.
---
--- It also made the suite non-idempotent. A signup test using a FIXED nickname —
--- the roster-guard test has to, because the guard matches the seeded fixture's
--- name — got `ok:true` on the first run and `nickname_taken` on the second,
--- from a row nothing could see.
---
--- OWNERSHIP IS STILL NOT INFERRED FROM A NICKNAME. It comes from the auth
--- account, on exactly the `pwtest%@eysl.local` predicate the auth deletes below
--- already trust — a shape only this suite produces, since the importer refuses
--- the pwtest prefix outright (scripts/import/parse.ts, ReservedNicknameError).
--- Joining through auth_user_id rather than matching members.nickname is what
--- keeps the safety property #10 established: a real member is never named here.
+-- Accounts signup.spec.ts creates after seed have random ids. Their ids arrive
+-- from the local ownership ledger, not from a nickname or email shape: people
+-- own those strings, whereas this run owns only the records it wrote down.
 insert into pwtest_member_ids (id)
-select m.id
-  from public.members m
-  join auth.users u on u.id = m.auth_user_id
- where u.email like 'pwtest%@eysl.local'
-on conflict (id) do nothing;
-
--- The orphans an EARLIER RUN OF THIS FILE made, which neither list above can
--- reach.
---
--- NOT a signup path that forgets to make an auth user. register_member_v1 is a
--- trigger on auth.users and its insert is
--- `insert into public.members (auth_user_id, nickname) values (new.id, ...)`
--- (0028:192), so auth_user_id is set at creation and no member row is ever born
--- with a null link. The null is put there afterwards, and it is this file that
--- puts it there.
---
--- members_auth_user_id_fkey is ON DELETE SET NULL (0001:16), chosen so that
--- deleting a login cannot take that member's attendance and record history with
--- it. Now read the bottom of this file against the middle: the auth.users delete
--- matches on the email shape UNCONDITIONALLY, while the members delete is
--- conditional on this id list. Before the signup block above existed, that
--- asymmetry fired on every run -- the auth row went on its email, the member row
--- was not in the list, and what survived was a member with auth_user_id set to
--- null. Those are the fourteen orphans the block above was written to stop.
---
--- It does stop new ones. It cannot reach the ones already made, because the link
--- it joins through is precisely what was nulled. One such row survived 3.8 days
--- and many full suite runs, and two agents each found it, correctly checked that
--- no runner was live, correctly called it a leak, and had no way to remove it.
---
--- THE PREFIX IS DOING THE WORK HERE, AND `auth_user_id is null` IS NOT THE
--- SAFETY PROPERTY. 36 of this database's 41 members have a null auth_user_id --
--- they came from the club workbook and have never logged in -- so that conjunct
--- on its own would delete most of the real roster. What makes this safe is the
--- nickname prefix, resting on the same two facts the email predicate at the
--- bottom already rests on: signup.spec.ts builds the address and the nickname
--- from one `pwtest...` string and names the prefix "the contract cleanup.sql
--- matches", and the importer refuses that prefix outright, case-insensitively,
--- on both source names before disambiguation (scripts/import/parse.ts,
--- ReservedNicknameError), so no imported member can carry it.
---
--- This is the one statement in this file that reads a nickname, and the header
--- above explains at length why the others must not. Two things keep it from
--- being the thing that header warns about. It is confined to rows that have
--- ALREADY lost their auth link, so a member who can sign in is out of its reach
--- whatever they are called. And it adds to the id list rather than deleting, so
--- the row leaves through the same ordered deletes as every other fixture and
--- cannot strand a foreign key.
-insert into pwtest_member_ids (id)
-select m.id
-  from public.members m
- where m.auth_user_id is null
-   and m.nickname like 'pwtest%'
+select btrim(entry.id)::uuid
+  from regexp_split_to_table(:'owned_member_ids', ',') as entry(id)
+ where btrim(entry.id) <> ''
 on conflict (id) do nothing;
 
 -- Captured before the member rows go, because auth_user_id is the only link
 -- from a seeded member to the auth.users row 0027's trigger created for it.
-create temporary table pwtest_auth_ids as
+create temporary table pwtest_auth_ids (id uuid primary key);
+
+insert into pwtest_auth_ids (id)
 select m.auth_user_id as id
   from public.members m
  where m.id in (select id from pwtest_member_ids)
-   and m.auth_user_id is not null;
+   and m.auth_user_id is not null
+on conflict (id) do nothing;
+
+-- A member row could already be gone when an interrupted run resumes. Its Auth
+-- id is still explicit in the same ledger, so remove it without guessing from
+-- its email address.
+insert into pwtest_auth_ids (id)
+select btrim(entry.id)::uuid
+  from regexp_split_to_table(:'owned_auth_ids', ',') as entry(id)
+ where btrim(entry.id) <> ''
+on conflict (id) do nothing;
 
 -- The case the arm above deliberately does not cover, made loud instead of silent.
 --
@@ -263,25 +240,14 @@ delete from public.activities where created_by in (select id from pwtest_member_
 -- of removing them.
 delete from public.members where id in (select id from pwtest_member_ids);
 
--- auth rows by the ids captured above, plus the seeded email shape as a belt.
---
--- Two predicates because they fail in different directions. The id list misses
--- an auth.users row whose member is already gone; the email pattern catches
--- that, and auth.users.email is UNIQUE, so a stranded row would otherwise make
--- the next seed collide on an address rather than on a nickname.
---
--- The email predicate stays narrow ON PURPOSE. `@eysl.local` alone is NOT safe:
--- the dev database's own 관리자 account uses that domain, and it is the
--- master_admin recorded as marked_by on every imported attendance row. Deleting
--- it would either wedge cleanup on a foreign key or take the club register with
--- it. `pwtest%@eysl.local` is a shape only seed.sql produces.
+-- The auth side follows the same explicit id list. Do not add an email fallback:
+-- a nickname-derived address belongs to the person who registered it, not to an
+-- arbitrary later Playwright run.
 delete from auth.identities
-where user_id in (select id from pwtest_auth_ids)
-   or user_id in (select id from auth.users where email like 'pwtest%@eysl.local');
+where user_id in (select id from pwtest_auth_ids);
 
 delete from auth.users
-where id in (select id from pwtest_auth_ids)
-   or email like 'pwtest%@eysl.local';
+where id in (select id from pwtest_auth_ids);
 
 -- The signup rate limiter's bookkeeping, which the suite fills and nothing else
 -- empties.

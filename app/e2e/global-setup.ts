@@ -1,8 +1,10 @@
+import { FIXTURE_NS } from '../playwright.config'
 import { execFileSync, spawn } from 'node:child_process'
 import { randomInt } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ownedSignupEnvironment, readOwnedSignups, resetOwnedSignups } from './ownedSignups'
 import { generateRunPassword } from './runPassword'
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -317,6 +319,11 @@ function assertSignupBudget() {
 }
 
 export default async function globalSetup() {
+  // A previous run may have died after registering accounts. Its local ledger
+  // identifies those rows exactly; if it is malformed, stop before taking the
+  // lock or sending any delete to the shared database.
+  const previousOwnedSignups = readOwnedSignups()
+
   // Before anything is deleted, and held until teardown. seed.sql's first act is
   // `\i e2e/cleanup.sql`, which deletes fixed ids — so without this, a second
   // run starting mid-suite removes the first run's accounts underneath it. That
@@ -338,7 +345,15 @@ export default async function globalSetup() {
       // /proc on Linux; an environment block is readable only by the same user.
       // Neither matters much for a throwaway dev credential, but the cheaper one
       // is also the safer one.
-      env: { ...process.env, PWTEST_PASSWORD: password },
+      // PWTEST_NS beside it: seed.sql refuses to run without one rather than
+      // defaulting to empty, because an empty namespace puts every worktree back
+      // on the same ids while still looking like it worked.
+      env: {
+        ...process.env,
+        PWTEST_PASSWORD: password,
+        PWTEST_NS: FIXTURE_NS,
+        ...ownedSignupEnvironment(previousOwnedSignups),
+      },
     })
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string }
@@ -348,5 +363,8 @@ export default async function globalSetup() {
     )
   }
 
+  // Only discard old ownership records after seed.sql consumed them successfully.
+  // The new run's signup specs will add their own files one account at a time.
+  resetOwnedSignups()
   assertSignupBudget()
 }

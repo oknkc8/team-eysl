@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { LOCK_HOLD_SECONDS, LOCK_KEY, SEED_LOCK_PID_FILE } from './global-setup'
+import { ownedSignupEnvironment, readOwnedSignups, resetOwnedSignups } from './ownedSignups'
+import { FIXTURE_NS } from '../playwright.config'
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -293,7 +295,9 @@ function reportSurvivingRows() {
         // pg_advisory_lock stores its key as classid 0 / objsubid 1, and the
         // two-int form uses objsubid 2 — so objid on its own could match an
         // unrelated advisory lock that happens to share the low half.
-        "select (select count(*) from public.members where nickname like 'pwtest%')" +
+        "select (select count(*) from public.members where nickname like 'pwtest" +
+          FIXTURE_NS +
+          "%')" +
           " || ' ' || (select count(*) = 0 from pg_locks" +
           ` where locktype = 'advisory' and classid = 0 and objsubid = 1` +
           ` and objid = ${LOCK_KEY} and granted)`,
@@ -382,6 +386,17 @@ export default function globalTeardown() {
     )
   }
 
+  // The ledger is the only authority for test-created signup accounts. A bad
+  // local record is a safe failure: release our lock, leave every database row
+  // intact, and require repair rather than falling back to a name predicate.
+  let ownedSignupEnv: Record<string, string>
+  try {
+    ownedSignupEnv = ownedSignupEnvironment(readOwnedSignups())
+  } catch (error) {
+    releaseSeedLock(lock, heldPid)
+    throw error
+  }
+
   // Checked again AFTER cleanup, while the lock is still held, because the check
   // above and the delete below are separate statements on separate connections
   // and the hold can lapse between them.
@@ -401,7 +416,15 @@ export default function globalTeardown() {
     execFileSync(
       'bash',
       ['scripts/psql.sh', '-v', 'ON_ERROR_STOP=1', '-q', '-f', 'e2e/cleanup.sql'],
-      { cwd: appDir, stdio: 'pipe', encoding: 'utf8' },
+      // The same namespace the seed used. Without it cleanup.sql refuses, which
+      // is the point: a cleanup that ran with an empty namespace would delete by
+      // the old shared ids and take other worktrees' fixtures with it.
+      {
+        cwd: appDir,
+        stdio: 'pipe',
+        encoding: 'utf8',
+        env: { ...process.env, PWTEST_NS: FIXTURE_NS, ...ownedSignupEnv },
+      },
     )
     // No `lock !== null` guard: the refusal above makes that unreachable. It used
     // to be here, and it was the reason the one path that wrongly deleted was
@@ -459,6 +482,10 @@ export default function globalTeardown() {
         'run that broke it, not their change. Re-seed and re-run that suite.',
     )
   }
+
+  // A normal teardown consumed every recorded id. Keep the ledger only when a
+  // run crashes or cleanup refuses, so the next seed can safely retry it.
+  resetOwnedSignups()
 
   // Cleanup succeeded, so anything still here belongs to somebody. Say who.
   reportSurvivingRows()
