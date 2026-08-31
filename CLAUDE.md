@@ -311,6 +311,19 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 
 `db:types` overwrites the whole file, so that decision leaves no trace inside it: after regenerating, check whether this function came back and take it out again.
 
+**And that is not the only thing regenerating changes. It also drops `| null` from nullable parameters.** Verified 2026-08-27 while adding `0048`:
+
+```
+OLD (committed)     p_notice_id: string | null   p_expected_updated_at: string | null
+NEW (regenerated)   p_notice_id: string          p_expected_updated_at: string
+```
+
+**The old file was right.** `save_notice_v1` signals "create" by passing `p_notice_id` as null and branches on `p_notice_id is null` — **the generator cannot see that a plpgsql parameter is nullable, so it produces a type that forbids a call the function was designed to accept.** `notices/api.ts:338,342` stopped compiling the moment the file was rewritten.
+
+Note the shape of the failure rather than the two field names, because the names will change. Regenerating is something you do while working on your *own* feature, and the breakage lands in **somebody else's**: left unexamined it reads as *"my change broke notices"*, and the next move is to go looking in the wrong file. Nothing in the diff says "the generator did this" — the line simply lost four characters.
+
+So after `npm run db:types`, two checks rather than one: whether `member_link_summary_v1` came back, **and whether any nullable parameter lost its `| null`.** `git diff src/types/database.ts` shows both in one read; restore by hand and say why in a comment, as `save_notice_v1` now does.
+
 **This is one deliberate exception, not a policy.** Do not generalise it into "strip every ungranted function" — `gen-types.sh` is supposed to describe the whole schema, and a rule that quietly narrows it would make the generated file lie about the database. If another function ever earns the same treatment, it earns its own line here.
 
 **The worktree anchor moves to a different worktree mid-session.** Seen twice on 2026-08-26. Once, `git add … && git commit` ran in **`feat/admin-claim`** instead of `fix/media-delete-orphans`; the other time, `claim2`'s `git mv` succeeded in `admin-claim` and the very next `git commit` ran in **`fix/media-delete-orphans`**. **Neither committed anything, and that is purely because the other tree happened to be clean.** Had it been dirty, somebody else's work would have gone in under our commit message.
