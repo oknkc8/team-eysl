@@ -497,10 +497,17 @@ Three, all met while photographing screens:
 | `scrollIntoViewIfNeeded()` | the element's *label* was visible, so nothing was "needed"; the input stayed behind the fixed nav |
 | `screenshot({fullPage: true})` | the whole document - painting `position: fixed` chrome through the middle of it |
 
-The first one's fix generalises: our `Shimmer` sets `aria-busy="true"`, so
-`expect(page.locator('[aria-busy="true"]')).toHaveCount(0)` means *rendered*, names
-no screen's content, and cannot rot when a caption changes. **Prefer a wait that
-asserts the state you mean over one that asserts a proxy for it.**
+The first one's fix is `waitForScreen()`, which is what the suite actually uses —
+10 spec files call it. **Prefer a wait that asserts the state you mean over one
+that asserts a proxy for it.**
+
+*(An earlier version of this paragraph told you to wait on `aria-busy` going to
+zero and called that the general convention. It is not. Measured 2026-08-31,
+`aria-busy` appears **once** in `src` — `AsyncSection.tsx:55` — and **zero** times
+anywhere in `e2e`; no spec has ever waited on it. The claim was invented in the
+writing and shipped because it sounded like the kind of thing that would be true,
+which is the failure this whole page is about. **A convention is a claim about a
+codebase; grep for it before writing it down.**)*
 
 ### Empty because the data is missing, or empty because the code is right
 
@@ -716,6 +723,104 @@ It reproduces easily. Scanning `/proc` on 2026-08-31 for the same purpose turned
 up **162** candidate processes; every one was an MCP server, mostly belonging to
 other projects, and the count of real test runners under `team-eysl` was **zero**.
 The filter is the whole job, and the unfiltered number is worth nothing.
+
+### A mutable column is not evidence of ownership
+
+`cleanup.sql` decides what to delete. One of its arms keyed on `attendance.marked_by`
+— the staffer who tapped — and that is a column **somebody else's write can stamp**.
+`attendance_mark_v1` ends with:
+
+```sql
+on conflict (activity_id, member_id) do update
+  set status = excluded.status,
+      marked_by = excluded.marked_by,   -- here
+      updated_at = now()
+```
+
+So a test admin toggling a row that already existed **acquires** it: the row was
+somebody else's, one column becomes ours, and afterwards nothing tells that row apart
+from one the suite created. **An upsert makes "created" and "updated"
+indistinguishable after the fact**, and any cleanup keyed on a field the upsert writes
+inherits that ambiguity.
+
+The rule: **key a teardown on what the row *is* — `member_id`, `activity_id` — not on
+who last touched it.** Identity columns cannot be reassigned by another party's write.
+
+**Two things stop that being a one-line fix, and both came from asking the schema
+rather than reasoning about it.**
+
+```
+attendance_member_id_fkey     ON DELETE CASCADE
+attendance_activity_id_fkey   ON DELETE CASCADE
+attendance_marked_by_fkey     NO ACTION          <- and marked_by is NOT NULL
+```
+
+The identity arms are already redundant for foreign-key purposes — deleting the member
+or the activity cascades the row. But `marked_by` is NO ACTION, so a row carrying a
+test account's stamp that teardown does **not** delete blocks `delete from
+public.members` with 23503 and wedges the whole teardown, including the `auth.users`
+deletes whose email is UNIQUE — so the next seed fails too. And the column cannot be
+nulled out of the way, because it is NOT NULL. Dropping the arm trades a data-loss
+risk for a total-teardown failure.
+
+**And on this database the arm had never fired on real data.** Every attendance row a
+test account has stamped is on a test member and a test activity, and no spec marks a
+real member or a real activity — they all use seeded ids. The hazard is real; the
+trigger has not been built yet. Worth separating those two before writing a fix.
+
+### The prefix is not reserved where you think it is
+
+`cleanup.sql` rests its safety on `pwtest` never belonging to a real member. **Only
+half of that is enforced.**
+
+```
+importer   RESERVED_NICKNAME_PREFIX = 'pwtest', case-insensitive, both source names
+signup     no check at all -- 0032 deliberately exempts it so that fixtures named
+           `pwtestadmin` keep working
+```
+
+And signup derives the address from the nickname (`0028`):
+`v_email := lower(v_nickname) || '@eysl.local'`. Follow a real person who signs up as
+`pwtestfoo`: the address becomes `pwtestfoo@eysl.local`, cleanup's auth arm matches it
+on the email shape, the FK nulls their `auth_user_id`, and the orphan arm then removes
+the member row. **Teardown deletes a real member.**
+
+`LIKE` opens the other half. The address is lowercased and the nickname is not, so
+`PWtestfoo` matches the email arm and **not** the nickname arm: auth row deleted,
+member row orphaned, and nothing can reach it again. Widening to `ilike` does not fix
+this — it closes the orphan case by making the first case worse.
+
+The fix belongs at signup rather than in the predicate: **reserve the prefix where
+accounts are made, and the assumption cleanup rests on becomes true instead of
+assumed.**
+
+### The check command counts itself
+
+A `/proc` sweep for test runners reported processes in six worktrees. They were not
+runners. **The scanning command's own `cmdline` held the search terms**, so it matched
+itself, once per shell in the pipeline. Counting by executable instead gave zero.
+
+Nearly every entry on this page is a false *negative* — a check that found nothing and
+looked like an absence. This is the false *positive*, and it costs the same: believed,
+it says "somebody is running, do not touch the database", and work stops for a reason
+that does not exist. **Exclude your own pid, and match on the executable rather than on
+the command line.**
+
+### `git diff` is rewritten here too, and it takes the reviewer's input with it
+
+Reviewing `#46`, `git diff` came back as a **summary** under a `--- Changes ---` header
+with a fabricated banner, `// ... 90 more lines (total: 110)`. Running `grep -c "^+"`
+over that output returned **0** for a diff of **246 added lines**.
+
+This is the worst placement in the whole wrapper family. `git status` printing `ok` is
+obviously not git. An empty `gh pr list` is at least odd. But **a diff is the input to
+review itself** — a reviewer who trusts it reviews a summary while believing they read
+the change, and any count taken off it is wrong in whichever direction the summary
+elided.
+
+Reconstruct rather than parse: `git show <ref>:<path>` for both sides, recompute with
+python's `difflib`. Same family as `cat`'s invented truncation count, and more
+expensive, because it corrupts the artefact the decision is made from.
 
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
