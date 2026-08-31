@@ -121,8 +121,12 @@ describe('resourceObjectPath', () => {
 
 describe('chatObjectPath', () => {
   it('files a chat attachment under chat/, away from the media libraries', () => {
+    // The stem slugs to `file` because safeObjectName is ASCII-only — Supabase
+    // Storage refuses a key containing Hangul. Asserted with a Korean input
+    // rather than an ASCII one on purpose: this is the case a member actually
+    // has, and the pairing of the two rules is what a reader needs to see.
     const path = chatObjectPath({ memberId: MEMBER_ID, fileName: '사진.png', now: 1, nonce: 'aaaaaa' })
-    expect(path).toBe(`${MEMBER_ID}/chat/1_aaaaaa_사진.png`)
+    expect(path).toBe(`${MEMBER_ID}/chat/1_aaaaaa_file.png`)
   })
 
   // The prefix is what 미디어 and 자료실 list on. A chat photo filed under

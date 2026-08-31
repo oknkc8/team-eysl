@@ -24,12 +24,17 @@ test.use({ storageState: STATE.member })
 test('chat attachment: pick, send, and see it in the thread', async ({ page }) => {
   await page.goto('/chat')
   await waitForScreen(page)
+  // AND the thread has finished loading. waitForScreen only proves the screen
+  // painted; the message list is a separate query, and shooting before it
+  // resolves puts loading skeletons behind the subject of the frame. Fourth
+  // instance of the same rule in this file: wait for what you are photographing.
+  await expect(page.getByText('아직 메시지가 없습니다', { exact: false })).toBeVisible()
 
   // A file that is its own explanation when someone opens the PNG and wonders
   // what was uploaded. Built here rather than committed: a fixture file in the
   // repo would be one more thing to keep in step with this spec.
   const upload = {
-    name: 'training-log.txt',
+    name: '훈련일지.txt',
     mimeType: 'text/plain',
     buffer: Buffer.from('pwtest 첨부 파일\n', 'utf8'),
   }
@@ -78,6 +83,7 @@ test('chat attachment: pick, send, and see it in the thread', async ({ page }) =
 test('chat attachment: a file with no caption is a message', async ({ page }) => {
   await page.goto('/chat')
   await waitForScreen(page)
+  await expect(page.getByText('아직 메시지가 없습니다', { exact: false })).toBeVisible()
 
   // send_message_v1 takes text OR an attachment, so the send button must enable
   // on a file alone. Worth its own frame: it is the rule most likely to be
