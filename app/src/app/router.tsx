@@ -1,5 +1,10 @@
 import { createBrowserRouter, Outlet, ScrollRestoration } from 'react-router'
-import { RequireAuth, RequireMasterAdmin, RequireStaff } from './guards'
+import {
+  RequireAuth,
+  RequireMasterAdmin,
+  RequireRecordManager,
+  RequireStaff,
+} from './guards'
 import { LoginPage, PendingPage } from '../features/auth/LoginPage'
 import { SignupPage } from '../features/auth/SignupPage'
 import { MyPage } from '../features/profile/MyPage'
@@ -19,6 +24,7 @@ import { ActivityEditPage } from '../features/schedule/ActivityEditPage'
 import { MyRecordsPage } from '../features/records/MyRecordsPage'
 import { MemberRecordsPage } from '../features/records/MemberRecordsPage'
 import { AdminRecordEditPage } from '../features/records/AdminRecordEditPage'
+import { RecordUploadListPage } from '../features/records/RecordUploadListPage'
 import { MemberListPage } from '../features/members/MemberListPage'
 import { MemberDetailPage } from '../features/members/MemberDetailPage'
 import { MemberActivityPage } from '../features/members/MemberActivityPage'
@@ -186,6 +192,51 @@ export const router = createBrowserRouter([
           // 알림 설정. Every approved member manages their own devices, and
           // push_subscriptions_self (0004) confines each of them to their own rows.
           { path: '/settings/notifications', element: <NotificationSettingsPage /> },
+          // 기록 관리 screens — WIDER than RequireStaff, and deliberately so.
+          //
+          // can_manage_records() (0004:159-169) is admin, master_admin, OR a member
+          // whose team_role is 코치. These three screens sat under RequireStaff,
+          // which excludes coaches, so the database trusted a coach to file a
+          // record while the router refused them the screen. The comment that used
+          // to live here even recorded the mismatch without closing it.
+          //
+          // The president's app settles it under the scope rule: his
+          // openRecordUploadManager() refuses anyone who is not
+          // isAdminUser() || teamRole === '코치' (final93:4216-4223), and his own
+          // toast names them — 총관리자·부관리자·코치만 결과지를 업로드할 수 있습니다.
+          //
+          // Presentation, like every other guard here: upsert_record() and the
+          // record_uploads policies check can_manage_records() themselves.
+          {
+            element: <RequireRecordManager />,
+            children: [
+              // Under /admin so it shares no segment shape with /records: a member
+              // typing the URL meets the guard rather than a sibling member route
+              // that ranked matching might award them instead.
+              { path: '/admin/records/new', element: <AdminRecordEditPage /> },
+              // 결과지 업로드. Beside 기록 추가 rather than under it: the same job,
+              // a file instead of a form.
+              //
+              // The only lazy route in the tree, and the reason is SheetJS: it is
+              // ~900kB, larger than the rest of this app put together. Imported
+              // statically it would land in the main bundle and every member would
+              // download a parser for a screen they cannot open, on a phone, before
+              // seeing the notice list.
+              {
+                path: '/admin/records/upload',
+                lazy: async () => ({
+                  Component: (await import('../features/records/AdminRecordUploadPage'))
+                    .AdminRecordUploadPage,
+                }),
+              },
+              // 결과지 목록. NOT lazy, unlike its sibling above: it lists rows and
+              // deletes one, and imports no parser at all.
+              //
+              // `uploads` plural beside `upload` singular: two literal segments, so
+              // ranked matching never has to choose between them.
+              { path: '/admin/records/uploads', element: <RecordUploadListPage /> },
+            ],
+          },
           {
             element: <RequireStaff />,
             children: [
@@ -200,35 +251,11 @@ export const router = createBrowserRouter([
               // screen asks is_staff() itself and prints a Korean refusal rather
               // than rendering one member's history as if it were the club's.
               { path: '/admin/applications', element: <ApplicationAdminPage /> },
-              // Under /admin so it shares no segment shape with /records: a member
-              // typing the URL meets RequireStaff rather than a sibling member route
-              // that ranked matching might award them instead. Filing a result stays
-              // genuinely staff-only — can_manage_records() is what decides it —
-              // unlike the schedule editor, which 0015 opened to every member.
-              { path: '/admin/records/new', element: <AdminRecordEditPage /> },
-              // 결과지 업로드. Beside 기록 추가 rather than under it: the same job,
-              // a file instead of a form. RequireStaff is presentation here as
-              // everywhere — upsert_record() checks can_manage_records() itself, so
-              // the screen cannot file anything the database would not accept.
-              //
-              // Worth knowing the two gates are not the same set: can_manage_records()
-              // (0004:159-169) also admits a member whose team_role is 코치, while
-              // is_staff() does not, so a coach who is not an admin can be refused
-              // this screen and still be allowed the write behind it.
-              //
-              // The only lazy route in the tree, and the reason is SheetJS: it is
-              // ~900kB, which is larger than the rest of this app put together.
-              // Imported statically it would land in the main bundle and every
-              // member would download a parser for a screen they cannot open, on a
-              // phone, before seeing the notice list. `lazy` fetches it when a
-              // staffer actually opens the screen.
-              {
-                path: '/admin/records/upload',
-                lazy: async () => ({
-                  Component: (await import('../features/records/AdminRecordUploadPage'))
-                    .AdminRecordUploadPage,
-                }),
-              },
+              // 기록 추가 · 결과지 업로드 · 결과지 목록 moved to RequireRecordManager
+              // below. They were here, and that was the bug: can_manage_records()
+              // admits a 코치 and isStaff() does not, so a coach the database trusts
+              // to file records could not open the screens that file them.
+
               // Ranked matching puts the literal /notices/new ahead of the sibling
               // /notices/:noticeId above, so the staff branch wins despite being
               // declared later — a member who types the URL lands on RequireStaff.

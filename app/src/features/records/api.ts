@@ -8,6 +8,7 @@ import {
   type WithDelta,
 } from './derive'
 import type { Json } from '../../types/database'
+import { recordSheetObjectPath } from '../media/path'
 import type { RosterEntry } from './parser'
 
 export type RecordCategory = 'meet' | 'fin' | 'other'
@@ -311,7 +312,11 @@ export type RecordInput = {
  * `metadata` is the only thing that differs between a typed record and a parsed
  * one, so it is the only parameter the two entry points below disagree about.
  */
-async function upsertRecord(input: RecordInput, metadata: Json): Promise<SwimRecord> {
+async function upsertRecord(
+  input: RecordInput,
+  metadata: Json,
+  uploadId?: string,
+): Promise<SwimRecord> {
   const { data, error } = await supabase.rpc('upsert_record', {
     p_member_id: input.memberId,
     p_category: input.category,
@@ -326,6 +331,10 @@ async function upsertRecord(input: RecordInput, metadata: Json): Promise<SwimRec
     p_event_name: input.eventName,
     p_teammates: input.teammates,
     p_metadata: metadata,
+    // Omitted rather than sent as null when there is no upload: the SQL
+    // parameter defaults to null, and the generated types reject an explicit
+    // one — the same reason attendance_my_history_v1 is called with {}.
+    ...(uploadId ? { p_upload_id: uploadId } : {}),
   })
   if (error) throw error
   return toRecord(data)
@@ -358,13 +367,156 @@ export type SheetSource = {
 export async function createRecordFromSheet(
   input: RecordInput,
   source: SheetSource,
+  uploadId?: string,
 ): Promise<SwimRecord> {
-  return upsertRecord(input, {
-    source: 'sheet',
-    source_file: source.fileName,
-    source_sheet: source.sheetName,
-    source_row: source.rowNumber,
-    team: 'EYSL',
-    imported_at: new Date().toISOString(),
+  return upsertRecord(
+    input,
+    {
+      source: 'sheet',
+      source_file: source.fileName,
+      source_sheet: source.sheetName,
+      source_row: source.rowNumber,
+      team: 'EYSL',
+      imported_at: new Date().toISOString(),
+    },
+    uploadId,
+  )
+}
+
+// --------------------------------------------------------- 결과지 (result sheets)
+
+const SHEET_BUCKET = 'team-files'
+
+/** One uploaded meet sheet. The records filed from it hang off its id. */
+export type RecordUpload = {
+  id: string
+  fileName: string
+  storagePath: string
+  mimeType: string
+  category: RecordCategory
+  note: string | null
+  uploadedBy: string
+  createdAt: string
+}
+
+const UPLOAD_COLUMNS =
+  'id, file_name, storage_path, mime_type, category, note, uploaded_by, created_at'
+
+function toUpload(row: {
+  id: string
+  file_name: string
+  storage_path: string
+  mime_type: string
+  category: string
+  note: string | null
+  uploaded_by: string
+  created_at: string
+}): RecordUpload {
+  return {
+    id: row.id,
+    fileName: row.file_name,
+    storagePath: row.storage_path,
+    mimeType: row.mime_type,
+    category: row.category as RecordCategory,
+    note: row.note,
+    uploadedBy: row.uploaded_by,
+    createdAt: row.created_at,
+  }
+}
+
+/**
+ * Every sheet on file, newest first. A direct select rather than an RPC:
+ * record_uploads has had all four RLS policies since 0004 and every one of them
+ * is `can_manage_records()`, so a member who may not manage records gets an
+ * empty list rather than an error.
+ */
+export async function listRecordUploads(): Promise<RecordUpload[]> {
+  const { data, error } = await supabase
+    .from('record_uploads')
+    .select(UPLOAD_COLUMNS)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(toUpload)
+}
+
+/**
+ * File the sheet itself, then put the bytes where the row says they are.
+ *
+ * ROW FIRST, THEN OBJECT, and the order is forced rather than chosen:
+ * team_files_insert asks `media_object_is_claimed(name)` (0021, widened by
+ * 0043), so an object whose row does not exist yet is refused by the database.
+ *
+ * A row with no object is therefore the accepted failure, the same trade the
+ * media upload and the notice attachments make. It shows in 결과지 목록 as an
+ * entry whose file will not open, which the uploader can see and delete — where
+ * an object with no row would be debris nothing points at, invisible to
+ * everyone and reachable only by the deletion sweep.
+ */
+export async function createRecordUpload(input: {
+  file: File
+  category: RecordCategory
+  note?: string
+}): Promise<RecordUpload> {
+  // Asked of the server rather than threaded down from the screen, the same
+  // way media/api.ts does it and for the same reason: this id is the first
+  // segment of the object path, so getting it wrong fails the storage policy
+  // instead of silently filing the sheet under somebody else.
+  const { data: memberId, error: whoami } = await supabase.rpc('current_member_id')
+  if (whoami) throw whoami
+  if (!memberId) throw new Error('승인된 회원이 아닙니다')
+
+  const storagePath = recordSheetObjectPath({
+    memberId,
+    fileName: input.file.name,
   })
+  const mimeType = input.file.type || 'application/octet-stream'
+
+  const { data, error } = await supabase
+    .from('record_uploads')
+    .insert({
+      file_name: input.file.name,
+      storage_path: storagePath,
+      mime_type: mimeType,
+      category: input.category,
+      note: input.note?.trim() ? input.note.trim() : null,
+      uploaded_by: memberId,
+    })
+    .select(UPLOAD_COLUMNS)
+    .single()
+  if (error) throw error
+
+  const stored = await supabase.storage
+    .from(SHEET_BUCKET)
+    // upsert:false so a key collision fails loudly instead of replacing
+    // somebody's sheet — see the uniqueness note in media/path.ts.
+    .upload(storagePath, input.file, { upsert: false, contentType: mimeType })
+  if (stored.error) throw stored.error
+
+  return toUpload(data)
+}
+
+/**
+ * Remove a sheet, and every record filed from it goes with it.
+ *
+ * The cascade is `records.upload_id references record_uploads(id) on delete
+ * cascade` (0004) — the FK that has sat unused because nothing ever set
+ * upload_id. This is the undo a bad import has never had.
+ *
+ * The object is not deleted here, and must not be: 0040's trigger queues it in
+ * pending_object_deletions and the sweep is what removes it. Deleting it from
+ * the client would race that queue.
+ */
+export async function deleteRecordUpload(uploadId: string): Promise<void> {
+  const { error } = await supabase.from('record_uploads').delete().eq('id', uploadId)
+  if (error) throw error
+}
+
+/** How many records a sheet produced — what 삭제 is about to take with it. */
+export async function countRecordsFromUpload(uploadId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('records')
+    .select('id', { count: 'exact', head: true })
+    .eq('upload_id', uploadId)
+  if (error) throw error
+  return count ?? 0
 }

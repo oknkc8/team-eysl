@@ -306,6 +306,18 @@ create trigger media_files_release_object_deletion
 -- below, together — widening only the insert gate means the first result sheet
 -- uploaded is classified as debris by the very next sweep.
 --
+-- AND THAT LIST WAS INCOMPLETE, which 0040 found the hard way. Those four are
+-- about RECOGNISING a claim. They say nothing about the LIFECYCLE, and a claim
+-- table also needs the enqueue and release TRIGGERS or its rows can disappear
+-- without queueing their object. 0040 added notice_attachments and hit exactly
+-- that: a notice and a message claiming one path, delete the notice and the
+-- guard correctly skips because the message claims it, delete the message and
+-- nothing fires — no row, no queue entry, an object nobody can reach.
+--
+-- So the rule is FIVE places, not four: the claim gate, this predicate, the
+-- adoption select, the enqueue trigger, and the release trigger. 0040 put
+-- triggers on all four claim tables, so a new one only has to join the list.
+--
 -- The arm stays narrow on its own account: record_uploads_read is
 -- can_manage_records() (0004:208), and this function is SECURITY INVOKER, so a
 -- result sheet is readable by the people who may manage records and by nobody
