@@ -27,7 +27,7 @@ import { readSignupResult, type SignupInput, type SignupRefusal } from './signup
 export async function getMyMember(authUserId: string): Promise<CurrentUser | null> {
   const { data, error } = await supabase
     .from('members')
-    .select('id, nickname, real_name, avatar_path, role, status')
+    .select('id, nickname, real_name, avatar_path, role, status, team_role')
     .eq('auth_user_id', authUserId)
     .maybeSingle()
 

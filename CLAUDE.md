@@ -213,6 +213,30 @@ Note the shape of how that was nearly recorded wrongly, **twice, in opposite dir
 
 A review finding is not fixed because the diff changed — it is fixed when the fix is verified the same way the defect was found. Grants were the lesson: `revoke ... from public` looked correct and left `anon` holding EXECUTE until the live ACL was queried.
 
+**A revoke goes wrong in both directions, and the second one is the quiet one.**
+
+```
+0014   revoke ... from public          left anon holding EXECUTE      <- kept what it should not
+0043   revoke ... from authenticated   took EXECUTE something needed  <- removed what it must not
+```
+
+`0043` widened three storage helpers and revoked `public, anon, authenticated` from each with no matching grant, reasoning that they are called by storage policies and by each other, never by a browser. The second half is true and **the conclusion does not follow: an RLS policy expression is evaluated as the CALLING role.** When a member uploads a file it is `authenticated` that executes `is_my_media_object_path()` inside `team_files_insert`'s WITH CHECK. `SECURITY DEFINER` decides whose privileges the *body* runs with; it does not excuse the caller from needing EXECUTE.
+
+So the revoke broke **every upload in the app** — media, 자료실 and notice attachments, not merely the new library — with `permission denied for function is_my_media_object_path`. **The migration applied cleanly and nothing failed until the next upload.**
+
+**Neither the migration text nor the diff showed it.** Both read as correct, because "revoke then grant to authenticated" is the right idiom for an RPC the browser calls and these did not look like that. What found it was the live ACL with the changed functions set beside their unchanged siblings:
+
+```
+is_my_avatar_object_path     postgres=X | service_role=X | authenticated=X
+is_my_team_file_path         postgres=X | service_role=X | authenticated=X
+team_file_is_readable        postgres=X | service_role=X | authenticated=X
+is_my_media_object_path      postgres=X | service_role=X                     <- changed
+media_object_is_claimed      postgres=X | service_role=X                     <- changed
+team_file_library_allows_me  postgres=X | service_role=X                     <- changed
+```
+
+**You do not have to know the correct ACL to see that only three differ.** That is the general move and it costs one query: after changing an object, list it next to the objects you did not change and look for the column that stopped matching.
+
 Three later cases sharpened the same rule, each one a thing that reading the code could not have caught:
 
 **A green status line can mean "nothing happened".** A first attempt at the offer sweep called `COMMIT` inside a procedure driven by `pg_cron`. That is illegal — pg_cron wraps each job in an explicit transaction — but a tick with no expired offers returns before reaching the COMMIT and logs `succeeded | CALL`. Two green runs in `cron.job_run_details` meant only that there had been no work:
