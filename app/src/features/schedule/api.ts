@@ -11,6 +11,8 @@ import { dedupeRaceHistory, type RaceHistoryRow } from './raceHistory'
 // from under it. Re-exported so call sites keep a single import.
 export { ACTIVITY_KINDS, KIND_LABEL, toKind } from './kinds'
 export type { ActivityKind } from './kinds'
+export type { TrainingDetail } from './trainingDetail'
+import { toTrainingDetail, type TrainingDetail } from './trainingDetail'
 
 // Same reason as kinds.ts: the dedupe rule is testable without a client.
 export { isFinished, isWaiting } from './raceHistory'
@@ -52,19 +54,27 @@ export type Activity = {
    */
   created_by: string | null
   /**
-   * Per-kind extras (0001). Read for one thing today: `details.relays`, the
-   * relay events a 대회 opens, which 대회 신청 offers as choices.
+   * Per-kind extras (0001). Two readers, deliberately different shapes.
    *
    * `unknown` on purpose. It is jsonb that predates us -- our rows carry import
-   * provenance (`source`, `half`, `label`) and his carry coach, gear and plan --
-   * so the only safe readers are narrow parsers that return a default for
-   * anything they do not recognise. Typing it would invite a cast.
-   *
-   * Nothing writes `relays` in either app: his 일정 등록 has 14 controls and not
-   * one touches it, and the single write is a carry-forward on edit. A race
-   * offers relays only if somebody seeded them out of band.
+   * provenance (`source`, `half`, `label`), his carry coach, gear and plan, and
+   * backfilled trainings carry `historical_*` -- so the only safe readers are
+   * narrow parsers that return a default for anything they do not recognise.
+   * Typing it would invite a cast. 대회 신청 reads `details.relays` from here.
    */
   details: unknown
+  /**
+   * The training fields, narrowed. Same jsonb as `details` above, read through
+   * a parser that keeps six named keys and drops the rest, so a key belonging
+   * to the importer or to a backfill cannot reach a training screen.
+   */
+  detail: TrainingDetail
+  /**
+   * Carried so an edit can prove it saw this version. saveTrainingDetail sends
+   * it back as p_expected_updated_at and the function refuses a mismatch, which
+   * is what stops two staffers overwriting each other's plan.
+   */
+  updated_at: string
 }
 
 export type MyApplication = {
@@ -92,7 +102,7 @@ export type ScheduleEntry = Seats & {
 }
 
 const ACTIVITY_COLUMNS =
-  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by, details'
+  'id, kind, title, activity_date, end_date, start_time, end_time, place, capacity, created_by, details, updated_at'
 const APPLICATION_COLUMNS =
   'id, activity_id, application_type, wait_order, offer_status, offer_expires_at, details'
 
@@ -132,12 +142,14 @@ type ActivityRow = {
   capacity: number | null
   created_by: string | null
   details?: unknown
+  updated_at: string
 }
 
 const toActivity = (row: ActivityRow): Activity => ({
   ...row,
   kind: toKind(row.kind),
   details: row.details ?? null,
+  detail: toTrainingDetail(row.details),
 })
 
 type ApplicationRow = {
@@ -702,6 +714,50 @@ export async function createActivity(input: ActivityInput): Promise<Activity> {
  * own 기타 to 훈련 fails the policy's WITH CHECK and lands here as an error,
  * which is what the live probe against the dev database showed.
  */
+export type TrainingDetailInput = {
+  activityId: string
+  coach: string
+  gear: string
+  info: string
+  link: string
+  plan: string
+  /** The updated_at this edit started from. The function refuses a mismatch. */
+  expectedUpdatedAt: string
+}
+
+/**
+ * Save the training detail through save_activity_details_v1 (0048).
+ *
+ * NOT a `.from('activities').update({ details })`, and the difference is the
+ * whole point. A client that sends the whole jsonb object silently deletes
+ * every key it does not know about — which is exactly how the president's app
+ * loses a backfilled attendance register when somebody edits a past training.
+ * The function merges the six fields it owns and leaves the rest alone, so a
+ * key we have never heard of survives an edit here by construction.
+ *
+ * PT409 is the version conflict, distinct from 42704 (no such activity) and
+ * 42501 (not staff), so the screen can tell "somebody else saved" from "it is
+ * gone" and from "you may not".
+ */
+export async function saveTrainingDetail(input: TrainingDetailInput): Promise<TrainingDetail> {
+  const { data, error } = await supabase.rpc('save_activity_details_v1', {
+    p_activity_id: input.activityId,
+    p_coach: input.coach,
+    p_gear: input.gear,
+    p_info: input.info,
+    p_link: input.link,
+    p_plan: input.plan,
+    // Sent verbatim as the string PostgREST gave us. Rebuilding it through
+    // `new Date(...).toISOString()` truncates microseconds to milliseconds, and
+    // every save would then conflict with itself — the same trap the board
+    // editor documents.
+    p_expected_updated_at: input.expectedUpdatedAt,
+  })
+  if (error) throw error
+  const row = (data ?? {}) as Record<string, unknown>
+  return toTrainingDetail(row.details)
+}
+
 export async function updateActivity(
   input: ActivityInput & { activityId: string },
 ): Promise<Activity> {
