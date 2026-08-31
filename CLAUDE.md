@@ -433,6 +433,40 @@ The local pass is therefore not evidence about CI, and the failure direction is 
 
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
+## Handoff log
+
+**`docs/HANDOFF.md` is where the work state lives, and keeping it current is part of the job.**
+
+This file explains the repository. `HANDOFF.md` explains the *session* — who is holding which
+branch, which migration numbers are spoken for, what the next three tasks are and why, what we
+decided that the code cannot show, and the questions still waiting on the president. None of
+that is recoverable from `git log`.
+
+**It exists because none of the local state travels.** `~/.claude/projects/…/memory/` is on one
+machine. So are the worktrees, the two git-ignored `.env` files, and every conversation. Picking
+this project up on another machine means reading the repository and nothing else, so anything a
+newcomer needs has to be **in the repository** — in `CLAUDE.md` if it is a durable rule, in
+`HANDOFF.md` if it is the current state.
+
+**Update it when the state it describes changes**, in the same PR that changes it:
+
+| What moved | What to edit |
+|---|---|
+| A branch opened, merged, or changed hands | §2 진행 중 |
+| A migration number claimed or applied | §3 대장 |
+| A next-task finished, or a new one jumped the queue | §4 다음에 할 것 |
+| A question answered by the president | §5 — delete it, and put the answer where the work is |
+| A decision made that the diff will not explain | §8 |
+
+Stamp the date and `dev`'s SHA at the top on every edit. **A handoff file nobody can date is
+worse than none** — a reader has no way to tell which parts are still true, so they either
+re-derive everything or trust something stale.
+
+Two things stay out of it. **Secrets and connection details** — the repository is public, and
+`.env.example` documents the shape. And **anything already true in the code**: a schema, a
+function body, a file list. Those are answerable by looking, and a copy of them here just
+becomes a second version to keep in sync.
+
 ## Environments
 
 `.env` is git-ignored and must stay that way — this repo is public. `.env.example` documents the shape.
