@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { SaveState } from '../../components/ui/SaveState'
 import type { ChannelStatus } from './api'
 
@@ -66,17 +66,32 @@ export function Composer({
   saveState,
   placeholder,
 }: {
-  onSend: (body: string) => void
+  onSend: (body: string, file: File | null) => void
   saveState: 'idle' | 'saving' | 'saved' | 'error'
   placeholder: string
 }) {
   const [draft, setDraft] = useState('')
-  const canSend = draft.trim() !== ''
+  const [file, setFile] = useState<File | null>(null)
+  const pickerRef = useRef<HTMLInputElement>(null)
+
+  // send_message_v1 accepts text OR an attachment, so a photo with no caption is
+  // a real message and the button has to allow it.
+  const canSend = draft.trim() !== '' || file !== null
+
+  function pick(event: ChangeEvent<HTMLInputElement>) {
+    // Read before clearing the input: `files` is the input's LIVE FileList, and
+    // resetting value below empties it in place rather than handing back a copy.
+    const chosen = event.target.files?.[0] ?? null
+    setFile(chosen)
+    // Cleared so choosing the same file twice in a row still fires onChange.
+    if (pickerRef.current) pickerRef.current.value = ''
+  }
 
   function submit() {
     if (!canSend) return
-    onSend(draft)
+    onSend(draft, file)
     setDraft('')
+    setFile(null)
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -102,6 +117,32 @@ export function Composer({
         background: '#fff',
       }}
     >
+      <input
+        ref={pickerRef}
+        type="file"
+        onChange={pick}
+        style={{ display: 'none' }}
+        aria-hidden="true"
+        tabIndex={-1}
+      />
+      <button
+        type="button"
+        onClick={() => pickerRef.current?.click()}
+        aria-label="파일 첨부"
+        style={{
+          minHeight: 44,
+          minWidth: 44,
+          borderRadius: 13,
+          border: '1px solid #e1e5ea',
+          background: '#fff',
+          color: '#6b7178',
+          fontSize: 18,
+          lineHeight: 1,
+        }}
+      >
+        +
+      </button>
+
       <textarea
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
@@ -123,6 +164,44 @@ export function Composer({
           resize: 'none',
         }}
       />
+
+      {file && (
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            maxWidth: 160,
+            padding: '6px 10px',
+            borderRadius: 11,
+            background: '#eef0f2',
+            color: '#111317',
+            fontSize: 12,
+          }}
+        >
+          <span
+            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={file.name}
+          >
+            {file.name}
+          </span>
+          <button
+            type="button"
+            onClick={() => setFile(null)}
+            aria-label="첨부 취소"
+            style={{
+              border: 'none',
+              background: 'none',
+              color: '#6b7178',
+              fontSize: 14,
+              lineHeight: 1,
+              padding: 0,
+            }}
+          >
+            ×
+          </button>
+        </span>
+      )}
 
       <div style={{ display: 'grid', gap: 6, justifyItems: 'end' }}>
         {/* Sending is a write, so it reports like every other one here: 저장 중…,

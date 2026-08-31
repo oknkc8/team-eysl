@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase'
+import { chatObjectPath } from '../media/path'
 import type { ChatMessage, RoomType } from './reconcile'
 
 /**
@@ -208,17 +209,54 @@ export async function getAttachmentUrl(storagePath: string): Promise<string> {
  * set_member_team_role_v1 has, because plpgsql signatures cannot say "nullable
  * uuid". Omitting it lets the DEFAULT null apply.
  */
+export type SendMessageResult = {
+  message: ChatMessage
+  /**
+   * True when the row was written but its object never reached the bucket.
+   *
+   * The claim gate (0021) requires the row before the object, so those are the
+   * only two orders available and this is the survivable one: the message exists
+   * and its attachment does not open yet. It is RECOVERABLE — the row goes on
+   * claiming the path, so re-uploading to that same path makes the attachment
+   * work for everyone holding the row, because the URL is signed on open.
+   *
+   * Deleting the message instead would be worse, and 0047 records why: the
+   * realtime subscription listens for INSERT only, so the recipient would keep a
+   * message that no longer exists in the database until they refreshed.
+   */
+  uploadFailed: boolean
+}
+
 export async function sendMessage(input: {
   roomType: RoomType
   body: string
   /** Required for a dm, and refused for a group message. */
   recipientId?: string | null
-}): Promise<ChatMessage> {
+  /** Optional attachment. The object is uploaded AFTER the row claims its path. */
+  file?: File | null
+}): Promise<SendMessageResult> {
+  let attachmentPath: string | null = null
+  if (input.file) {
+    // Asked of the server rather than threaded down, for the same reason
+    // createNotice did: a caller that names its own member id can name somebody
+    // else's, and this string becomes the first path segment.
+    const { data: memberId, error: memberError } = await supabase.rpc('current_member_id')
+    if (memberError) throw memberError
+    if (!memberId) throw new Error('승인된 회원만 파일을 보낼 수 있습니다')
+    attachmentPath = chatObjectPath({ memberId, fileName: input.file.name })
+  }
+
   const { data, error } = await supabase.rpc('send_message_v1', {
     p_room_type: input.roomType,
     p_body: input.body,
     ...(input.roomType === 'dm' && input.recipientId
       ? { p_recipient_id: assertMemberId(input.recipientId) }
+      : {}),
+    ...(attachmentPath && input.file
+      ? {
+          p_attachment_path: attachmentPath,
+          p_attachment_type: input.file.type || 'application/octet-stream',
+        }
       : {}),
   })
   if (error) throw error
@@ -226,7 +264,42 @@ export async function sendMessage(input: {
 
   // The RPC returns SETOF messages shaped as one row; supabase-js hands back the
   // row itself because the function is not a set-returning one.
-  return toMessage(data as unknown as MessageRow)
+  const message = toMessage(data as unknown as MessageRow)
+
+  if (!attachmentPath || !input.file) return { message, uploadFailed: false }
+
+  // NEVER THROWS PAST THIS POINT. The row is committed, so a throw here would
+  // report a sent message as unsent and invite a retry that writes a second one
+  // — the same shape of defect the notice form hit and fixed.
+  const uploadFailed = await uploadChatObject(attachmentPath, input.file)
+  return { message, uploadFailed }
+}
+
+/** Returns true when the object did not land. Never throws; see sendMessage. */
+async function uploadChatObject(path: string, file: File): Promise<boolean> {
+  try {
+    const { error } = await supabase.storage
+      .from(CHAT_BUCKET)
+      // upsert so a resend to the same path replaces a partial object rather
+      // than failing on a key the message row already claims.
+      .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: true })
+    return Boolean(error)
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Send the object for a message whose row already exists.
+ *
+ * This is the resend path, and it works because the row never stopped claiming
+ * the path: team_files_update admits an upsert while media_object_is_claimed is
+ * true, so the attachment starts working for everyone who already received the
+ * message.
+ */
+export async function resendAttachment(message: ChatMessage, file: File): Promise<boolean> {
+  if (!message.attachment_path) return false
+  return !(await uploadChatObject(message.attachment_path, file))
 }
 
 // --------------------------------------------------------------- realtime
