@@ -168,6 +168,34 @@ Fill in every section of `.github/PULL_REQUEST_TEMPLATE.md`; write "해당 없�
 
 The light pass is deliberately conservative and reports "이미 좋습니다" when the text needs nothing, so a clean PR body costs one quick call and no edits.
 
+## Model routing
+
+**Set by the user on 2026-08-31, after a day that merged twenty-odd PRs and ran codex up to
+five passes on one of them. The cost of convergence was not being measured by anybody.**
+
+| Work | Model |
+|---|---|
+| Leading, planning, deciding scope, judging a disagreement | `opus` (or `fable`) |
+| Implementing, reviewing, writing tests, writing migrations | `sonnet` |
+| Reading, looking something up, counting, confirming a file exists | `haiku` |
+
+Pass `model=` explicitly on every `Agent` call. An agent that inherits the parent's model is
+almost always more expensive than the work needs.
+
+**A running agent's model cannot be changed.** Spawning is where the choice is made, so a
+long-lived teammate started on the wrong tier stays there until it finishes — replace it on
+its next spawn rather than trying to correct it mid-flight.
+
+**codex is the expensive path and needs a reason.** Migrations, RLS, auth, money — one pass,
+at `high` effort where the diff earns it. Reach for a `sonnet` subagent first everywhere else;
+five rounds on one PR each found something real, and that is exactly why nobody stopped to
+ask what the finding cost.
+
+**Reviews still may not be self-approvals.** The tier came down; the separate-lane rule did
+not. A `sonnet` reviewer in its own context is the default, and it has repeatedly found real
+defects here — a recursive `jsonb_strip_nulls`, an assertion that treated its own error
+message as a pass, a nullability regression reported as `dev` being red.
+
 ## Feature team
 
 Non-trivial feature work runs through a standing team of subagents, spawned in parallel from one message. Small mechanical edits don't need it — a new screen, a schema change, or anything touching auth does.
