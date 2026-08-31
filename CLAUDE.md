@@ -11,7 +11,7 @@ TEAM EYSL — a Korean swimming club's member/training-management PWA ("TEAM EYS
 - `index.html` (~3,850 lines) **is** the app: markup, all CSS (one `<style>` block), and all JS (five `<script>` blocks, ~270 flat global functions) in one file.
 - `sw.js` — service worker (network-first fetch, web push handling).
 - `manifest.webmanifest`, `icon-*.png` — PWA manifest/icons.
-- The legacy app has no build step of its own: no bundler, no framework, no tests. Every commit on `upstream` is "Add files via upload" — the president maintains it by uploading edited files through the GitHub web UI. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
+- The legacy app has no build step of its own: no bundler, no framework, no tests. Most of `upstream`'s history is "Add files via upload" — **79 of 130 commits, measured 2026-08-31** — because the president maintains it by uploading edited files through the GitHub web UI. **He stopped doing that on 2026-08-26.** Every commit since 08-27 carries a real subject, 41 in a row, and 29 of them landed on 08-30 alone. Two commits are not his at all: `0149d73` and `bd3a7b4` are authored by **`team-eysl-bot`**, a GitHub Action he set up to patch the app shell directly. So "who wrote this" is now a question with two possible answers. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
 - The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
 - **There is no linter.** `app/package.json` has no eslint dependency and no `lint` script — `npx eslint` silently resolves to an unrelated global v6.4.0 and fails on the config. The only gates that exist are `./node_modules/.bin/tsc --noEmit` (which reads `src` only), `./node_modules/.bin/tsc -p tsconfig.functions.json` (which reads `supabase/functions`), and `./node_modules/.bin/vitest run`. Do not claim a lint pass; three separate agents reported running one before this was checked.
 
@@ -62,7 +62,7 @@ VAPID public key is hardcoded at `index.html:1341`. Subscribe/unsubscribe (~1350
 
 `origin` is **oknkc8/team-eysl**, a fork we own (ADMIN). `upstream` is **cutepms123-blip/team-eysl**, the club president's original — we have READ only there and must never assume push access. Work happens on `dev` and branches off it. Both repos are **public**, so no key, token, or `.env` may ever be committed.
 
-The president edits `upstream` by uploading files through the GitHub web UI (every upstream commit is "Add files via upload"), so `upstream/main` can move without warning and without a merge-friendly history. Pull from it; don't expect to rebase onto it cleanly.
+The president edits `upstream` mostly by uploading files through the GitHub web UI (79 of 130 commits; the reality check above says when and how that changed), so `upstream/main` can move without warning and without a merge-friendly history. Pull from it; don't expect to rebase onto it cleanly.
 
 **He is still actively building.** 13 commits landed between 2026-08-24 17:11 and 2026-08-25 12:30 alone, adding ~410 lines. Assume upstream has moved since you last looked, and re-check before assuming a feature is missing from his app rather than merely missing from the copy you read.
 
@@ -526,10 +526,19 @@ Three, all met while photographing screens:
 | `scrollIntoViewIfNeeded()` | the element's *label* was visible, so nothing was "needed"; the input stayed behind the fixed nav |
 | `screenshot({fullPage: true})` | the whole document - painting `position: fixed` chrome through the middle of it |
 
-The first one's fix generalises: our `Shimmer` sets `aria-busy="true"`, so
-`expect(page.locator('[aria-busy="true"]')).toHaveCount(0)` means *rendered*, names
-no screen's content, and cannot rot when a caption changes. **Prefer a wait that
-asserts the state you mean over one that asserts a proxy for it.**
+The first one's fix is `waitForScreen()`, which is what the suite actually uses —
+10 spec files call it. **Prefer a wait that asserts the state you mean over one
+that asserts a proxy for it.**
+
+*(An earlier version of this paragraph told you to wait on `aria-busy` going to
+zero and called that the general convention. It is not. Measured 2026-08-31,
+`aria-busy` appears **once** in `src` — `AsyncSection.tsx:55` — and **zero** times
+anywhere in `e2e`; no spec has ever waited on it. The claim did not start here: it was circulated as
+settled team convention and written down on that authority, without anybody grepping
+for it. That is the part worth keeping — **a convention arriving from a trusted source
+is still an unverified claim about a codebase**, and relaying one costs exactly what
+inventing one costs once it is in the file. **A convention is a claim about a
+codebase; grep for it before writing it down.**)*
 
 ### Empty because the data is missing, or empty because the code is right
 
@@ -706,6 +715,210 @@ Until the predicate covers it, **`pwtest members = 1` is that row** - and everyb
 applies the liveness rule correctly will find no runner, conclude "leak", and spend the
 time again.
 
+### Counting processes does not answer "is anything contending with me"
+
+Eleven `writes.spec` tests failed together, and the diagnosis offered to the team
+was **machine saturation**, on this evidence:
+
+```
+playwright/vite preview processes running: 26
+```
+
+That number was real, and it was irrelevant. Read properly through
+`/proc/<pid>/cwd`, the 26 broke down like this:
+
+```
+humanride-cmd-motion   3   <- a different project on the same machine
+repo-infra-mcap-clock  3   <- a different project
+align-fix              3   <- a different project
+free-board             3   <- ours, but a 2.8-day-old dead playwright-mcp server
+chatattach             2   <- the only thing touching our database
+```
+
+**One.** The real cause was somewhere else entirely: the branch was based before
+`#24`, so its screens still used the direct-insert path while `notices_write` had
+already been revoked. Merging `dev` turned it green, 110/110.
+
+Two rules come out of it. **Counting processes is not asking the question** — the
+question is whether anything is touching *our* worktree and *our* database, and
+`/proc/<pid>/cwd` is what answers it. And **ask the shared resource, not the
+process table**: the seeded advisory lock in `pg_locks` is the real answer here,
+and `#22` exists to provide it.
+
+This is the mirror of the empty-result family above. There, a zero looked like an
+absence. Here **a large, specific, genuinely-measured number looked like
+evidence** — and it is the more seductive of the two, because it feels like
+having done the work.
+
+It reproduces easily. Scanning `/proc` on 2026-08-31 for the same purpose turned
+up **162** candidate processes; every one was an MCP server, mostly belonging to
+other projects, and the count of real test runners under `team-eysl` was **zero**.
+The filter is the whole job, and the unfiltered number is worth nothing.
+
+### A mutable column is not evidence of ownership
+
+`cleanup.sql` decides what to delete. One of its arms keyed on `attendance.marked_by`
+— the staffer who tapped — and that is a column **somebody else's write can stamp**.
+`attendance_mark_v1` ends with:
+
+```sql
+on conflict (activity_id, member_id) do update
+  set status = excluded.status,
+      marked_by = excluded.marked_by,   -- here
+      updated_at = now()
+```
+
+So a test admin toggling a row that already existed **acquires** it: the row was
+somebody else's, one column becomes ours, and afterwards nothing tells that row apart
+from one the suite created. **An upsert makes "created" and "updated"
+indistinguishable after the fact**, and any cleanup keyed on a field the upsert writes
+inherits that ambiguity.
+
+The rule: **key a teardown on what the row *is* — `member_id`, `activity_id` — not on
+who last touched it.** Identity columns cannot be reassigned by another party's write.
+
+**Two things stop that being a one-line fix, and both came from asking the schema
+rather than reasoning about it.**
+
+```
+attendance_member_id_fkey     ON DELETE CASCADE
+attendance_activity_id_fkey   ON DELETE CASCADE
+attendance_marked_by_fkey     NO ACTION          <- and marked_by is NOT NULL
+```
+
+The identity arms are already redundant for foreign-key purposes — deleting the member
+or the activity cascades the row. But `marked_by` is NO ACTION, so a row carrying a
+test account's stamp that teardown does **not** delete blocks `delete from
+public.members` with 23503 and wedges the whole teardown, including the `auth.users`
+deletes whose email is UNIQUE — so the next seed fails too. And the column cannot be
+nulled out of the way, because it is NOT NULL. Dropping the arm trades a data-loss
+risk for a total-teardown failure.
+
+**And on this database the arm had never fired on real data.** Every attendance row a
+test account has stamped is on a test member and a test activity, and no spec marks a
+real member or a real activity — they all use seeded ids. The hazard is real; the
+trigger has not been built yet.
+
+**And that distinction had to be drawn against a real loss, which is what makes it
+worth writing down.** Attendance really did fall, 249 to 234. The drop is sound: the
+249 snapshot carries `with_login = 5`, and six pwtest sign-in accounts would have made
+it 11, so no fixtures were resident when it was taken — and `attendance_member_id_fkey`
+cascades, so residue cannot outlive the members it hangs on. The arithmetic closes on
+the same reading: 15 lost splits into 10 no-login and 5 with-login.
+
+The `marked_by` acquisition was then offered as the cause. It is a genuine hazard and
+it is **not** the proven cause: no spec marks a real member or a real activity, so the
+path has never run. **A measurement proves a loss; it does not prove a route** — and a
+mechanism that would explain the loss beautifully still has to be shown to have fired.
+The route here remains unknown; a deleted activity cascading is the likeliest
+candidate and was not confirmed. Closing the hazard was still right. Attributing the
+loss to it would not have been.
+
+**The two arms that looked redundant were the safe ones.** Because `member_id` and
+`activity_id` cascade, deleting the member or the activity already takes the row — so
+those arms delete nothing that would not go anyway. **The only arm doing independent
+work was the destructive one.** A predicate can look like belt and braces while
+exactly one strand is load-bearing, and it is worth checking which.
+
+The asymmetry also decides what a mistake *looks like*. Keyed on `marked_by`, a wrong
+guess **deletes somebody's data quietly**. Keyed on identity only, a row this file
+cannot classify **blocks the teardown loudly** with a bare 23503 naming nothing but a
+constraint — so the fix does not merely narrow the predicate, it converts silent
+destruction into a stop. Prefer the version that fails where somebody is looking.
+
+**And the file already knew.** Two comments, twenty-five lines apart:
+
+```
+:179  "marked_by is the staffer who tapped, member_id is who was marked,
+       and the write suite creates rows where only the second is ours"
+
+:204  "the dev database's own 관리자 account ... is the master_admin recorded
+       as marked_by on every imported attendance row. Deleting it would ...
+       take the club register with it"
+```
+
+The second names the link exactly — `marked_by` is what ties the club's entire
+attendance register to this file — and guards one direction: *do not delete that
+account.* The first reasons about rows the suite **creates**, where both columns are
+new and deleting is right. Neither considered the third case, in which the account
+survives and the **stamp moves to us**.
+
+So the hazard was written down, in the same file, twenty-five lines below the arm that
+realised it. **A comment that identifies a risk protects only the direction its author
+was facing.** When you find one, do not read it as coverage — read it as a list of
+things that touch the object, and then ask what else does.
+
+### The prefix is not reserved where you think it is
+
+`cleanup.sql` rests its safety on `pwtest` never belonging to a real member. **Only
+half of that is enforced.**
+
+```
+importer   RESERVED_NICKNAME_PREFIX = 'pwtest', case-insensitive, both source names
+signup     no check at all -- 0032 deliberately exempts it so that fixtures named
+           `pwtestadmin` keep working
+```
+
+And signup derives the address from the nickname (`0028`):
+`v_email := lower(v_nickname) || '@eysl.local'`. Follow a real person who signs up as
+`pwtestfoo`: the address becomes `pwtestfoo@eysl.local`, cleanup's auth arm matches it
+on the email shape, the FK nulls their `auth_user_id`, and the orphan arm then removes
+the member row. **Teardown deletes a real member.**
+
+`LIKE` opens the other half. The address is lowercased and the nickname is not, so
+`PWtestfoo` matches the email arm and **not** the nickname arm: auth row deleted,
+member row orphaned, and nothing can reach it again. Widening to `ilike` does not fix
+this — it closes the orphan case by making the first case worse.
+
+**Do not "fix" this by rejecting the prefix at signup.** `signup.spec.ts` builds its
+accounts through the real 가입 flow — `freshNickname()` returns
+`pwtest<tag><base36><rand>/98/남/관악` — because the roster-guard test has to use the
+seeded fixture's name. Reject the prefix at the door and that spec dies on the spot,
+which is the same wall `0032` hit when it left the format check off this path.
+
+So this is recorded as **a defect, not a fix**. The direction worth exploring is not a
+wider or narrower prefix but **not inferring from names at all**: `signup.spec.ts`
+knows the ids of the accounts it creates, and a teardown handed that list has no
+reason to look at a nickname — which is what the header of `cleanup.sql` was reaching
+for in the first place. That needs design, so no migration number is claimed for it
+yet; it may not need one.
+
+One measured narrowing, because it decides how urgent this is: `freshNickname()`
+lowercases its whole result, so **the suite never produces `PWtest…`**. The
+case-sensitivity half is reachable only by a real person typing mixed case, not by our
+own fixtures. And `signup.spec.ts:45` already knows the coupling — it warns that
+changing the region "would move the `pwtest` prefix off the front of the derived
+address and break cleanup's LIKE." Another comment naming the dependency exactly and
+guarding one direction of it.
+
+### The check command counts itself
+
+A `/proc` sweep for test runners reported processes in six worktrees. They were not
+runners. **The scanning command's own `cmdline` held the search terms**, so it matched
+itself, once per shell in the pipeline. Counting by executable instead gave zero.
+
+Nearly every entry on this page is a false *negative* — a check that found nothing and
+looked like an absence. This is the false *positive*, and it costs the same: believed,
+it says "somebody is running, do not touch the database", and work stops for a reason
+that does not exist. **Exclude your own pid, and match on the executable rather than on
+the command line.**
+
+### `git diff` is rewritten here too, and it takes the reviewer's input with it
+
+Reviewing `#46`, `git diff` came back as a **summary** under a `--- Changes ---` header
+with a fabricated banner, `// ... 90 more lines (total: 110)`. Running `grep -c "^+"`
+over that output returned **0** for a diff of **246 added lines**.
+
+This is the worst placement in the whole wrapper family. `git status` printing `ok` is
+obviously not git. An empty `gh pr list` is at least odd. But **a diff is the input to
+review itself** — a reviewer who trusts it reviews a summary while believing they read
+the change, and any count taken off it is wrong in whichever direction the summary
+elided.
+
+Reconstruct rather than parse: `git show <ref>:<path>` for both sides, recompute with
+python's `difflib`. Same family as `cat`'s invented truncation count, and more
+expensive, because it corrupts the artefact the decision is made from.
+
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
 ## Handoff log
@@ -766,7 +979,7 @@ All verified in source. Do not quietly "fix" them as a side effect of other work
 
 | Defect | Where | Note |
 |---|---|---|
-| Admin attendance check-in never persisted | `setAtt`/`togglePaid` `index.html:3780-3781`, state in `attRecords` `:1178` | No DB call anywhere in the path, and no attendance table exists. Lost on every refresh. |
+| ~~Admin attendance check-in never persisted~~ — **fixed upstream 2026-08-30** | was `setAtt`/`togglePaid`, state in `attRecords` | Fixed by a **new path beside the old one, not by repairing it**. `setAtt` is still memory-only; `saveAttendanceEvent(id)` resolves nicknames through `team_roster` and upserts into `attendance`, behind an explicit 출석 저장 button. So a check-in is still lost if the admin never presses save. **Ours must persist on the tap.** And the commit that claims this fix does not contain it — see the sidecar section below. |
 | Notice comments overwrite each other | `addComment()` `:2001` | Whole jsonb array replaced from a stale client copy, so concurrent comments silently destroy one another. Author is stored as a nickname string, not `member_id`. |
 | Training capacity race | `applyTraining()` `:2384` | Browser decides seat-vs-waitlist and computes `wait_order` from a cached count, then sends it. Simultaneous applicants overbook or collide on order. |
 | Attribute-context XSS in an admin render path | *(location withheld)* | A member-controlled value reaches a script context unescaped. A near-identical render a few lines away escapes correctly, so this is an omission rather than a policy. |
@@ -880,6 +1093,72 @@ What was genuinely missing was narrower: staff could *mark attended* a member wh
 **He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. **Closed in `0021`** — `media_folders_update`, `media_files_update` and `media_files_delete` are owner-only, `media_folders` has no DELETE policy at all (deletion goes through `delete_media_folder_v1`, which checks ownership), and the screens no longer offer staff a control the database would refuse. The cost is real and is his to revisit: no admin can take down another member's folder or file from inside the app any more.
 
 `0021` settled the other half of the same question too. **Creation in 미디어 and 자료실 is open to every approved member**, because his app is: `createFolder` (`upstream:2939`), `uploadToFolder` (`upstream:2946`) and `uploadResourceFiles` (`upstream:2960`) carry no role check, their buttons are always rendered (`upstream:1185-1187`), and `applyRole` (`upstream:1984-1994`) never touches a media control. Our screens had hidden all three behind `isStaff()` while RLS admitted anyone — the legacy flaw rebuilt — so the screens moved, not the policy. What `0021` did add is ours: an object may only be written at `<own member id>/(media|resources)/<name>`, and only where a `media_files` row already claims that exact path, so the bucket can no longer hold bytes nothing points at. `team_files_delete` keeps its staff arm on purpose — a folder owner cannot sweep another member's object, so somebody has to be able to.
+
+## His app is no longer one file, and three of the pieces are dead
+
+Measured at `upstream/main` `bd3a7b4`, 2026-08-31.
+
+`index.html` is still there, but **13 sidecar `.js` files now sit beside it**, and
+`index.html` **references none of them** — all 13 score 0 in it. They are reached
+one way only: `sw.js` precaches them and injects them.
+
+```
+13 sidecars
+   10  named by sw.js  ->  they really run, in any browser that installs the worker
+    3  named by nothing at all:
+          enhancements-v93.js        12,955 bytes
+          notice-fix-v95.js           7,032 bytes
+          attendance-sync-v104.js     1,417 bytes
+```
+
+**All 13 parse, and so does `sw.js`** (`node --check`, exit 0). That matters twice
+over. The 56-version bracket era documented above is **finished** — the worker
+installs now, so the 10 injected files are genuinely live. And the three dead ones
+are dead by **non-reference, not by syntax**: `enhancements-v93.js` is nearly 13KB
+of perfectly valid code that nothing loads.
+
+**So "does it parse" is no longer the question to ask about his code.** It was the
+right question while one character on line 3 broke everything; it now answers `ok`
+for a file that has never run. The question is whether anything names the file, and
+`grep -c '<basename>' sw.js index.html` settles it in one command.
+
+**And a commit message can promise a fix that its own diff does not contain.** This
+is the sharpest instance yet, because both halves shipped on the same day:
+
+```
+f639033  cutepms123-blip  2026-08-30  "Persist admin attendance changes"
+         -> attendance-sync-v104.js | 33 +++   and nothing else
+            that file is one of the three nothing references
+
+0149d73  team-eysl-bot    2026-08-30  "Persist attendance and late-fee status"
+         -> index.html | 97 +++ 5 ---          the actual fix
+```
+
+The commit whose subject names the defect **shipped dead code**; the fix arrived in
+a different commit, by a different author, through a different mechanism. `sw.js`'s
+VERSION string and `historicalTrainingRes` were the first two members of this family
+and both were about a *release* being misdescribed. This one is a single commit
+misdescribing itself, which no amount of reading subject lines can catch. **Read the
+diff, then check that the file the diff touches is reachable.**
+
+### Two changes to the gap list
+
+**활동 댓글 + 푸시 is a real gap, and it is his.** `activity-comments-v98.js` is one
+of the 10 that run: an `activity_comments` table, comments on the application screen
+of 훈련·대회·기타, and a `push-notify` call on each new comment. On our side
+`activity_comments`, `activityComment` and `ActivityComment` are **0 files** across
+the 155 under `app/src`, against `useState` at 37 files and `notice_comments` at 2
+as positive controls. The zero is real. It is already assigned —
+`feat/activity-comments` holds `0050`.
+
+**활동 취합본 runs the scope rule backwards: he deleted it, and we still have it.**
+`remove-aggregation-v113.js` strips the menu and the page with a MutationObserver,
+and the v114 patch workflow enforces the removal in CI with
+`if grep -q "활동 취합본" index.html; then exit 1`. That is a verified deliberate
+deletion, not an omission. The scope rule says an implemented feature is a
+requirement — but that rule reads from *his* app, and his app now says no. **Ask him
+before removing ours.** A feature he cut and we kept is a question for him, not a
+defect to quietly fix.
 
 ## External integrations
 
