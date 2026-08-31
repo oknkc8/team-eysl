@@ -14,7 +14,7 @@ import type { ChatMessage, RoomType } from './reconcile'
  */
 
 const MESSAGE_COLUMNS =
-  'id, room_type, sender_id, recipient_id, body, attachment_path, attachment_type, created_at'
+  'id, room_type, sender_id, recipient_id, body, attachment_path, attachment_type, attachment_name, created_at'
 
 // Chat attachments live in the same private bucket as media (0009), so a link
 // is a short-lived signed URL rather than a stored URL. An hour, matching
@@ -38,6 +38,14 @@ type MessageRow = {
   body: string | null
   attachment_path: string | null
   attachment_type: string | null
+  /**
+   * The name the sender chose, or null on a row written before 0049.
+   *
+   * The storage key cannot carry it: 0042 slugs keys to ASCII because Storage
+   * refuses Hangul, so 훈련일지.txt becomes file.txt in the path. This column is
+   * the only place the readable name survives.
+   */
+  attachment_name: string | null
   created_at: string
 }
 
@@ -90,6 +98,7 @@ function parseRealtimeRow(value: unknown): ChatMessage | null {
     body: typeof row.body === 'string' ? row.body : null,
     attachment_path: typeof row.attachment_path === 'string' ? row.attachment_path : null,
     attachment_type: typeof row.attachment_type === 'string' ? row.attachment_type : null,
+    attachment_name: typeof row.attachment_name === 'string' ? row.attachment_name : null,
     created_at: row.created_at,
   }
 }
@@ -256,6 +265,9 @@ export async function sendMessage(input: {
       ? {
           p_attachment_path: attachmentPath,
           p_attachment_type: input.file.type || 'application/octet-stream',
+          // The name as the member chose it, Hangul and all. It travels beside
+          // the path rather than inside it, because the path cannot hold it.
+          p_attachment_name: input.file.name,
         }
       : {}),
   })

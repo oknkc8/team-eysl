@@ -27,7 +27,7 @@
 //
 // THE READABLE NAME IS NOT LOST, it moved to where it belongs. Every claim table
 // carries the original: notice_attachments.file_name, media_files.file_name,
-// record_uploads.file_name, and messages.attachment_name (0047). The key is an
+// record_uploads.file_name, and messages.attachment_name (0049). The key is an
 // identifier and the name is data; they were the same string, and that is what
 // made a display concern into an upload failure.
 const UNSAFE = /[^A-Za-z0-9\-_]+/g

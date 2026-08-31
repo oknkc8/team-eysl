@@ -150,6 +150,7 @@ function Bubble({
               <Attachment
                 path={message.attachment_path}
                 type={message.attachment_type}
+                name={message.attachment_name}
                 caption={message.body}
               />
             ) : (
@@ -205,10 +206,13 @@ const FAILED_BUTTON = {
 function Attachment({
   path,
   type,
+  name: sentName,
   caption,
 }: {
   path: string
   type: string | null
+  /** The sender's own file name (0049), or null on a row written before it. */
+  name: string | null
   caption: string | null
 }) {
   const url = useQuery({
@@ -217,7 +221,12 @@ function Attachment({
     staleTime: 30 * 60_000,
   })
 
-  const name = caption?.trim() || path.split('/').pop() || '첨부파일'
+  // THE SENDER'S NAME FIRST, then the caption, then the key.
+  //
+  // The key is last for a reason easy to forget: since 0042 it is an ASCII slug,
+  // so 훈련일지.txt reads as file.txt there. It stays as the final fallback
+  // because rows written before 0049 carry no name, and a slug beats nothing.
+  const name = sentName?.trim() || caption?.trim() || path.split('/').pop() || '첨부파일'
   const kind = mediaKind(type)
 
   if (url.isPending) return <span style={{ fontSize: 12 }}>첨부파일 불러오는 중…</span>
