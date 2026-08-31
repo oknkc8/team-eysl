@@ -1,4 +1,5 @@
-import { APP_ENV, STATE, directRequest, expect, openAs, test, waitForScreen } from './fixtures'
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
+import { APP_ENV, STATE, directRequest, expect, openAs, test, waitForScreen, SEED } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -20,11 +21,11 @@ import type { Page } from '@playwright/test'
  *    2668) and it is the kind of thing a later refactor quietly "fixes".
  */
 
-const PREFIX = 'pwtest 자유게시판'
+const PREFIX = `${FIXTURE_NICK_PREFIX} 자유게시판`
 const BODY = '본문입니다.\n두 번째 줄.'
 
 /** The member fixture's id, as seed.sql pins it. */
-const MEMBER_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const MEMBER_ID = SEED.memberMemberId
 
 /** Chromium logs a line for every 4xx whatever the app does; a refusal is expected here. */
 const withoutHttpErrors = (errors: string[]) => errors.filter((e) => !/status of 4\d\d/.test(e))
@@ -129,7 +130,7 @@ test.describe('자유게시판 — 작성과 목록', () => {
       // The author's own name, read through member_public_v. A post fresh from
       // create_board_post_v1 carries no nickname at all, so this only appears if
       // the refetch and its embed both worked.
-      await expect(page.getByText('pwtestmember', { exact: false }).first()).toBeVisible()
+      await expect(page.getByText(`${FIXTURE_NICK_PREFIX}member`, { exact: false }).first()).toBeVisible()
       // Not edited yet. Asserted as an absence *beside* a presence, so a screen
       // that failed to render cannot pass it.
       await expect(page.getByText('수정됨')).toHaveCount(0)
@@ -139,7 +140,7 @@ test.describe('자유게시판 — 작성과 목록', () => {
       await waitForScreen(page)
       const row = page.getByRole('link', { name: new RegExp(title) })
       await expect(row).toBeVisible()
-      await expect(row).toContainText('pwtestmember')
+      await expect(row).toContainText(`${FIXTURE_NICK_PREFIX}member`)
 
       expect(consoleWatcher.errors).toEqual([])
     } finally {

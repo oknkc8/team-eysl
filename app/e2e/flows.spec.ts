@@ -1,3 +1,4 @@
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import { PASSWORD, SEED, STATE, expect, signIn, test, waitForScreen } from './fixtures'
 
 /**
@@ -13,7 +14,7 @@ test.describe('로그인', () => {
 
   test('잘못된 비밀번호는 한국어로 거절한다', async ({ page, consoleWatcher }) => {
     await page.goto('/login')
-    await page.getByLabel('닉네임').fill('pwtestmember')
+    await page.getByLabel('닉네임').fill(`${FIXTURE_NICK_PREFIX}member`)
     await page.getByLabel('비밀번호').fill('definitely-not-the-password')
     await page.getByRole('button', { name: '로그인' }).click()
 
@@ -50,7 +51,7 @@ test.describe('로그인', () => {
 
   test('없는 닉네임도 같은 문구로 거절한다', async ({ page }) => {
     await page.goto('/login')
-    await page.getByLabel('닉네임').fill('pwtestnobody')
+    await page.getByLabel('닉네임').fill(`${FIXTURE_NICK_PREFIX}nobody`)
     // Any value would do — the nickname belongs to nobody, so the password is
     // never reached. It uses the run password rather than a literal only so that
     // no password string is written down in this public repository at all.
@@ -65,13 +66,13 @@ test.describe('로그인', () => {
   test('빈 입력으로는 제출할 수 없다', async ({ page }) => {
     await page.goto('/login')
     await expect(page.getByRole('button', { name: '로그인' })).toBeDisabled()
-    await page.getByLabel('닉네임').fill('pwtestmember')
+    await page.getByLabel('닉네임').fill(`${FIXTURE_NICK_PREFIX}member`)
     // Still disabled: the button needs both fields, not either.
     await expect(page.getByRole('button', { name: '로그인' })).toBeDisabled()
   })
 
   test('승인된 회원은 로그인 후 홈을 본다', async ({ page, consoleWatcher }) => {
-    await signIn(page, 'pwtestmember')
+    await signIn(page, `${FIXTURE_NICK_PREFIX}member`)
     await waitForScreen(page)
     await expect(page.getByRole('heading', { name: /안녕하세요/ })).toBeVisible()
     expect(consoleWatcher.errors, 'console after a successful login').toEqual([])

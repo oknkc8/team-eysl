@@ -1,3 +1,4 @@
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import { PASSWORD, STATE, expect, signIn, test, waitForScreen } from './fixtures'
 
 /**
@@ -62,14 +63,14 @@ test.describe('나의 성과 · 배지', () => {
 
     // A card names the meet where the PB was SET, not the one the old time came
     // from: this moment happened at 봄 대회 and beat a time swum 작년.
-    await expect(moments.nth(1)).toContainText('pwtest 봄 대회')
+    await expect(moments.nth(1)).toContainText(`${FIXTURE_NICK_PREFIX} 봄 대회`)
 
     // And the 작년 swim itself produces no card. Nothing precedes it, so it is a
     // baseline rather than a moment — the rule that keeps a first-ever swim from
     // rendering as "0.00 → 40.00", a 40-second regression. The count of 2 above
     // implies this; naming the meet that must be absent says which of the three
     // swims was dropped, and why.
-    await expect(page.getByText('pwtest 작년 대회'), '기준 기록은 카드가 아니다').toHaveCount(0)
+    await expect(page.getByText(`${FIXTURE_NICK_PREFIX} 작년 대회`), '기준 기록은 카드가 아니다').toHaveCount(0)
 
     expect(consoleWatcher.errors, '콘솔').toEqual([])
   })
@@ -169,7 +170,7 @@ test.describe('세션이 바뀌었을 때', () => {
     page,
     consoleWatcher,
   }) => {
-    await signIn(page, 'pwtestmember')
+    await signIn(page, `${FIXTURE_NICK_PREFIX}member`)
 
     await page.getByRole('link', { name: '마이페이지' }).click()
     await waitForScreen(page)
@@ -180,7 +181,7 @@ test.describe('세션이 바뀌었을 때', () => {
 
     // Filled in place rather than through signIn(), because signIn() starts with
     // page.goto('/login') and that reload is exactly what must not happen here.
-    await page.getByLabel('닉네임').fill('pwtestmember2')
+    await page.getByLabel('닉네임').fill(`${FIXTURE_NICK_PREFIX}member2`)
     await page.getByLabel('비밀번호').fill(PASSWORD)
     await page.getByRole('button', { name: '로그인' }).click()
     await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 20_000 })

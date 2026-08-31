@@ -1,3 +1,4 @@
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SEED, STATE, expect, openAs, test, waitForScreen } from './fixtures'
@@ -31,10 +32,10 @@ const shotsDir = path.resolve(
   'training-detail',
 )
 
-const COACH = 'pwtest 박코치'
-const GEAR = 'pwtest 오리발, 킥판'
-const INFO = 'pwtest 자유형 위주로 진행합니다'
-const PLAN = 'pwtest 1. 웜업 400m\n2. 메인 8x100\n3. 쿨다운 200m'
+const COACH = `${FIXTURE_NICK_PREFIX} 박코치`
+const GEAR = `${FIXTURE_NICK_PREFIX} 오리발, 킥판`
+const INFO = `${FIXTURE_NICK_PREFIX} 자유형 위주로 진행합니다`
+const PLAN = `${FIXTURE_NICK_PREFIX} 1. 웜업 400m\n2. 메인 8x100\n3. 쿨다운 200m`
 const LINK = 'https://example.org/pwtest-plan'
 
 // A phone, because that is what a member holds. 430x932 is the iPhone 15 Pro Max

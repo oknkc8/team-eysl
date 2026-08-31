@@ -1,3 +1,4 @@
+import { FIXTURE_NS } from '../playwright.config'
 import { execFileSync, spawn } from 'node:child_process'
 import { randomInt } from 'node:crypto'
 import fs from 'node:fs'
@@ -338,7 +339,10 @@ export default async function globalSetup() {
       // /proc on Linux; an environment block is readable only by the same user.
       // Neither matters much for a throwaway dev credential, but the cheaper one
       // is also the safer one.
-      env: { ...process.env, PWTEST_PASSWORD: password },
+      // PWTEST_NS beside it: seed.sql refuses to run without one rather than
+      // defaulting to empty, because an empty namespace puts every worktree back
+      // on the same ids while still looking like it worked.
+      env: { ...process.env, PWTEST_PASSWORD: password, PWTEST_NS: FIXTURE_NS },
     })
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string }

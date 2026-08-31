@@ -1,3 +1,4 @@
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import { SEED, STATE, directRequest, expect, test, waitForScreen } from './fixtures'
 
 /**
@@ -28,7 +29,7 @@ test.describe('자유게시판 글쓰기 — 쓰고, 목록에 나타나고, 지
     // first draft clicked it and timed out, which read as a broken button and
     // was actually the guard working.
     await expect(page.getByRole('button', { name: '등록하기' })).toBeDisabled()
-    await page.getByLabel('제목').fill('pwtest 제목만')
+    await page.getByLabel('제목').fill(`${FIXTURE_NICK_PREFIX} 제목만`)
     await expect(page.getByRole('button', { name: '등록하기' })).toBeDisabled()
     expect(consoleWatcher.errors, 'console on empty submit').toEqual([])
   })
@@ -46,7 +47,7 @@ test.describe('자유게시판 글쓰기 — 쓰고, 목록에 나타나고, 지
       await page.goto('/board/new')
       await waitForScreen(page)
       await page.getByLabel('제목').fill(title)
-      await page.getByLabel('내용').fill('pwtest 본문입니다.')
+      await page.getByLabel('내용').fill(`${FIXTURE_NICK_PREFIX} 본문입니다.`)
       await page.getByRole('button', { name: '등록하기' }).click()
       // Wait for the app to land on the new post before navigating away.
       // Without this the goto below aborts the in-flight mutation and the list

@@ -1,3 +1,4 @@
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import type { Page } from '@playwright/test'
 import { APP_ENV, PASSWORD, STATE, expect, openAs, test, waitForScreen } from './fixtures'
 
@@ -54,14 +55,14 @@ function freshNickname(tag: string) {
  * What seed.sql gives pwtestmember, restated because the guard reads it.
  *
  * These four values have to agree with `pwtest_accounts` in seed.sql — the
- * fixture there is `('pwtestmember', …, 1970, '남')` — and there is no way to
+ * fixture there is `(`${FIXTURE_NICK_PREFIX}member`, …, 1970, '남')` — and there is no way to
  * ask the database for them from inside a browser, since `anon` holds no SELECT
  * on members and that is the whole reason the guard lives server-side. So they
  * are duplicated deliberately and named in one place rather than inlined into
  * four assertions.
  */
 const SEEDED = {
-  nickname: 'pwtestmember',
+  nickname: `${FIXTURE_NICK_PREFIX}member`,
   birthYY: '70',
   gender: '남',
   /** Any year but the seeded one: a namesake, and therefore a different person. */

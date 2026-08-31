@@ -1,3 +1,4 @@
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import { SEED, STATE, expect, test, waitForScreen } from './fixtures'
 
 /**
@@ -125,7 +126,7 @@ const MEMBER_ROUTES: Route[] = [
   { path: '/events/improve', expect: '단축왕' },
   { path: '/records', expect: '기록' },
   { path: '/members', expect: '회원' },
-  { path: `/members/${SEED.memberMemberId}`, expect: 'pwtestmember' },
+  { path: `/members/${SEED.memberMemberId}`, expect: `${FIXTURE_NICK_PREFIX}member` },
   {
     path: `/members/${SEED.memberMemberId}/records`,
     expect: /기록/,
@@ -138,7 +139,7 @@ const MEMBER_ROUTES: Route[] = [
   { path: `/media/${SEED.folderId}`, expect: SEED.folderName },
   { path: '/files', expect: '자료실' },
   { path: '/chat', expect: '채팅' },
-  { path: `/chat/dm/${SEED.adminMemberId}`, expect: 'pwtestadmin' },
+  { path: `/chat/dm/${SEED.adminMemberId}`, expect: `${FIXTURE_NICK_PREFIX}admin` },
   { path: '/settings/notifications', expect: '알림 설정' },
 ]
 

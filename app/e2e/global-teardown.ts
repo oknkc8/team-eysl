@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { LOCK_HOLD_SECONDS, LOCK_KEY, SEED_LOCK_PID_FILE } from './global-setup'
+import { FIXTURE_NS } from '../playwright.config'
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -401,7 +402,10 @@ export default function globalTeardown() {
     execFileSync(
       'bash',
       ['scripts/psql.sh', '-v', 'ON_ERROR_STOP=1', '-q', '-f', 'e2e/cleanup.sql'],
-      { cwd: appDir, stdio: 'pipe', encoding: 'utf8' },
+      // The same namespace the seed used. Without it cleanup.sql refuses, which
+      // is the point: a cleanup that ran with an empty namespace would delete by
+      // the old shared ids and take other worktrees' fixtures with it.
+      { cwd: appDir, stdio: 'pipe', encoding: 'utf8', env: { ...process.env, PWTEST_NS: FIXTURE_NS } },
     )
     // No `lock !== null` guard: the refusal above makes that unreachable. It used
     // to be here, and it was the reason the one path that wrongly deleted was

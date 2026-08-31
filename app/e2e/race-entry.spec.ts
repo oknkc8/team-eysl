@@ -1,5 +1,6 @@
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import { expect } from '@playwright/test'
-import { STATE, directRequest, openAs, test, waitForScreen } from './fixtures'
+import { STATE, directRequest, openAs, test, waitForScreen, SEED } from './fixtures'
 
 /**
  * 대회 신청 — the round trip his `raceApply` screen performs.
@@ -11,7 +12,7 @@ import { STATE, directRequest, openAs, test, waitForScreen } from './fixtures'
  * wrote and never read.
  */
 
-const RACE = 'pwtest 종목신청 대회'
+const RACE = `${FIXTURE_NICK_PREFIX} 종목신청 대회`
 const RELAYS = ['계영 200m', '혼계영 200m']
 
 /** Two weeks out, so hasFinished cannot hide 신청 while this runs. */
@@ -94,7 +95,7 @@ test.describe('대회 신청', () => {
   test('훈련에는 종목 신청이 없다', async ({ page }) => {
     // 0045 refuses a non-race outright; the screen simply never offers it, so
     // the refusal is not something a member can reach by accident.
-    await page.goto('/schedule/22222222-2222-4222-8222-222222222222')
+    await page.goto(`/schedule/${SEED.activityId}`)
     await waitForScreen(page)
     await expect(page.getByRole('heading', { name: '대회 신청' })).toHaveCount(0)
     // A control that IS on this screen, so a page that failed to render cannot

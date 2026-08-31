@@ -47,7 +47,7 @@ export const PASSWORD = readRunPassword()
 const nsId = (id: string) => id.slice(0, 2) + FIXTURE_NS + id.slice(8)
 
 /** Titles carry the namespace too: two worktrees seed at once, and a
- *  getByText('pwtest 훈련') would otherwise match the other one's row. */
+ *  getByText(`${FIXTURE_NICK_PREFIX} 훈련`) would otherwise match the other one's row. */
 const nsTitle = (rest: string) => `${FIXTURE_NICK_PREFIX} ${rest}`
 
 export const SEED = {
