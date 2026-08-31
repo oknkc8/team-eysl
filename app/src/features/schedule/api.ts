@@ -810,3 +810,54 @@ export async function getMyRaceHistory(): Promise<RaceHistoryRow[]> {
   if (error) throw error
   return dedupeRaceHistory((data ?? []) as RaceHistoryRow[])
 }
+
+// -------------------------------------------------------------- 일정 댓글 (0050)
+// Same shape as notices/api.ts's NoticeComment/listComments/appendComment —
+// one row per comment keyed by member_id, read through append_activity_comment
+// so a client cannot post as someone else.
+
+export type ActivityComment = {
+  id: string
+  body: string
+  created_at: string
+  member_id: string
+  nickname: string
+}
+
+// The nickname is read through member_public_v, the same reason notices/api.ts
+// does: members_read only lets someone see their own row, so embedding members
+// directly would blank out every other commenter's name for a non-staff reader.
+export async function listActivityComments(activityId: string): Promise<ActivityComment[]> {
+  const { data, error } = await supabase
+    .from('activity_comments')
+    .select('id, body, created_at, member_id, member_public_v(nickname)')
+    .eq('activity_id', activityId)
+    .order('created_at', { ascending: true })
+    // Tiebreak so two comments written in the same second keep a stable order
+    // instead of swapping places between refetches.
+    .order('id', { ascending: true })
+  if (error) throw error
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    body: row.body,
+    created_at: row.created_at,
+    member_id: row.member_id,
+    nickname: row.member_public_v?.nickname ?? '알 수 없는 회원',
+  }))
+}
+
+// Goes through the RPC, never a direct insert: the function derives the author
+// from the session, and there is no INSERT policy on activity_comments, so a
+// direct insert fails. Returns nothing — the caller refetches for the
+// canonical list, the same reason notices' appendComment does.
+export async function appendActivityComment(input: {
+  activityId: string
+  body: string
+}): Promise<void> {
+  const { error } = await supabase.rpc('append_activity_comment', {
+    p_activity_id: input.activityId,
+    p_body: input.body,
+  })
+  if (error) throw error
+}

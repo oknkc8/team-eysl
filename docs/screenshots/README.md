@@ -76,6 +76,13 @@
 | `notice-attach/write.png` | 공지 작성 중 파일을 붙인 상태. |
 | `notice-attach/detail.png` | 공지 상세의 **첨부파일** 영역. 회원이 내려받아 볼 수 있습니다. |
 
+## 일정 댓글 (#54)
+
+| 파일 | 설명 |
+|---|---|
+| `activity-comments/activity-detail-with-comments.png` | 일정(훈련/대회/기타) 상세 화면의 **댓글** 영역. 신청 상태 카드 아래에 붙고, 지난 일정이어도 계속 보입니다. |
+| `activity-comments/comment-posted.png` | 댓글을 등록한 뒤. 닉네임과 상대 시각이 서버 재조회로 붙습니다 — 등록 시 그 일정의 신청자·대기자에게(작성자 제외) 알림이 갑니다. |
+
 ---
 
 ## 여기 없는 것

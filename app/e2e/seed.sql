@@ -328,6 +328,55 @@ select
   m.id
 from public.members m where m.nickname = 'pwtestadmin';
 
+-- Its own activity, same reason as the notice above (0050) — the comment
+-- count and push-audience assertions need a thread nothing else writes to.
+-- pwtestmember applies as a participant, which is what makes them part of the
+-- push audience push_notify_context_v1 computes for activity_comment_created:
+-- the activity's own applicants and waitlisters, not the whole club.
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  'training',
+  'pwtest 댓글 훈련',
+  current_date + 11,
+  '19:00',
+  'pwtest 수영장',
+  10,
+  m.id
+from public.members m where m.nickname = 'pwtestadmin';
+
+insert into public.activity_applications (activity_id, member_id, application_type)
+select
+  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  m.id,
+  'participant'
+from public.members m where m.nickname = 'pwtestmember';
+
+-- A waitlister on the same activity, so the push-audience test can prove
+-- push_notify_context_v1's 'activity_comment_created' branch reaches
+-- activity_applications regardless of application_type — not participants only.
+insert into public.activity_applications (activity_id, member_id, application_type, wait_order)
+select
+  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  m.id,
+  'waitlist',
+  1
+from public.members m where m.nickname = 'pwtestmember2';
+
+-- Fixture devices for the same test: pwtestmember (the commenter, so the test
+-- can prove the author is excluded despite holding one), pwtestmember2 (the
+-- waitlister, expected in the audience), and pwtestadmin (staff but not
+-- applied to this activity at all, so the test can prove the audience is this
+-- activity's own applicants and not "every staff member" or "every device").
+insert into public.push_subscriptions (member_id, endpoint, p256dh, auth, user_agent)
+select m.id,
+       'https://fcm.googleapis.com/fcm/send/pwtest-' || m.nickname,
+       'pwtest-p256dh-' || m.nickname,
+       'pwtest-auth-' || m.nickname,
+       'pwtest'
+from public.members m
+where m.nickname in ('pwtestmember', 'pwtestmember2', 'pwtestadmin');
+
 -- ---------------------------------------------------------------------------
 -- A roster with depth: twelve synthetic members.
 --

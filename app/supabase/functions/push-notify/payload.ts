@@ -14,7 +14,12 @@
  */
 
 /** The events this function knows how to describe. */
-export type PushEvent = 'notice_created' | 'activity_created' | 'waitlist_offered' | 'self_test'
+export type PushEvent =
+  | 'notice_created'
+  | 'activity_created'
+  | 'waitlist_offered'
+  | 'activity_comment_created'
+  | 'self_test'
 
 /**
  * What src/sw.js reads out of `event.data.json()`.
@@ -53,6 +58,16 @@ export type OfferFact = {
   activity_date: string
   /** ISO 8601, and the reason this notification is urgent rather than pleasant. */
   offer_expires_at: string
+}
+
+/** A comment landed on a training/race/기타. Recipients are that activity's own applicants and waitlisters (0050), never the whole club. */
+export type CommentFact = {
+  activity_id: string
+  kind: string
+  title: string
+  activity_date: string
+  /** Free text, unlike a notice's title — truncated for the lock screen below. */
+  body: string
 }
 
 const ICON = '/icon-192.png'
@@ -196,6 +211,43 @@ export function offerPayload(fact: OfferFact): PushPayload {
 }
 
 /**
+ * `'그동안 고생 많았어요!!!'` → `'그동안 고생 많았어요!!!'` unchanged under the
+ * limit, or cut with `…` appended once it is not. A code-point slice (not a
+ * byte slice) so it never lands mid-multibyte-character on a Korean string.
+ */
+export function truncate(text: string, max: number): string {
+  const trimmed = text.trim()
+  const chars = [...trimmed]
+  if (chars.length <= max) return trimmed
+  return `${chars.slice(0, max).join('')}…`
+}
+
+/**
+ * A new comment landed on a training/race/기타.
+ *
+ * The comment's own text is the body, truncated — the same reasoning as
+ * noticePayload using the notice's title: it is already the one line the
+ * commenter wrote, so summarising it further would be a worse summary of the
+ * same thing. Unlike a notice title, a comment body has no length limit at
+ * the schema level, so this is the one payload here that truncates.
+ */
+export function activityCommentPayload(fact: CommentFact): PushPayload {
+  return {
+    title: `TEAM EYSL ${kindLabel(fact.kind)} 새 댓글`,
+    body: `${fact.title} · ${truncate(fact.body, 60)}`,
+    icon: ICON,
+    badge: ICON,
+    // Keyed to the activity rather than the comment: several comments on one
+    // 훈련 in quick succession collapse into the latest, the same way a
+    // repeated waitlist offer on the same activity does — one live
+    // notification about the thread, not a stack of them.
+    tag: `activity-comment-${fact.activity_id}`,
+    // Not /notices/:id — this is the schedule detail, where the thread lives.
+    url: `/schedule/${fact.activity_id}`,
+  }
+}
+
+/**
  * The member pressed 테스트 알림 보내기 in 알림 설정.
  *
  * Exists because "registered" and "receiving" are different facts, and until one
@@ -224,6 +276,8 @@ export function buildPayload(event: PushEvent, fact: unknown): PushPayload {
       return activityPayload(fact as ActivityFact)
     case 'waitlist_offered':
       return offerPayload(fact as OfferFact)
+    case 'activity_comment_created':
+      return activityCommentPayload(fact as CommentFact)
     case 'self_test':
       return selfTestPayload()
   }

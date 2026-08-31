@@ -11,12 +11,18 @@ import { formatCountdown, msUntil } from './countdown'
 import { formatDateLabel, formatTimeRange, hasFinished, todayKey } from './order'
 import { viewerKey } from '../../lib/queryKeys'
 import { useSession } from '../auth/SessionProvider'
+// Generic, no notices-specific state — the same relative-time formatter the
+// notice comment thread uses.
+import { formatRelative } from '../notices/relativeTime'
 import {
+  appendActivityComment,
   applyToActivity,
   cancelApplication,
   getScheduleEntry,
   KIND_LABEL,
+  listActivityComments,
   respondToOffer,
+  type ActivityComment,
   type MyApplication,
   type ScheduleEntry,
   type TrainingDetail,
@@ -172,6 +178,13 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
         ) : (
           <ApplicationSection entry={entry} activityId={activityId} />
         )}
+      </div>
+
+      {/* Shown whether the activity is past or upcoming — a training that
+          already happened is exactly when someone asks about the set or the
+          result, and the thread should not vanish the moment 지난 일정 does. */}
+      <div style={{ marginTop: 14 }}>
+        <Comments activityId={activityId} />
       </div>
     </>
   )
@@ -572,6 +585,107 @@ function OfferCard({ mine, activityId }: { mine: MyApplication; activityId: stri
           state={state}
           onRetry={lastChoice === null || expired ? undefined : () => respond.mutate(lastChoice)}
         />
+      </div>
+    </section>
+  )
+}
+
+/**
+ * 일정 댓글. Same shape as notices/NoticeDetailPage.tsx's Comments component —
+ * same query/mutation pattern, same refetch-rather-than-append rule (a comment
+ * someone else wrote in the same second must show up too, which appending to a
+ * local copy would drop). No delete button here, matching notices' own comment
+ * thread, which the DB already permits (own or staff) but does not expose in
+ * this screen either — kept the same shape for consistency rather than adding
+ * an affordance notices does not have.
+ */
+function Comments({ activityId }: { activityId: string }) {
+  const qc = useQueryClient()
+  const [draft, setDraft] = useState('')
+  const [saveState, setSaveState] = useState<SaveStatus>('idle')
+
+  const query = useQuery({
+    queryKey: ['activity-comments', activityId],
+    queryFn: () => listActivityComments(activityId),
+    enabled: !!activityId,
+  })
+
+  const add = useMutation({
+    mutationFn: appendActivityComment,
+    onMutate: () => setSaveState('saving'),
+    onSuccess: async (_data, variables) => {
+      // Clears only if the draft still matches what was just submitted. The
+      // request stays in flight for a moment, and the box does not lock
+      // during it (see the textarea's onChange below) — a member who typed a
+      // second comment while the first was saving must not lose it here.
+      setDraft((current) => (current.trim() === variables.body ? '' : current))
+      await qc.invalidateQueries({ queryKey: ['activity-comments', activityId] })
+      setSaveState('saved')
+    },
+    // The draft stays in the box on failure, so a retry does not ask the
+    // member to retype what they wrote.
+    onError: () => setSaveState('error'),
+  })
+
+  const body = draft.trim()
+  const canSubmit = body.length > 0 && saveState !== 'saving'
+
+  function submit() {
+    if (!canSubmit) return
+    add.mutate({ activityId, body })
+  }
+
+  return (
+    <section>
+      <h2 className="listDivider">댓글</h2>
+
+      <AsyncSection
+        query={query}
+        isEmpty={(rows: ActivityComment[]) => rows.length === 0}
+        loading={<Shimmer rows={2} />}
+        empty="아직 댓글이 없습니다"
+        error="댓글을 불러오지 못했습니다"
+      >
+        {(rows: ActivityComment[]) => (
+          <ul className="list">
+            {rows.map((comment) => (
+              <li key={comment.id} className="comment">
+                <div className="commentHead">
+                  <b>{comment.nickname}</b>
+                  <span>{formatRelative(comment.created_at)}</span>
+                </div>
+                <p className="body">{comment.body}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </AsyncSection>
+
+      <div className="card commentForm">
+        <label htmlFor="activity-comment" className="sr-only">
+          댓글 입력
+        </label>
+        <textarea
+          id="activity-comment"
+          className="field"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            // Clears a stale 저장됨/실패 indicator once the member starts a
+            // new comment. Deliberately NOT while saving() — canSubmit reads
+            // this state too, so resetting it here would re-enable 등록
+            // mid-request and let the same click fire the RPC twice.
+            if (saveState === 'saved' || saveState === 'error') setSaveState('idle')
+          }}
+          placeholder="댓글을 입력하세요"
+          rows={3}
+        />
+        <div className="commentFormActions">
+          <SaveState state={saveState} onRetry={body ? submit : undefined} />
+          <button onClick={submit} disabled={!canSubmit} className="btn primary">
+            등록
+          </button>
+        </div>
       </div>
     </section>
   )

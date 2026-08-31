@@ -76,11 +76,12 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.1
 import { buildPayload, type PushEvent } from './payload.ts'
 import { sendToAll, type Recipient, type VapidDetails } from './send.ts'
 
-/** The three the president asked for. `self_test` is not among them on purpose. */
+/** The three the president asked for, plus activity comments (0050). `self_test` is not among them on purpose. */
 const TRIGGER_EVENTS: readonly PushEvent[] = [
   'notice_created',
   'activity_created',
   'waitlist_offered',
+  'activity_comment_created',
 ]
 
 /**
