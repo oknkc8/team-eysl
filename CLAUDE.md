@@ -313,6 +313,22 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 
 **This is one deliberate exception, not a policy.** Do not generalise it into "strip every ungranted function" — `gen-types.sh` is supposed to describe the whole schema, and a rule that quietly narrows it would make the generated file lie about the database. If another function ever earns the same treatment, it earns its own line here.
 
+**A second thing `db:types` reverts, found the hard way on 2026-08-31.** `save_notice_v1`'s
+`p_notice_id` and `p_expected_updated_at` are `string | null` in the committed
+`database.ts`, and **the generator has never produced that.** It was hand-written in
+`2ab2153` (#24); `gen-types.sh` pipes `supabase gen types` straight over the file with no
+post-step. A DEFAULT makes the generator emit an *optional* parameter — `p_attachment_path?:
+string`, as `send_message_v1` shows — never a nullable one. So a regeneration silently
+narrows both to bare `string`, and `notices/api.ts`'s deliberate `?? null` (which its own
+comment explains: null means "create rather than update") stops compiling.
+
+**The dangerous part is how that failure presents.** It looks exactly like `dev` being red,
+because the two broken lines are in a file the regenerator never touched. It was reported
+that way. The check that would have settled it is `git diff origin/dev -- <file>` — and the
+one that was used, `git diff HEAD`, answers a different question once the regenerated file
+is committed: not "does this match dev" but "has anything changed since my last commit".
+Its empty output is the same shape as every other empty result on this page.
+
 **The worktree anchor moves to a different worktree mid-session.** Seen twice on 2026-08-26. Once, `git add … && git commit` ran in **`feat/admin-claim`** instead of `fix/media-delete-orphans`; the other time, `claim2`'s `git mv` succeeded in `admin-claim` and the very next `git commit` ran in **`fix/media-delete-orphans`**. **Neither committed anything, and that is purely because the other tree happened to be clean.** Had it been dirty, somebody else's work would have gone in under our commit message.
 
 It takes two forms, and they need different detection.
