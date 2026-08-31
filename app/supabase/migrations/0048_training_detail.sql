@@ -118,10 +118,22 @@ begin
   -- Authorship of the plan is set here, never accepted from the caller. His
   -- version stores planBy as a nickname string, which is the same shape that
   -- makes notice comments unattributable once somebody renames themselves.
-  if v_plan is null then
-    v_patch := v_patch || jsonb_build_object('plan_by', null, 'plan_at', null);
-  else
-    v_patch := v_patch || jsonb_build_object('plan_by', to_jsonb(v_me), 'plan_at', to_jsonb(now()));
+  -- ONLY WHEN THE PLAN ACTUALLY CHANGED. The edit screen sends every field on
+  -- every save, so an unconditional update rewrote plan_by and plan_at when a
+  -- staffer touched nothing but the place or the capacity -- quietly reassigning
+  -- the plan to whoever pressed save last. Nothing renders these two yet, which
+  -- is exactly why it would have gone unnoticed: by the time a screen shows the
+  -- author, every stored value would already be wrong and the real one
+  -- unrecoverable.
+  --
+  -- Leaving both keys out of the patch is what preserves them: the merge only
+  -- replaces the keys it names, so saying nothing is how you keep something.
+  if v_plan is distinct from (v_row.details ->> 'plan') then
+    if v_plan is null then
+      v_patch := v_patch || jsonb_build_object('plan_by', null, 'plan_at', null);
+    else
+      v_patch := v_patch || jsonb_build_object('plan_by', to_jsonb(v_me), 'plan_at', to_jsonb(now()));
+    end if;
   end if;
 
   -- THE MERGE, AND THE POINT OF THE WHOLE FUNCTION. `||` replaces the keys it
@@ -130,7 +142,23 @@ begin
   -- edit. Stripping the nulls afterwards keeps absent fields absent rather than
   -- storing a jsonb null that every reader would have to special-case.
   v_details := coalesce(v_row.details, '{}'::jsonb) || v_patch;
-  v_details := jsonb_strip_nulls(v_details);
+
+  -- Then drop only the keys THIS call set to null, so a cleared field is absent
+  -- rather than a jsonb null every reader would have to special-case.
+  --
+  -- NOT jsonb_strip_nulls, WHICH WAS HERE AND WAS WRONG. It recurses, so it
+  -- deletes nulls inside other people's nested objects too:
+  --
+  --   jsonb_strip_nulls('{"hist":{"a":null,"b":"late"}}') => {"hist":{"b":"late"}}
+  --
+  -- historical_attendance is a nickname -> status map. One member recorded with
+  -- a null status, and saving a coach's name would have deleted them from the
+  -- register -- through the very function whose header promises that keys it
+  -- does not know about survive. Same shape as 0043: the right idiom applied
+  -- wider than intended, failing silently and long after the edit.
+  v_details := v_details - array(
+    select key from jsonb_each(v_patch) where value = 'null'::jsonb
+  );
 
   v_updated := greatest(now(), v_row.updated_at + interval '1 microsecond');
 
