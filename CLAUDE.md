@@ -677,6 +677,46 @@ Until the predicate covers it, **`pwtest members = 1` is that row** - and everyb
 applies the liveness rule correctly will find no runner, conclude "leak", and spend the
 time again.
 
+### Counting processes does not answer "is anything contending with me"
+
+Eleven `writes.spec` tests failed together, and the diagnosis offered to the team
+was **machine saturation**, on this evidence:
+
+```
+playwright/vite preview processes running: 26
+```
+
+That number was real, and it was irrelevant. Read properly through
+`/proc/<pid>/cwd`, the 26 broke down like this:
+
+```
+humanride-cmd-motion   3   <- a different project on the same machine
+repo-infra-mcap-clock  3   <- a different project
+align-fix              3   <- a different project
+free-board             3   <- ours, but a 2.8-day-old dead playwright-mcp server
+chatattach             2   <- the only thing touching our database
+```
+
+**One.** The real cause was somewhere else entirely: the branch was based before
+`#24`, so its screens still used the direct-insert path while `notices_write` had
+already been revoked. Merging `dev` turned it green, 110/110.
+
+Two rules come out of it. **Counting processes is not asking the question** — the
+question is whether anything is touching *our* worktree and *our* database, and
+`/proc/<pid>/cwd` is what answers it. And **ask the shared resource, not the
+process table**: the seeded advisory lock in `pg_locks` is the real answer here,
+and `#22` exists to provide it.
+
+This is the mirror of the empty-result family above. There, a zero looked like an
+absence. Here **a large, specific, genuinely-measured number looked like
+evidence** — and it is the more seductive of the two, because it feels like
+having done the work.
+
+It reproduces easily. Scanning `/proc` on 2026-08-31 for the same purpose turned
+up **162** candidate processes; every one was an MCP server, mostly belonging to
+other projects, and the count of real test runners under `team-eysl` was **zero**.
+The filter is the whole job, and the unfiltered number is worth nothing.
+
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
 
 ## Environments
