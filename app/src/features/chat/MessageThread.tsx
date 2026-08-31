@@ -147,12 +147,24 @@ function Bubble({
             }}
           >
             {message.attachment_path ? (
-              <Attachment
-                path={message.attachment_path}
-                type={message.attachment_type}
-                name={message.attachment_name}
-                caption={message.body}
-              />
+              <>
+                <Attachment
+                  path={message.attachment_path}
+                  type={message.attachment_type}
+                  name={message.attachment_name}
+                />
+                {/* THE TEXT RENDERS BESIDE THE ATTACHMENT, not as its label.
+                    It used to BE the label — Attachment fell back to the body
+                    for its name — so a captioned attachment showed the words
+                    and never the file name. 0049 gives the row a real name, and
+                    the first screenshot after that change showed the words
+                    gone: the name won the fallback and the member's own
+                    sentence had nowhere left to appear. Both belong on screen,
+                    so both are rendered. */}
+                {message.body?.trim() ? (
+                  <span style={{ display: 'block', marginTop: 6 }}>{message.body}</span>
+                ) : null}
+              </>
             ) : (
               message.body
             )}
@@ -207,13 +219,11 @@ function Attachment({
   path,
   type,
   name: sentName,
-  caption,
 }: {
   path: string
   type: string | null
   /** The sender's own file name (0049), or null on a row written before it. */
   name: string | null
-  caption: string | null
 }) {
   const url = useQuery({
     queryKey: ['chat-attachment', path],
@@ -221,12 +231,17 @@ function Attachment({
     staleTime: 30 * 60_000,
   })
 
-  // THE SENDER'S NAME FIRST, then the caption, then the key.
+  // THE SENDER'S NAME, else the key.
   //
-  // The key is last for a reason easy to forget: since 0042 it is an ASCII slug,
-  // so 훈련일지.txt reads as file.txt there. It stays as the final fallback
-  // because rows written before 0049 carry no name, and a slug beats nothing.
-  const name = sentName?.trim() || caption?.trim() || path.split('/').pop() || '첨부파일'
+  // The message body is NOT in this chain any more. It used to be, and that is
+  // what hid it: the body was the label, so giving the row a real name in 0049
+  // silently removed the member's sentence from the bubble. The body now renders
+  // as its own line above, and this asks only "what is this file called".
+  //
+  // The key is the fallback because rows written before 0049 carry no name.
+  // Since 0042 it is an ASCII slug, so 훈련일지.txt reads as file.txt there —
+  // worse than the real name, better than nothing.
+  const name = sentName?.trim() || path.split('/').pop() || '첨부파일'
   const kind = mediaKind(type)
 
   if (url.isPending) return <span style={{ fontSize: 12 }}>첨부파일 불러오는 중…</span>
