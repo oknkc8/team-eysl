@@ -255,6 +255,36 @@ select
   m.id
 from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
+-- A member deliberately without an Auth account, used only by the staff
+-- enrolment test below. The production roster has many people in this state;
+-- the test must never pick one of them merely because no fixture models it.
+insert into public.members (id, nickname, short_name, real_name, birth_year, gender, status, role)
+values (
+  ('0f' || :'ns' || '-0000-4000-8000-000000000001')::uuid,
+  ('pwtest' || :'ns' || ' 명단 회원'),
+  ('pwtest' || :'ns' || ' 명단 회원'),
+  ('pwtest' || :'ns' || ' 명단 회원'),
+  1992,
+  '여',
+  'approved',
+  'member'
+);
+
+-- Its own activity means the enrolment test cannot change a roster any other
+-- spec reads. Keeping capacity well above one makes the test about staff
+-- enrolment, not the waitlist handoff path covered elsewhere.
+insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
+select
+  ('0f' || :'ns' || '-0000-4000-8000-000000000002')::uuid,
+  'training',
+  ('pwtest' || :'ns' || ' 명단 훈련'),
+  current_date + 6,
+  '18:00',
+  ('pwtest' || :'ns' || ' 수영장'),
+  10,
+  m.id
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
+
 -- ---------------------------------------------------------------------------
 -- Fixtures the write suite owns (writes.spec.ts).
 --
@@ -354,33 +384,33 @@ from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 -- the activity's own applicants and waitlisters, not the whole club.
 insert into public.activities (id, kind, title, activity_date, start_time, place, capacity, created_by)
 select
-  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  ('84' || :'ns' || '-0ca7-4641-b800-a182e907ee6b')::uuid,
   'training',
-  'pwtest 댓글 훈련',
+  ('pwtest' || :'ns' || ' 댓글 훈련'),
   current_date + 11,
   '19:00',
-  'pwtest 수영장',
+  ('pwtest' || :'ns' || ' 수영장'),
   10,
   m.id
-from public.members m where m.nickname = 'pwtestadmin';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'admin');
 
 insert into public.activity_applications (activity_id, member_id, application_type)
 select
-  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  ('84' || :'ns' || '-0ca7-4641-b800-a182e907ee6b')::uuid,
   m.id,
   'participant'
-from public.members m where m.nickname = 'pwtestmember';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'member');
 
 -- A waitlister on the same activity, so the push-audience test can prove
 -- push_notify_context_v1's 'activity_comment_created' branch reaches
 -- activity_applications regardless of application_type — not participants only.
 insert into public.activity_applications (activity_id, member_id, application_type, wait_order)
 select
-  '84850e06-0ca7-4641-b800-a182e907ee6b',
+  ('84' || :'ns' || '-0ca7-4641-b800-a182e907ee6b')::uuid,
   m.id,
   'waitlist',
   1
-from public.members m where m.nickname = 'pwtestmember2';
+from public.members m where m.nickname = ('pwtest' || :'ns' || 'member2');
 
 -- Fixture devices for the same test: pwtestmember (the commenter, so the test
 -- can prove the author is excluded despite holding one), pwtestmember2 (the
@@ -394,7 +424,11 @@ select m.id,
        'pwtest-auth-' || m.nickname,
        'pwtest'
 from public.members m
-where m.nickname in ('pwtestmember', 'pwtestmember2', 'pwtestadmin');
+where m.nickname in (
+  ('pwtest' || :'ns' || 'member'),
+  ('pwtest' || :'ns' || 'member2'),
+  ('pwtest' || :'ns' || 'admin')
+);
 
 -- ---------------------------------------------------------------------------
 -- A roster with depth: twelve synthetic members.

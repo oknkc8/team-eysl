@@ -58,6 +58,8 @@ export const SEED = {
   noticeId: nsId('11111111-1111-4111-8111-111111111111'),
   activityId: nsId('22222222-2222-4222-8222-222222222222'),
   folderId: nsId('33333333-3333-4333-8333-333333333333'),
+  enrolMemberId: nsId('0f000000-0000-4000-8000-000000000001'),
+  enrolActivityId: nsId('0f000000-0000-4000-8000-000000000002'),
   // One fixture per write test — see the block at the foot of seed.sql for why
   // they are not shared.
   capacityOneActivityId: nsId('44444444-4444-4444-8444-444444444444'),
@@ -71,6 +73,8 @@ export const SEED = {
   noticeTitle: nsTitle('공지 제목'),
   activityTitle: nsTitle('훈련'),
   folderName: nsTitle('폴더'),
+  enrolMemberNickname: nsTitle('명단 회원'),
+  enrolActivityTitle: nsTitle('명단 훈련'),
   capacityOneActivityTitle: nsTitle('정원1 훈련'),
   attendanceActivityTitle: nsTitle('출석 훈련'),
   commentNoticeTitle: nsTitle('댓글 공지'),

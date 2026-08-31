@@ -98,30 +98,23 @@ test.describe('자유게시판 글쓰기 — 쓰고, 목록에 나타나고, 지
 test.describe('명단 추가 — 패널이 실제 후보를 가져오는가', () => {
   test.use({ storageState: STATE.admin })
 
-  // READ-ONLY, and the reason is the finding.
-  //
-  // The panel lists every approved member with no login — which on this
-  // database is 36 REAL club members, not fixtures. My first draft picked the
-  // first row and pressed 추가, i.e. it was one click away from enrolling a
-  // real person into a pwtest training. seed.sql has no member without a login,
-  // so there is no safe row to write to.
-  //
-  // A write test here needs a seeded no-login member. That belongs in seed.sql,
-  // which the e2e harness owns and another agent is actively changing, so it is
-  // reported rather than added here.
-  test('패널이 후보 목록이나 빈 상태를 돌려준다', async ({ page, consoleWatcher }) => {
+  test('로그인 없는 fixture를 추가하고 다시 뺀다', async ({ page, consoleWatcher }) => {
     await page.goto('/admin/applications')
     await waitForScreen(page)
 
-    await page.getByRole('button', { name: '명단 추가' }).first().click()
+    const activity = page.getByRole('article').filter({ hasText: SEED.enrolActivityTitle })
+    await expect(activity).toHaveCount(1)
+    await activity.getByRole('button', { name: '명단 추가', exact: true }).click()
 
-    // exact:true — Playwright matches accessible names by substring, so
-    // { name: '추가' } also matches the panel's own 명단 추가 button, and
-    // clicking that closes the panel it just opened.
-    const add = page.getByRole('button', { name: '추가', exact: true }).first()
-    const nobody = page.getByText('추가할 수 있는 회원이 없습니다')
+    const member = activity.getByRole('listitem').filter({ hasText: SEED.enrolMemberNickname })
+    await expect(member).toHaveCount(1)
+    await member.getByRole('button', { name: '추가', exact: true }).click()
+    await expect(member.getByText('명단에 있음')).toBeVisible({ timeout: 15_000 })
+    await expect(member.getByRole('button', { name: '빼기', exact: true })).toBeVisible()
 
-    await expect(add.or(nobody).first()).toBeVisible({ timeout: 15_000 })
+    await member.getByRole('button', { name: '빼기', exact: true }).click()
+    await expect(member.getByText('명단에 있음')).toHaveCount(0, { timeout: 15_000 })
+    await expect(member.getByRole('button', { name: '추가', exact: true })).toBeVisible()
     expect(consoleWatcher.errors, 'console after opening 명단 추가').toEqual([])
   })
 })

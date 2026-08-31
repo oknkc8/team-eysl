@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { FIXTURE_NICK_PREFIX } from '../playwright.config'
 import {
   APP_ENV,
   MISSING_UUID,
@@ -39,7 +40,7 @@ const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
  *    returns names the caller.
  */
 
-const PREFIX = 'pwtest 댓글 훈련'
+const PREFIX = SEED.commentActivityTitle
 
 /** Direct REST is used throughout rather than the UI: the point of most of
  * these tests is a request the screen never sends. */
@@ -141,7 +142,7 @@ test.describe('일정 댓글 — 작성과 목록', () => {
       // append_activity_comment carries no nickname at all, so this only
       // appears if the refetch and its embed both worked.
       const posted = page.locator('.comment', { has: page.locator('.body', { hasText: body }) })
-      await expect(posted.locator('.commentHead b')).toHaveText('pwtestmember')
+      await expect(posted.locator('.commentHead b')).toHaveText(`${FIXTURE_NICK_PREFIX}member`)
 
       const stored = await directRequest(page, {
         path: `/rest/v1/activity_comments?activity_id=eq.${SEED.commentActivityId}&body=eq.${encodeURIComponent(body)}&select=id,member_id`,
@@ -221,7 +222,7 @@ test.describe('일정 댓글 — 푸시 대상', () => {
       expect(context.member_count).toBe(1)
       expect(context.recipients).toHaveLength(1)
       expect(context.recipients[0]!.endpoint).toBe(
-        'https://fcm.googleapis.com/fcm/send/pwtest-pwtestmember2',
+        `https://fcm.googleapis.com/fcm/send/pwtest-${FIXTURE_NICK_PREFIX}member2`,
       )
     } finally {
       if (commentId) await removeComment(page, commentId)

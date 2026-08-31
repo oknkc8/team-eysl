@@ -4,7 +4,7 @@
 누가 무엇을 들고 있는지, 어떤 마이그레이션 번호가 나갔는지, 무엇을 왜 그렇게 정했는지,
 그리고 아직 답을 못 받은 질문들.
 
-**마지막 갱신: 2026-08-31 · `dev` = `f781058`**
+**마지막 갱신: 2026-08-31 · `origin/dev` = `637280d`**
 
 갱신 규칙은 `CLAUDE.md`의 「Handoff log」 절에 있습니다.
 
@@ -13,7 +13,7 @@
 ## 1. 지금 상태
 
 ```
-dev 머지          50건
+dev 머지          55건
 스크린샷           31장  docs/screenshots/
 회원(dev DB)       41명 — 그중 36명이 로그인 없음
 기록 258건 · 출석 234행 · 활동 35건
@@ -45,11 +45,11 @@ dev 머지          50건
 
 | 브랜치 | 무엇 | 상태 |
 |---|---|---|
-| `feat/chat-attachment-name` | `messages.attachment_name`, `0049_a` | **PR #53, 리뷰 중** |
-| `chore/e2e-fixture-namespacing` | 픽스처 id·닉네임 네임스페이싱 + 로그인 없는 회원 픽스처 | 진행 중 |
+| `feat/chat-attachment-name` | `messages.attachment_name`, `0049_a` | **PR #53 머지됨** |
+| `chore/e2e-fixture-namespacing` | fixture namespace · 로그인 없는 회원 등록 · signup exact-id cleanup | **PR 준비 완료** |
 
 **그 외는 전부 머지됐습니다** — 훈련 상세(`#45`) · 라우트 커버리지(`#47`) · 활동 댓글과 푸시
-(`#54`) · 정리 결함 둘(`#50`·`#55`) · 문서 넷(`#46`·`#48`·`#52`·`#56`).
+(`#54`) · 채팅 첨부 이름(`#53`) · 정리 결함 둘(`#50`·`#55`) · 문서 넷(`#46`·`#48`·`#52`·`#56`·`#57`).
 
 ---
 
@@ -100,59 +100,54 @@ dev 머지          50건
 
 ## 4. 다음에 할 것 — 순서대로
 
-**1. 픽스처 id 네임스페이싱 + 로그인 없는 회원 픽스처.** 진행 중.
+**1. 픽스처 격리와 signup cleanup.** `chore/e2e-fixture-namespacing`에서 완료, PR 준비됨.
 
 `#22`는 포트를 나눴고 픽스처 id는 나누지 않았습니다. 그래서 지금은 **직렬화지 격리가
 아닙니다** — 여러 명이 동시에 e2e를 돌리면 서로의 픽스처를 지웁니다. 실제로 세 번 났습니다.
 
-**접두사를 바꾸지 말고 뒤에 붙이십시오** — `pwtest` → `pwtestA1B2`. `parse.ts:236`의
+**접두사를 바꾸지 말고 뒤에 붙이십시오** — `pwtest` → `pwtestA1B2`. `parse.ts`의
 `RESERVED_NICKNAME_PREFIX = 'pwtest'`가 `startsWith`로 검사하니 그대로 걸립니다. 갈아치우면
 **임포터가 방장님 워크북의 닉네임을 픽스처와 구별하지 못하게 되고, 그것도 조용히** 그렇게
-됩니다. 지금 그 보호가 깨져도 빨개지는 테스트가 없으니 같이 만드십시오.
+됩니다. namespace가 붙은 `pwtestA1B2회원`도 거절하는 회귀 테스트가 있다.
 
 **uuid는 첫 그룹 꼬리에 넣습니다.** 마지막 그룹은 시드 더미의 인덱스를 담고 있어
 (`e0000000-…-000000000007`) 거기를 덮으면 **더미 12개가 하나로 붕괴합니다** — 시드는 성공하고
 정원·대기열 테스트만 이상하게 통과하기 시작하므로 조용한 실패입니다.
 
-**리터럴 235곳 중 실제 편집은 넷입니다** — `fixtures.ts`·`seed.sql`·`cleanup.sql`·
-`global-setup.ts`. 스펙 여섯 개는 이미 `SEED.*` 상수를 쓰므로 raw uuid 자리만 손봅니다.
+활동 댓글 fixture까지 namespace를 전파했다. `fixtures.ts`의 `SEED` 값, `seed.sql`의 UUID·닉네임,
+댓글의 작성자와 푸시 endpoint 기대값은 한 namespace를 쓴다. 이 항목이 rebase 뒤 빠져 있어
+한 번은 27개 signup·댓글 E2E로, 한 번은 전체 E2E로 다시 실행해 잡았다.
 
-**로그인 없는 회원 픽스처를 같이 넣습니다.** 지금 `seed.sql`에 하나도 없어서, 명단 추가
-패널을 건드리는 테스트는 무엇을 잡든 실제 회원 36명 중 하나를 잡습니다. 실제로 쓰기 직전까지
-간 적이 있어 그 테스트는 읽기 전용으로 되돌려 두었습니다.
+**로그인 없는 회원 fixture가 있다.** 명단 추가 테스트는 그 전용 회원을 전용 활동에
+추가 → `명단에 있음` 확인 → 다시 빼기까지 한다. 실제 회원을 첫 행으로 고르는 테스트는 금지다.
 
-**2. 정리가 실명 가입자를 지울 수 있습니다.** 설계 필요, 아직 아무도 안 잡았습니다.
+signup이 만든 계정은 **닉네임·이메일 패턴으로 지우지 않는다.** 성공한 signup은 별도 브라우저로
+로그인해 자기 Auth ID와 member ID를 `app/e2e/.auth/owned-signups/`에 기록한다. seed와 teardown은
+그 ID만 `cleanup.sql`에 전달한다. ledger가 손상되면 삭제하지 않고 실패한다. 정상 teardown 뒤에는
+ledger를 비워 다음 실행에 stale ID를 남기지 않는다. 프로세스가 signup 직후 ledger 기록 전에 죽으면
+테스트 데이터가 남을 수 있지만, 실제 회원을 지우는 대신 **안전하게 실패**한 것이므로 ID를 확인해
+수동 정리한다.
 
-```
-0029:165   v_email := lower(v_nickname) || '@eysl.local'
-실제 사람이 pwtestfoo 로 가입
-  → 이메일 pwtestfoo@eysl.local
-  → cleanup 의 auth 팔이 email like 'pwtest%@eysl.local' 로 무조건 삭제
-  → FK on delete set null → 회원 행 고아
-  → 0050 이 넣은 팔이 auth_user_id is null and nickname like 'pwtest%' 로 삭제
-```
+**검증 (2026-08-31)**: 정적 TypeScript 게이트 4종, Vitest **670개**, namespace된
+signup·활동 댓글 E2E **27개**, 전체 Playwright **149개 통과 / 1개 조건부 skip**. 전체 실행은
+스크린샷 8장을 현재 namespace 데이터로 갱신했다. 이미지가 fixture 문자열을 보여 주므로, 다른
+worktree에서 `npm run test:e2e`를 다시 실행하기 전에는 screenshot churn 정책을 확인할 것.
 
-**`PWtestfoo`는 더 나쁩니다** — 이메일은 `lower()`로 만들어져 auth 팔에 걸리고 닉네임 팔에는
-안 걸려서 **영구 고아**가 됩니다.
+**2. 정리가 teardown 없이 끝나는 실행.** 러너 0인데 `attendance`에 pwtest 잔여 15행이 남는
+경로는 아직 조사 대상이다. 현재 reporter는 모든 `pwtest%`가 아니라 **자기 namespace만** 세므로
+다른 worktree의 정상 실행을 자기 leak으로 오진하지 않는다.
 
-**두 손쉬운 길이 둘 다 막혀 있습니다.** `ilike`로 넓히면 첫 경로가 더 나빠지고(대문자 섞어
-가입한 실제 사람까지 지움), 가입에서 접두사를 예약하면 `signup.spec.ts`가 죽습니다 — 그
-스펙은 실제 가입 흐름으로 `pwtest…` 닉네임을 만들어야 하고, `0032`가 형식 검사를 뺀 이유도
-바로 그 픽스처들입니다.
+## Codex 재개 메모 — 2026-08-31
 
-**방향은 이름으로 추론하기를 그만두는 것입니다.** `signup.spec.ts`는 자기가 만든 계정의 id를
-압니다. 정리가 그 목록을 읽으면 이름을 볼 이유가 사라지고, `cleanup.sql` 머리말이 원래 하려던
-말과 실제 동작이 처음으로 일치합니다. **마이그레이션이 필요한지도 아직 모르니 번호를 미리
-잡지 마십시오.**
-
-*측정으로 하나 좁혀져 있습니다*: `freshNickname()`이 결과 전체를 `toLowerCase()`하므로
-**스위트는 `PWtest…`를 만들지 않습니다.** 대소문자 구멍은 실제 사람이 대문자를 섞어 칠 때만
-닿습니다.
-
-**3. 정리가 teardown 없이 끝나는 실행이 있습니다.** 러너 0인데 `attendance`에 pwtest 잔여
-15행이 남아 있는 것이 관측됐습니다(전부 픽스처 회원·픽스처 활동, 실데이터 아님). 그 상태로
-누가 수를 재면 **249를 보고 없는 결함을 조사합니다** — `CLAUDE.md`의 249가 정확히 그렇게
-들어온 숫자였습니다.
+- Claude 세션 `f10128c2-fb0f-408f-8b2a-caab67bcda74`는 사용량 한도로 중단됐다. 이후 작업은
+  Codex가 이 branch에서 재개했다.
+- 기준은 로컬 루트가 아니라 `origin/dev` `637280d`다. 루트 `dev`는 이 기준보다 뒤처져 있을 수
+  있으므로, 기존 `free-board` worktree 또는 최신 `origin/dev`에서 새 worktree를 만든다.
+- 이 branch는 `origin/dev` 위로 rebase됐다. push 전에는 `git diff --check`, TypeScript 4종,
+  Vitest, `npm run test:e2e`를 다시 확인한다. `npm run shots`는 PNG를 쓴다.
+- 사용자가 만든 untracked 파일과 git-ignored `.env`는 절대 정리 대상으로 취급하지 않는다.
+- screenshot이 fixture namespace를 화면에 표시한다. 이미지 안정화 방법을 정하기 전에는 자동으로
+  새 PNG를 커밋하거나 되돌리지 말고, diff를 먼저 확인한다.
 
 ## 5. 방장님께 여쭐 것 — 다섯
 
