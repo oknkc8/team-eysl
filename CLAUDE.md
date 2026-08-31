@@ -768,6 +768,40 @@ test account has stamped is on a test member and a test activity, and no spec ma
 real member or a real activity — they all use seeded ids. The hazard is real; the
 trigger has not been built yet. Worth separating those two before writing a fix.
 
+**The two arms that looked redundant were the safe ones.** Because `member_id` and
+`activity_id` cascade, deleting the member or the activity already takes the row — so
+those arms delete nothing that would not go anyway. **The only arm doing independent
+work was the destructive one.** A predicate can look like belt and braces while
+exactly one strand is load-bearing, and it is worth checking which.
+
+The asymmetry also decides what a mistake *looks like*. Keyed on `marked_by`, a wrong
+guess **deletes somebody's data quietly**. Keyed on identity only, a row this file
+cannot classify **blocks the teardown loudly** with a bare 23503 naming nothing but a
+constraint — so the fix does not merely narrow the predicate, it converts silent
+destruction into a stop. Prefer the version that fails where somebody is looking.
+
+**And the file already knew.** Two comments, twenty-five lines apart:
+
+```
+:179  "marked_by is the staffer who tapped, member_id is who was marked,
+       and the write suite creates rows where only the second is ours"
+
+:204  "the dev database's own 관리자 account ... is the master_admin recorded
+       as marked_by on every imported attendance row. Deleting it would ...
+       take the club register with it"
+```
+
+The second names the link exactly — `marked_by` is what ties the club's entire
+attendance register to this file — and guards one direction: *do not delete that
+account.* The first reasons about rows the suite **creates**, where both columns are
+new and deleting is right. Neither considered the third case, in which the account
+survives and the **stamp moves to us**.
+
+So the hazard was written down, in the same file, twenty-five lines below the arm that
+realised it. **A comment that identifies a risk protects only the direction its author
+was facing.** When you find one, do not read it as coverage — read it as a list of
+things that touch the object, and then ask what else does.
+
 ### The prefix is not reserved where you think it is
 
 `cleanup.sql` rests its safety on `pwtest` never belonging to a real member. **Only
