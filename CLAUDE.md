@@ -279,6 +279,31 @@ This form is the one to use because it **refuses** when it is wrong. `git rev-pa
 
 The guard fired for real while this paragraph was being written, stopping a commit from landing in `feat/admin-claim`. Separately, the worktree directory itself came back on another agent's branch; what saved the work then was not the guard but **committing and pushing after every edit**. The guard protects where a commit lands, not whether the checkout is still yours.
 
+**Later the same day the drift landed an edit in another agent's working tree, and git reported the wrong branch throughout.** The lead's session believed it was in `free-board` on `feat/free-board`; it was on `chore/e2e-parallel-isolation` — a second agent's branch, in a tree where that agent had 161 uncommitted lines of work in flight. A `CLAUDE.md` edit went in beside them and sat there for about five minutes.
+
+Three commands were asked, and all three were wrong:
+
+```
+git status --short --branch   ## feat/unregistered-roster...origin/dev
+git log --oneline -3 HEAD     dddcee4  a3bff84  344fb1e     <- origin/dev's tip
+git switch/checkout -b …      "새로 만든 … 브랜치로 전환합니다"   <- printed, did nothing
+```
+
+Two were right:
+
+```
+git rev-parse --abbrev-ref HEAD    chore/e2e-parallel-isolation
+git rev-parse HEAD                 0c834188…
+```
+
+**The split is the same one as everywhere else in this section.** The commands that lied return multi-line formatted output; the ones that held up return a single short token with nothing to reformat. That is the reason the guard above is built on `git branch --show-current` rather than on `git status`, and it now has evidence behind it rather than taste.
+
+**A `checkout -b` that prints its success line and does not switch is the worst member of the family**, because the success line is the only thing anyone reads. Verify a branch change by asking `git rev-parse HEAD` afterwards and comparing it to the sha you expected — never by the message the command printed.
+
+What actually caught it was **arithmetic again**: the working file was 49,714 bytes against 56,233 for `origin/dev`'s blob, and the missing 6.5 KB was exactly what a PR merged twenty minutes earlier had added. And there was a near-miss inside the near-miss — `git diff --stat HEAD -- CLAUDE.md` printed nothing, which reads as *no difference*. The wrapper had mangled it into `git rtk …`, so the command had failed; **the empty output of a failed command is indistinguishable from a clean diff.**
+
+**Recovering from it: restore by explicit path** (`git checkout -- <file>`), never a bare `reset --hard` or `checkout .`, because the other agent's uncommitted work is in that same tree and a broad restore destroys it. Confirm with `git diff --stat` that only your file left the list. Then **leave** — `ExitWorktree` with `keep`, then `EnterWorktree` for a fresh one — rather than trying to steer git back inside a tree that is answering for somebody else.
+
 **`ps` is the worst of these, and the reason is that its lie is the answer you wanted.** `git status` printing `ok` is obviously not git's output. `gh pr list` printing `[]` at least looks odd for a repo with open PRs. But `ps | grep <anything>` returning nothing looks exactly like *"that program is not running"* — so it **confirms rather than contradicts**, and an investigation stops. Every "I checked, nothing was running" in this project's history was produced this way.
 
 **Read `/proc` instead.** `ls -d /proc/[0-9]* | wc -l` for a count, `/proc/<pid>/comm` and `/proc/<pid>/cmdline` for what a process is. Nothing sits between those files and the truth. `rtk proxy ps` also works, but it puts a wrapper in the path and wrappers are the subject.
@@ -299,6 +324,12 @@ bare      wc -l   file         31        correct
 **The wrapper intercepts the command as typed; it does not reach inside `$( )` command substitution.** So the same query gives two different answers depending on where you put it, and the bare form — the one you type when you are checking something quickly — is the one that lies.
 
 That has a cheap consequence worth using: **run it bare and substituted, and if they disagree, the bare one is wrong.** It also means a verification that happens to wrap everything in `$( )` will fail to reproduce a real bug and can talk you into telling a colleague their correct finding is mistaken. That nearly happened while this paragraph was being written.
+
+**It also renumbers, and that is the one shape where the content is right and only the address is wrong.** Hours after the paragraph above, on this very file: bare `grep -n` placed `<codex_delegation>` at line 454, `sed -n '445,462p'` printed that block on request, and the block was really at 371 in a file of 384 lines. The second command addressed lines that do not exist and returned the correct text anyway.
+
+Every other trap here hands you wrong content or none, which is at least a chance to notice. This one hands you **correct content at a fabricated coordinate**, and it is worst exactly when you are about to write: `sed -i '454s/…/…/'` would have rewritten a real but different line, exited 0, and looked like it worked. The two reads that agreed were the Read tool (384 lines) and `$(wc -l < CLAUDE.md)` (383 — they differ by the trailing newline, not by disagreement); bare `wc -l CLAUDE.md` said 398.
+
+**So never address a file by a line number a bare `grep -n` or `sed` gave you.** Anchor an edit on unique surrounding text instead of on a coordinate — the Edit tool works that way already, which is the argument for preferring it here over `sed -i`. When a line number is genuinely what you need, take it from the Read tool or from Python.
 
 Two more from the same session. **`cat` fabricated a truncation count**: a 31-line file printed with `... (1065 lines truncated)` appended, and 31 + 1065 is 1096 against a real 1080 — **the invented number nearly reconciled the two figures being compared**, which is worse than an obvious lie because it manufactures exactly the reassurance that ends an investigation. And the standing rule about `pwtest` rows still holds — **a row count means nothing without a paired "is a runner active" check** — but `ps` cannot supply that second half, so pair it with `/proc`.
 
@@ -452,6 +483,9 @@ Global `~/.claude/CLAUDE.md` already carries the full ruleset — do not duplica
 - Canonical call (the `-o` artifact is the source of truth, never stdout):
   `codex exec -m gpt-5.6-sol -c model_reasoning_effort="high" --json -o /path/verdict.txt "$PROMPT"`
 - 2026-08-24, this repo: the `codex:rescue` skill returned a contentless `"Complete."` twice in a row despite 51 real `tool_uses` and 10+ min runtime; a `SendMessage` resume produced the same. A *completed* status with an empty result means the delivery channel failed, not that the work is absent. One retry, then drop the codex track and verify load-bearing facts directly.
+- **The word carrying that rule is *completed*, and a missing `-o` artifact is not it.** A run still in flight looks identical from the artifact alone — the file simply is not there yet. On 2026-08-26 a re-review of PR #22 came one command from being killed and restarted on exactly that reading: eight minutes of work discarded because "the artifact is empty" was taken for the delivery failure above. What stopped it was the log's mtime, 2m30s old against the clock — still running.
+  Establish completion before applying the rule, cheapest first: `ls -l --time-style=…` on the `.log` against `date` settles it in one command. If that is ambiguous, parse the `--json` log. A run mid-flight ends on `item.started`, `command_execution` or `web_search`, and its `agent_message` entries are short progress narrations; the verdict arrives as a single final `agent_message` of several thousand characters. Three of 139–206 characters means it has not finished thinking.
+  Do **not** ask `ps` whether codex is alive — see the tool-trap section. Invoked bare it reports almost nothing here, and "no codex process" is precisely the answer that makes killing a live run look safe.
 </codex_delegation>
 
 ### HTML rendering convention
