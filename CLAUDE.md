@@ -504,9 +504,11 @@ that asserts a proxy for it.**
 *(An earlier version of this paragraph told you to wait on `aria-busy` going to
 zero and called that the general convention. It is not. Measured 2026-08-31,
 `aria-busy` appears **once** in `src` — `AsyncSection.tsx:55` — and **zero** times
-anywhere in `e2e`; no spec has ever waited on it. The claim was invented in the
-writing and shipped because it sounded like the kind of thing that would be true,
-which is the failure this whole page is about. **A convention is a claim about a
+anywhere in `e2e`; no spec has ever waited on it. The claim did not start here: it was circulated as
+settled team convention and written down on that authority, without anybody grepping
+for it. That is the part worth keeping — **a convention arriving from a trusted source
+is still an unverified claim about a codebase**, and relaying one costs exactly what
+inventing one costs once it is in the file. **A convention is a claim about a
 codebase; grep for it before writing it down.**)*
 
 ### Empty because the data is missing, or empty because the code is right
@@ -766,7 +768,22 @@ risk for a total-teardown failure.
 **And on this database the arm had never fired on real data.** Every attendance row a
 test account has stamped is on a test member and a test activity, and no spec marks a
 real member or a real activity — they all use seeded ids. The hazard is real; the
-trigger has not been built yet. Worth separating those two before writing a fix.
+trigger has not been built yet.
+
+**And that distinction had to be drawn against a real loss, which is what makes it
+worth writing down.** Attendance really did fall, 249 to 234. The drop is sound: the
+249 snapshot carries `with_login = 5`, and six pwtest sign-in accounts would have made
+it 11, so no fixtures were resident when it was taken — and `attendance_member_id_fkey`
+cascades, so residue cannot outlive the members it hangs on. The arithmetic closes on
+the same reading: 15 lost splits into 10 no-login and 5 with-login.
+
+The `marked_by` acquisition was then offered as the cause. It is a genuine hazard and
+it is **not** the proven cause: no spec marks a real member or a real activity, so the
+path has never run. **A measurement proves a loss; it does not prove a route** — and a
+mechanism that would explain the loss beautifully still has to be shown to have fired.
+The route here remains unknown; a deleted activity cascading is the likeliest
+candidate and was not confirmed. Closing the hazard was still right. Attributing the
+loss to it would not have been.
 
 **The two arms that looked redundant were the safe ones.** Because `member_id` and
 `activity_id` cascade, deleting the member or the activity already takes the row — so
@@ -824,9 +841,26 @@ the member row. **Teardown deletes a real member.**
 member row orphaned, and nothing can reach it again. Widening to `ilike` does not fix
 this — it closes the orphan case by making the first case worse.
 
-The fix belongs at signup rather than in the predicate: **reserve the prefix where
-accounts are made, and the assumption cleanup rests on becomes true instead of
-assumed.**
+**Do not "fix" this by rejecting the prefix at signup.** `signup.spec.ts` builds its
+accounts through the real 가입 flow — `freshNickname()` returns
+`pwtest<tag><base36><rand>/98/남/관악` — because the roster-guard test has to use the
+seeded fixture's name. Reject the prefix at the door and that spec dies on the spot,
+which is the same wall `0032` hit when it left the format check off this path.
+
+So this is recorded as **a defect, not a fix**. The direction worth exploring is not a
+wider or narrower prefix but **not inferring from names at all**: `signup.spec.ts`
+knows the ids of the accounts it creates, and a teardown handed that list has no
+reason to look at a nickname — which is what the header of `cleanup.sql` was reaching
+for in the first place. That needs design, so no migration number is claimed for it
+yet; it may not need one.
+
+One measured narrowing, because it decides how urgent this is: `freshNickname()`
+lowercases its whole result, so **the suite never produces `PWtest…`**. The
+case-sensitivity half is reachable only by a real person typing mixed case, not by our
+own fixtures. And `signup.spec.ts:45` already knows the coupling — it warns that
+changing the region "would move the `pwtest` prefix off the front of the derived
+address and break cleanup's LIKE." Another comment naming the dependency exactly and
+guarding one direction of it.
 
 ### The check command counts itself
 
