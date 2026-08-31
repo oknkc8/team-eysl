@@ -1,7 +1,14 @@
 import { SEED, STATE, expect, test, waitForScreen } from './fixtures'
 
 /**
- * One test per route in src/app/router.tsx.
+ * A test per STATIC route in src/app/router.tsx.
+ *
+ * Not one per route, though this line used to say so. Measured 2026-08-31: the
+ * router declares 45 and this file names 28. The seventeen it leaves out are the
+ * dynamic ones (/board/:postId, /members/:memberId, …) which need a fixture id
+ * and are covered by the feature specs — plus five that no spec reached at all
+ * until sweep.spec.ts. A docstring claiming complete coverage is worth less than
+ * no docstring: it answers the question somebody would otherwise go and check.
  *
  * Each loads the route and asserts two things: a heading the screen can only
  * produce by reaching its own render, and an empty console. The second is what
