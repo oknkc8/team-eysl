@@ -7,7 +7,7 @@
 --
 -- Run with:  bash scripts/psql.sh -v ON_ERROR_STOP=1 -f e2e/cleanup.sql
 --
--- WHY FIXED IDS RATHER THAN `nickname like 'pwtest%'`.
+-- WHY FIXED IDS RATHER THAN `nickname like ('pwtest' || :'ns' || '%')`.
 --
 -- The prefix was doing load-bearing work it was never designed for. It meant
 -- "test-owned, delete it and everything filed against it" — and it decided that
@@ -31,27 +31,46 @@
 -- account authored has to go before the account does or the delete raises 23503.
 -- The suite is almost entirely read-only, but a flow test that files a notice or
 -- an activity would otherwise wedge every later cleanup.
+\getenv ns PWTEST_NS
+\if :{?ns}
+\else
+\set ns ''
+\endif
+
+-- REFUSED RATHER THAN DEFAULTED, and this is the only silent failure this
+-- design has. An empty namespace is not a harmless fallback: every worktree
+-- would seed and delete the SAME ids again, which is exactly the collision
+-- this file was namespaced to end -- and it would look like it worked.
+select case when btrim(:'ns') = '' then 'true' else 'false' end as ns_missing \gset
+\if :ns_missing
+\echo ''
+\echo 'PWTEST_NS is not set.'
+\echo 'Run `npm run test:e2e`, which derives it from the worktree path, or export'
+\echo 'one yourself (six hex characters) before running this file by hand.'
+select 'PWTEST_NS is not set'::int;
+\endif
+
 create temporary table pwtest_member_ids (id uuid primary key);
 
 -- The six sign-in accounts, at the ids fixtures.ts imports.
 insert into pwtest_member_ids (id) values
-  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),  -- pwtestadmin
-  ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),  -- pwtestmember
-  ('cccccccc-cccc-4ccc-8ccc-cccccccccccc'),  -- pwtestpending
-  ('dddddddd-dddd-4ddd-8ddd-dddddddddddd'),  -- pwtestmember2
+  (('aa' || :'ns' || '-aaaa-4aaa-8aaa-aaaaaaaaaaaa')::uuid),  -- pwtestadmin
+  (('bb' || :'ns' || '-bbbb-4bbb-8bbb-bbbbbbbbbbbb')::uuid),  -- pwtestmember
+  (('cc' || :'ns' || '-cccc-4ccc-8ccc-cccccccccccc')::uuid),  -- pwtestpending
+  (('dd' || :'ns' || '-dddd-4ddd-8ddd-dddddddddddd')::uuid),  -- pwtestmember2
   -- Named here even though the signup block further down would also reach them
   -- through the pwtest%@eysl.local auth join. That reach is incidental — it
   -- exists for accounts whose ids are random because a button made them — and
   -- leaning on it for a fixture whose id we chose ourselves would be depending
   -- on a coincidence. These two are seeded exactly like the four above, so they
   -- are removed exactly like the four above.
-  ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'),  -- pwtestrejected
-  ('ffffffff-ffff-4fff-8fff-ffffffffffff');  -- pwtestblocked
+  (('ee' || :'ns' || '-eeee-4eee-8eee-eeeeeeeeeeee')::uuid),  -- pwtestrejected
+  (('ff' || :'ns' || '-ffff-4fff-8fff-ffffffffffff')::uuid);  -- pwtestblocked
 
 -- The twelve roster/waitlist/ranking dummies, built by the same expression
 -- seed.sql uses so the two cannot drift apart silently.
 insert into pwtest_member_ids (id)
-select ('e0000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
+select ('e0' || :'ns' || '-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid
 from generate_series(1, 12) as n;
 
 -- The accounts signup.spec.ts creates by pressing the button.
@@ -79,7 +98,7 @@ insert into pwtest_member_ids (id)
 select m.id
   from public.members m
   join auth.users u on u.id = m.auth_user_id
- where u.email like 'pwtest%@eysl.local'
+ where u.email like ('pwtest' || :'ns' || '%@eysl.local')
 on conflict (id) do nothing;
 
 -- The orphans an EARLIER RUN OF THIS FILE made, which neither list above can
@@ -128,7 +147,7 @@ insert into pwtest_member_ids (id)
 select m.id
   from public.members m
  where m.auth_user_id is null
-   and m.nickname like 'pwtest%'
+   and m.nickname like ('pwtest' || :'ns' || '%')
 on conflict (id) do nothing;
 
 -- Captured before the member rows go, because auth_user_id is the only link
@@ -277,11 +296,11 @@ delete from public.members where id in (select id from pwtest_member_ids);
 -- it. `pwtest%@eysl.local` is a shape only seed.sql produces.
 delete from auth.identities
 where user_id in (select id from pwtest_auth_ids)
-   or user_id in (select id from auth.users where email like 'pwtest%@eysl.local');
+   or user_id in (select id from auth.users where email like ('pwtest' || :'ns' || '%@eysl.local'));
 
 delete from auth.users
 where id in (select id from pwtest_auth_ids)
-   or email like 'pwtest%@eysl.local';
+   or email like ('pwtest' || :'ns' || '%@eysl.local');
 
 -- The signup rate limiter's bookkeeping, which the suite fills and nothing else
 -- empties.
