@@ -151,6 +151,10 @@ export function useChatRoom(input: { room: Room; myMemberId: string }): ChatRoom
           // message.
           attachment_path: file ? '' : null,
           attachment_type: file ? file.type || 'application/octet-stream' : null,
+          // The one field the optimistic bubble can fill honestly: the sender
+          // picked this name, so it is already known here and does not have to
+          // wait for the round trip the path and type do.
+          attachment_name: file ? file.name : null,
           created_at: new Date().toISOString(),
         }),
       )

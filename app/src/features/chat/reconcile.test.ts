@@ -20,6 +20,7 @@ function message(overrides: Partial<ChatMessage> & Pick<ChatMessage, 'id'>): Cha
     body: '안녕하세요',
     attachment_path: null,
     attachment_type: null,
+    attachment_name: null,
     created_at: '2026-08-25T09:30:00.000+00:00',
     ...overrides,
   }
