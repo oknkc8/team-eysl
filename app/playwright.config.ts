@@ -69,6 +69,45 @@ export const PORT =
 export const BASE_URL = `http://localhost:${PORT}`
 
 /**
+ * Six hex characters that make this worktree's fixtures its own.
+ *
+ * #22 split the PORT so two worktrees stop serving each other's bundle. It did
+ * not split the FIXTURES, so both still seeded the same ids and the same
+ * nicknames -- and cleanup.sql deletes by fixed id, so whoever finished first
+ * deleted the other's rows out from under a live run. That is serialisation by
+ * seed lock, not isolation, and it cost two agents a morning apiece.
+ *
+ * Derived from the same worktree path as the port, so a checkout gets one
+ * namespace for everything and two checkouts cannot collide without also
+ * colliding on their directory names.
+ *
+ * SIX HEX, AND WHERE THEY GO, ARE BOTH DELIBERATE. A uuid is 8-4-4-4-12, and
+ * the twelve seeded dummies already encode their index in the last group
+ * (`e0000000-...-000000000007`). Overwriting that group would have collapsed
+ * twelve fixtures into one. The namespace goes in the tail of the FIRST group
+ * instead, which no fixture was using to say anything:
+ *
+ *   aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa   ->  aa4f2c1b-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+ *   e0000000-0000-4000-8000-000000000007   ->  e04f2c1b-0000-4000-8000-000000000007
+ *
+ * The leading two characters still name the fixture, so a row in the shared
+ * database is still readable at a glance, and the version and variant nibbles
+ * are untouched so every id stays a well-formed v4.
+ */
+export const FIXTURE_NS = createHash('sha256').update(HERE).digest('hex').slice(0, 6)
+
+/**
+ * The nickname namespace, which APPENDS to `pwtest` and never replaces it.
+ *
+ * `pwtest` is not decoration: scripts/import/parse.ts refuses any workbook
+ * nickname starting with it (RESERVED_NICKNAME_PREFIX), which is what keeps a
+ * real member the president types from ever colliding with a fixture. Swapping
+ * the prefix for a namespaced one would have removed that protection silently,
+ * and nothing in the suite would have gone red.
+ */
+export const FIXTURE_NICK_PREFIX = `pwtest${FIXTURE_NS}`
+
+/**
  * Proof that the server answering on PORT is serving OUR build.
  *
  * The derived port makes a collision unlikely; it does not make one detectable,
