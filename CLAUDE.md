@@ -137,6 +137,18 @@ Mirroring upstream on a local branch turned out to buy nothing: `git fetch upstr
 
 Versioning is semver, and the version lives in `app/package.json`. Below 1.0 while the rebuild has gaps a user would notice: dues is deferred, no production Supabase project exists, and push registers but cannot send. A tag says "this state was reviewed and verified", so **do not cut one while a critical or high review finding is open** — the tag is the claim, and an unfixed escalation makes it a false one.
 
+**A release is not finished until the bump is back on `dev`, and this has now gone wrong twice.** The release branch carries the bump into `main`; `dev` keeps whatever it had. So after `v0.3.0`, `dev` sat at `0.2.0` against `main`'s `0.3.0` — and after `v0.4.0`, which was cut specifically to end that drift and whose PR body diagnosed the cause in one sentence, **`dev` sat at `0.2.0` against `main`'s `0.4.0` again.**
+
+Diagnosing a drift does not close it. **The last step of a release is a PR that carries `app/package.json` and `app/package-lock.json` back to `dev`** — both files, because the lock drifted separately and by a different amount: at `v0.2.0` and `v0.3.0` the lock still said `0.1.0` while `package.json` had already moved twice.
+
+The check is one line, and it belongs at the *end* of the release rather than the start of the next one:
+
+```
+git show origin/dev:app/package.json | grep version   # must equal the tag you just cut
+```
+
+Two values disagreeing does not say which one moved — read both sides before naming a culprit. Here it was always `main` moving and `dev` standing still, which is why the fix is a carry-back and not a re-bump.
+
 **Commit subjects and PR titles both carry a Conventional Commits prefix**, drawn from the same set as the branch prefix:
 
 | Prefix | Use for | Branch |
@@ -231,6 +243,12 @@ not a malfunction, and the facts it asks for are cheap on a file you have alread
 Four things that cost real time when skipped:
 
 - **A teammate's idle notification is not a report.** Their final message does not reach the lead automatically — ask for the full deliverable via `SendMessage` (bare name, no `@session` suffix) or it is lost.
+
+  **And asking once is not enough, because the failure is on their side of the wire.** On 2026-09-02 all three teammates went idle without delivering, and two rounds of `SendMessage` returned only `"Complete."`. The work existed the whole time. The architect eventually diagnosed it: **it had been answering in plain text, and a subagent's plain text does not travel — only a `SendMessage` call does.** So a teammate can finish correctly, report correctly by its own lights, and reach nobody.
+
+  Two consequences. **Say the channel in the brief**, not just the task: *reply with `SendMessage`, plain text is discarded*. And when a reply comes back as a bare `"Complete."`, that is the signature of this failure rather than a summary — re-ask, and say what you want pasted.
+
+  The cost is measurable here. Both the architect and the DBA independently found that `0051`'s premise was wrong; neither reached the lead in time; the migration and its UI were built, merged, and reverted across four PRs. **The team was right and the lead never heard it.**
 - **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
 
   **2026-09-02 is the cheapest example this project has.** An upstream survey came back with file:line evidence throughout and one confident conclusion: 자유게시판 is "완전히 새로운 기능, CLAUDE.md에 전혀 없음 … 우리 백로그에 없는 완전 신규 기능이라 별도 스코프 논의가 필요". Every word about *his* app was right. The claim about **ours** was wrong — we shipped it in `#13`, it has four components under `app/src/features/board/` and two migrations (`0033`, `0037`), and it is the **first item** in `HANDOFF.md`'s 「되는 것」 list.
@@ -1128,6 +1146,17 @@ Two things follow. His push problem and his notice-push problem have **different
 Two things to know before implementing it. His client sends `created_by` from the browser (`upstream:3831`) — ours must derive it server-side, because a client that can name the creator can claim someone else's row. And **he did not lock the kind selector**: there is no `aType.disabled` anywhere in his file, so nothing in his client stops a member from re-saving their 기타 as a 훈련. Whether his RLS catches that is not knowable from here. Ours must, and `using`/`with check` have to be closed as a pair for it to hold on UPDATE.
 
 **`activities.details` now carries canonical data, which revises the rule above it.** `historical_participants` (nickname array) and `historical_attendance` (nickname → status map) hold the club's paper attendance registers for trainings that predate the app. Unlike `participants`/`waitlist`/`offer` — still dead data, still rebuilt from `activity_applications` every load — these are **read-only canonical**: `index.html` reads them at `upstream:1300-1301` and writes them nowhere, so he backfills through the dashboard or SQL.
+
+**⚠ THE COPY OF THIS FILE IN YOUR CONTEXT MAY BE THE ONE THAT STILL SAYS THE WRONG THING.**
+On 2026-09-02 a session started on `main`, whose `CLAUDE.md` is 36KB against `dev`'s 111KB, and
+the retracted sentence below was injected into its context as current guidance. Switching to `dev`
+does **not** refresh what was already injected. That session then built migration `0051` on the
+cancelled premise, merged it with its UI, and reverted both — four PRs — while two teammates who
+had read the real file were independently telling it the premise was wrong.
+
+**So: work from `dev`, and when a claim in your injected copy is load-bearing, re-read that
+section from the file on disk before acting on it.** A paragraph that quotes and cancels itself is
+exactly the shape that survives in a stale copy as the un-cancelled half.
 
 **Our schema holds them already, and the sentence that used to stand here was wrong.** It said "our schema cannot hold them — `attendance.member_id` is a FK to `members`, so a past participant who never had an account cannot be stored at all." The FK asks for a **member row**, not an account, and a member row needs no `auth_user_id`. Measured 2026-08-26:
 
