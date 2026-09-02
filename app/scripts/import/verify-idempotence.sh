@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Does re-running the import leave the database alone?
 #
-#   bash scripts/import/verify-idempotence.sh <workbook.xlsx>
+#   bash scripts/import/verify-idempotence.sh                    the sheet in .env
+#   bash scripts/import/verify-idempotence.sh <workbook.xlsx>    a local file
+#   bash scripts/import/verify-idempotence.sh <url>              an explicit URL
+#
+# The no-argument form is the one that matters now that the import can run on a
+# schedule: it exercises the same source the scheduled run uses. A file argument
+# proves nothing about the URL path, which is a different fetch and a different
+# set of bytes.
 #
 # WHY THIS EXISTS RATHER THAN A UNIT TEST.
 #
@@ -32,11 +39,27 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Empty means "whatever import-club-workbook.sh resolves", which with no
+# argument is the published sheet named by EYSL_WORKBOOK_SHEET_ID in .env.
 WORKBOOK="${1:-}"
-if [ -z "$WORKBOOK" ] || [ ! -f "$WORKBOOK" ]; then
-  echo "usage: bash scripts/import/verify-idempotence.sh <workbook.xlsx>" >&2
-  exit 2
-fi
+case "$WORKBOOK" in
+  ''|http://*|https://*) ;;
+  *)
+    if [ ! -f "$WORKBOOK" ]; then
+      echo "usage: bash scripts/import/verify-idempotence.sh [<workbook.xlsx>|<url>]" >&2
+      exit 2
+    fi ;;
+esac
+
+# Same reason as the wrapper's: an empty positional must not become an empty
+# path argument under `set -u`.
+run_once() {
+  if [ -n "$WORKBOOK" ]; then
+    bash "$SCRIPT_DIR/import-club-workbook.sh" "$WORKBOOK" >/dev/null 2>&1
+  else
+    bash "$SCRIPT_DIR/import-club-workbook.sh" >/dev/null 2>&1
+  fi
+}
 
 # Every column the import writes, plus updated_at. If a rerun touches any of
 # them, this hash moves.
@@ -67,7 +90,7 @@ select coalesce(md5(string_agg(x, '|' order by x)), 'empty') from (
 fingerprint() { psql -tAX -c "$FINGERPRINT_SQL"; }
 
 echo "== run 1 =="
-bash "$SCRIPT_DIR/import-club-workbook.sh" "$WORKBOOK" >/dev/null 2>&1
+run_once
 BEFORE="$(fingerprint)"
 echo "fingerprint after run 1: $BEFORE"
 
@@ -76,7 +99,7 @@ echo "fingerprint after run 1: $BEFORE"
 sleep 1
 
 echo "== run 2 =="
-bash "$SCRIPT_DIR/import-club-workbook.sh" "$WORKBOOK" >/dev/null 2>&1
+run_once
 AFTER="$(fingerprint)"
 echo "fingerprint after run 2: $AFTER"
 

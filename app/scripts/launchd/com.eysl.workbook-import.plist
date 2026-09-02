@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  A TEMPLATE. Two values have to be edited before this will run, and both are
+  machine-specific, which is why they are not filled in here:
+
+    ProgramArguments  the absolute path to this checkout
+    PATH              the directory holding your node, and the one holding psql
+
+  Install it:
+
+    sed 's#__REPO__#'"$(cd /path/to/team-eysl && pwd -P)"'#' \
+      app/scripts/launchd/com.eysl.workbook-import.plist \
+      > ~/Library/LaunchAgents/com.eysl.workbook-import.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.eysl.workbook-import.plist
+
+  Check on it, run it now, remove it:
+
+    launchctl print gui/$(id -u)/com.eysl.workbook-import
+    launchctl kickstart -p gui/$(id -u)/com.eysl.workbook-import
+    launchctl bootout gui/$(id -u)/com.eysl.workbook-import
+
+  This is a LaunchAgent rather than a LaunchDaemon on purpose. A daemon runs as
+  root at boot and would need the .env — the database password and the
+  workbook's download link — readable outside the user's own home. The job has
+  no reason to hold more than the person who normally runs it by hand.
+
+  WHY NOT CRON. A crontab entry is shorter and would work. launchd wins on the
+  one behaviour that matters for a job on a laptop: RunAtLoad plus a calendar
+  interval means a run missed while the machine was asleep happens once at the
+  next login, whereas cron simply skips it and says nothing. The importer only
+  ever appends, so a late run is harmless and a silently skipped one is the
+  failure mode to avoid.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.eysl.workbook-import</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/app/scripts/import-club-workbook-scheduled.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <!--
+    launchd gives a job /usr/bin:/bin:/usr/sbin:/sbin and nothing else, which
+    has neither node nor psql. Edit both directories to match this machine:
+    `dirname "$(command -v node)"` and `dirname "$(command -v psql)"`. The
+    script also probes the usual locations, so getting this slightly wrong
+    degrades rather than breaks — but a job that finds no node fails every run
+    with a message nobody reads.
+  -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/opt/libpq/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!--
+    Mondays at 06:00. Weekly rather than nightly because the sheet is a club
+    register a human edits in bursts, and because every run that finds nothing
+    new still opens a pooler connection and downloads the workbook.
+  -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <!--
+    Catches up a run missed while the machine was asleep or logged out. It fires
+    at load too, so expect one run when you install this.
+  -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!--
+    NOT REDIRECTED TO A FILE HERE, deliberately. StandardOutPath and
+    StandardErrorPath are written by launchd with default permissions, and this
+    job's output is member data — the parser quotes spreadsheet rows in its
+    warnings. The script writes its own log under a umask of 077 instead. If a
+    run fails before the script reaches that log, `launchctl print` above shows
+    the last exit status.
+  -->
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
