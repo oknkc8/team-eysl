@@ -11,7 +11,11 @@ TEAM EYSL — a Korean swimming club's member/training-management PWA ("TEAM EYS
 - `index.html` (~3,850 lines) **is** the app: markup, all CSS (one `<style>` block), and all JS (five `<script>` blocks, ~270 flat global functions) in one file.
 - `sw.js` — service worker (network-first fetch, web push handling).
 - `manifest.webmanifest`, `icon-*.png` — PWA manifest/icons.
-- The legacy app has no build step of its own: no bundler, no framework, no tests. Most of `upstream`'s history is "Add files via upload" — **79 of 130 commits, measured 2026-08-31** — because the president maintains it by uploading edited files through the GitHub web UI. **He stopped doing that on 2026-08-26.** Every commit since 08-27 carries a real subject, 41 in a row, and 29 of them landed on 08-30 alone. Two commits are not his at all: `0149d73` and `bd3a7b4` are authored by **`team-eysl-bot`**, a GitHub Action he set up to patch the app shell directly. So "who wrote this" is now a question with two possible answers. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
+- The legacy app has no build step of its own: no bundler, no framework, no tests. Most of `upstream`'s history is "Add files via upload" — **79 commits, and that number has not moved since 2026-08-26** — because the president used to maintain it by uploading edited files through the GitHub web UI. **He stopped doing that on 2026-08-26.** Everything since carries a real subject. **Re-measured 2026-09-02: 164 commits total, of which 10 are `team-eysl-bot`'s** (it was 130 and 2 on 08-31 — he shipped 34 commits on 09-02 alone).
+
+*A survey agent reported 162 and 32 for these two the same afternoon. It was not wrong; it had fetched an hour earlier, before `v124`. **An upstream count is only true as of the fetch that produced it**, so record the fetch, not just the date — and re-fetch before quoting somebody else's number.*
+
+`team-eysl-bot` is a GitHub Action, and by 09-02 it is **the deployment mechanism rather than an occasional helper**: each feature now ships as a `.github/workflows/apply-vNNN.yml` plus a `scripts/patch_vNNN.py`, so a human commit ("Add vNNN shell patch") states the intent and a bot commit ("Enable X in app shell") performs it minutes later. So "who wrote this" has two answers, and **they mean different things** — read the human commit for what he wanted and the bot commit for what actually reached `index.html`. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
 - The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
 - **There is no linter.** `app/package.json` has no eslint dependency and no `lint` script — `npx eslint` silently resolves to an unrelated global v6.4.0 and fails on the config. The only gates that exist are `./node_modules/.bin/tsc --noEmit` (which reads `src` only), `./node_modules/.bin/tsc -p tsconfig.functions.json` (which reads `supabase/functions`), and `./node_modules/.bin/vitest run`. Do not claim a lint pass; three separate agents reported running one before this was checked.
 
@@ -204,14 +208,34 @@ Non-trivial feature work runs through a standing team of subagents, spawned in p
 |---|---|---|
 | Architect | `oh-my-claudecode:architect` (opus) | stack decisions, module boundaries, where authority lives |
 | PM | `oh-my-claudecode:planner` (opus) | scope, phasing, what ships in this slice |
-| DBA | `everything-claude-code:database-reviewer` | schema, RLS policies, constraints, migration safety |
+| DBA | `ecc:database-reviewer` | schema, RLS policies, constraints, migration safety |
 | UX | `oh-my-claudecode:designer` | IA, routes, component composition, states and save feedback |
-| Reviewer | codex `gpt-5.6-sol` via CLI | adversarial second opinion; see `<codex_delegation>` |
+| Reviewer | codex `gpt-5.6-luna` via CLI | adversarial second opinion; see `<codex_delegation>` |
+
+**Four of the five ship with plugins, and only one of those needs installing.** `architect`,
+`planner` and `designer` come from `oh-my-claudecode`, which is already present. The DBA does not:
+it lives in a marketplace that has since been **renamed**, so the agent id in the table is
+`ecc:database-reviewer` and not the `everything-claude-code:…` this file carried until 2026-09-02.
+
+```
+/plugin marketplace add affaan-m/ECC     # the repo redirects from affaan-m/everything-claude-code
+/plugin install ecc@ecc                  # marketplace "ecc", plugin "ecc"
+```
+
+**A missing agent does not announce itself as missing** — the brief simply never runs, and the
+role's work quietly becomes nobody's. Check the agent list before spawning the team, rather than
+after reading a plan with no schema review in it. Installing `ecc` also brings a **GateGuard hook**
+that demands a fact list before the first Bash command and before first touching each file; it is
+not a malfunction, and the facts it asks for are cheap on a file you have already read.
 
 Four things that cost real time when skipped:
 
 - **A teammate's idle notification is not a report.** Their final message does not reach the lead automatically — ask for the full deliverable via `SendMessage` (bare name, no `@session` suffix) or it is lost.
 - **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
+
+  **2026-09-02 is the cheapest example this project has.** An upstream survey came back with file:line evidence throughout and one confident conclusion: 자유게시판 is "완전히 새로운 기능, CLAUDE.md에 전혀 없음 … 우리 백로그에 없는 완전 신규 기능이라 별도 스코프 논의가 필요". Every word about *his* app was right. The claim about **ours** was wrong — we shipped it in `#13`, it has four components under `app/src/features/board/` and two migrations (`0033`, `0037`), and it is the **first item** in `HANDOFF.md`'s 「되는 것」 list.
+
+  The shape is worth naming, because "demand evidence" would not have caught it: the agent was asked to survey **upstream**, so it evidenced upstream thoroughly and asserted the *comparison* from memory. **An agent's evidence covers what you sent it to look at; the half of a comparison that lives on your side arrives unchecked.** Acting on it would have meant rebuilding a finished feature. One `git log --oneline | grep -i "free board"` refuted it.
 - **Hand out migration numbers up front; do not let agents pick.** Checking `ls` and the ledger immediately before writing narrows the race, it does not close it — `0020` and `0024` were each claimed twice on 2026-08-25, the second collision forty-eight seconds apart, by parties who had both just checked. Resolving it afterwards means renaming a file, deleting a ledger row and re-applying, with a window where the ledger and the directory disagree. Assign `0031` to one agent and `0032` to the next in their briefs, or give only one of them the task.
 
   **Where you look before handing a number out is the other half of the rule.** A local `ls` is not an answer — a worktree cannot see another worktree's unmerged files. That is exactly the 2026-08-26 failure: a directory listing was read in one worktree and the number judged free. There are two places to look.
@@ -228,7 +252,7 @@ Four things that cost real time when skipped:
 Every PR follows the same cycle, and it repeats without asking for approval between rounds:
 
 1. Open the PR (template filled, `/humanize-korean 가볍게` on the body).
-2. Self-review with codex: `gpt-5.6-sol`, `model_reasoning_effort=medium` for routine diffs, `high` when the diff touches auth, RLS, migrations, or money.
+2. Self-review with codex: `gpt-5.6-luna`, `model_reasoning_effort=medium` for routine diffs, `xhigh` when the diff touches auth, RLS, migrations, or money.
 3. Post the verdict as a PR comment — findings and their severity, in Korean.
 4. Fix every critical and high finding, push to the same branch, and note the fix in the thread.
 5. Merge into `dev` only when **all three** hold: CI is green, no critical or high finding is left open, and anything the change claims to do has actually been exercised (a migration applied and queried back, a screen loaded, a test run). Mediums and lows may ship with a note saying why they were deferred.
@@ -1171,13 +1195,20 @@ diff, then check that the file the diff touches is reachable.**
 
 ### Two changes to the gap list
 
-**활동 댓글 + 푸시 is a real gap, and it is his.** `activity-comments-v98.js` is one
-of the 10 that run: an `activity_comments` table, comments on the application screen
-of 훈련·대회·기타, and a `push-notify` call on each new comment. On our side
-`activity_comments`, `activityComment` and `ActivityComment` are **0 files** across
-the 155 under `app/src`, against `useState` at 37 files and `notice_comments` at 2
-as positive controls. The zero is real. It is already assigned —
-`feat/activity-comments` holds `0050`.
+**활동 댓글 + 푸시 was a real gap, and it is closed** (`#54`, merged 2026-08-31).
+`activity-comments-v98.js` is one of the sidecars that run on his side: an
+`activity_comments` table, comments on the application screen of 훈련·대회·기타, and a
+`push-notify` call on each new comment. Ours is `0050_activity_comments.sql` plus
+`schedule/api.ts` and `ActivityDetailPage.tsx`.
+
+**The count that proved the gap is the thing that had to be re-run, and for months it was not.**
+This paragraph carried "`activity_comments`, `activityComment` and `ActivityComment` are **0
+files** across the 155 under `app/src`" long after the merge made it three. The zero was true
+when written and false when read, and a 2026-09-02 review caught it only because a reviewer
+re-ran the count. **A measurement written into this file inherits the date it was taken**; when
+the PR that closes it lands, the sentence describing the gap is part of what that PR has to
+update. Note this one even named its own successor — "already assigned — `feat/activity-comments`
+holds `0050`" — and still nobody came back to it.
 
 **활동 취합본 runs the scope rule backwards: he deleted it, and we still have it.**
 `remove-aggregation-v113.js` strips the menu and the page with a MutationObserver,
@@ -1195,10 +1226,20 @@ defect to quietly fix.
 <codex_delegation>
 Global `~/.claude/CLAUDE.md` already carries the full ruleset — do not duplicate it here. Project-specific only:
 
-- Verified on this machine 2026-08-24: `codex-cli 0.147.0`, model `gpt-5.6-sol`.
+- Verified on this machine 2026-09-02: `codex-cli 0.152.0`. `~/.codex/config.toml` already sets `model = "gpt-5.6-luna"` and `model_reasoning_effort = "xhigh"` as the defaults, so **the canonical call below passes no `-m` and no effort override** — an explicit `-m gpt-5.6-sol -c model_reasoning_effort="high"` was what this file used to prescribe, and it silently overrode both, which is how review cost climbed without anyone choosing it. Pass a flag only to go *below* the default for a routine diff.
 - Background sessions on this repo are forced into a git worktree, where a `codex exec "$(cat prompt.md)"` written inline is refused ("too complex to verify"). Put the invocation in a wrapper `.sh` and run it as one plain command instead.
 - Canonical call (the `-o` artifact is the source of truth, never stdout):
-  `codex exec -m gpt-5.6-sol -c model_reasoning_effort="high" --json -o /path/verdict.txt "$PROMPT"`
+  `codex exec --json -o /path/verdict.txt "$PROMPT"` — for a routine diff, step down explicitly with `-c model_reasoning_effort="medium"`.
+
+  **That bare form is only correct on a machine whose `~/.codex/config.toml` has been set up, and that file is not in this repository.** It lives in the operator's home directory, so a fresh checkout on a new machine inherits whatever that machine's codex defaults happen to be — possibly a different model and a different effort, silently. **Check before trusting the bare call**, and set it if it is missing:
+
+```toml
+# ~/.codex/config.toml
+model = "gpt-5.6-luna"
+model_reasoning_effort = "xhigh"
+```
+
+  The reason to keep the flags out of the canonical call rather than pinning them inline is that pinning is what went wrong before: the line used to read `-m gpt-5.6-sol -c model_reasoning_effort="high"`, which overrode both defaults on every review and made the choice invisible. **Configure once where it is visible; do not re-specify per call.** This is the same "state which tree you checked" problem in another costume — a command that reads config the repo does not carry is a command whose behaviour the repo cannot promise.
 - 2026-08-24, this repo: the `codex:rescue` skill returned a contentless `"Complete."` twice in a row despite 51 real `tool_uses` and 10+ min runtime; a `SendMessage` resume produced the same. A *completed* status with an empty result means the delivery channel failed, not that the work is absent. One retry, then drop the codex track and verify load-bearing facts directly.
 - **A missing `-o` artifact is not a delivery failure.** The rule above turns on the word *completed*: until the run reports completion, an absent or short artifact is indistinguishable from work still in progress. Reading it as a failure nearly discarded eight minutes of a live #22 re-review on 2026-08-26. The cheapest discriminator is the log's mtime against the clock — **`stat -c '%n %s bytes  mtime %y' <log>`**, which works today. **`ls -l --time-style=…` does not**: it printed empty output for a file already known to exist, which reads exactly like "no such file". Where mtime is ambiguous, parse the `--json` log — a run still going ends on `item.started` / `command_execution` / `web_search` with only short `agent_message`s (139–206 chars), while the verdict is a single closing `agent_message` of several thousand.
 </codex_delegation>
