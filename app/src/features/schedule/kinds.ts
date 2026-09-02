@@ -30,3 +30,25 @@ export const KIND_LABEL: Record<ActivityKind, string> = {
 export function toKind(value: string): ActivityKind {
   return (ACTIVITY_KINDS as readonly string[]).includes(value) ? (value as ActivityKind) : 'race'
 }
+
+/**
+ * Whether a kind has a start and end time at all.
+ *
+ * A 대회 does not. A meet occupies a day and the times that matter are per-event
+ * and live in the entry, so `activities.start_time`/`end_time` are meaningless
+ * on it — the president reached the same conclusion in final124 and stopped
+ * rendering the two boxes for races (`race-time-fields-v124.js`).
+ *
+ * This is a statement about the kind rather than about the form, which is why it
+ * lives here next to KIND_LABEL: the edit screen uses it to decide what to
+ * render AND what to send, and those two must not be allowed to disagree. A
+ * screen that hides a control while still submitting its value is how a stale
+ * time survives a kind change.
+ *
+ * 기타 keeps its clock. Only 대회 is special, and the shape is `!== 'race'`
+ * rather than a list so a fourth kind — if the CHECK at 0001:50 ever gains one —
+ * arrives with a clock rather than silently without one.
+ */
+export function kindHasClock(kind: ActivityKind): boolean {
+  return kind !== 'race'
+}
