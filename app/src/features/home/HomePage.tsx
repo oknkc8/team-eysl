@@ -141,6 +141,16 @@ export function HomePage() {
               title="활동 취합본"
               desc="일정별 신청자와 대기자"
             />
+            {/* 회비는 두 종류이고 걷는 방식이 달라 화면도 둘로 나뉜다. 반기
+                회비는 회원마다 금액을 적고, 세션 참가비는 세션마다 금액을 정한
+                뒤 회원별로 냈는지만 표시한다. */}
+            <Tile to="/admin/dues" icon="₩" title="반기 회비 관리" desc="반기별 회원 납부 기록" />
+            <Tile
+              to="/admin/dues/sessions"
+              icon="◈"
+              title="세션 참가비 관리"
+              desc="훈련별 참가비와 납부 기록"
+            />
             <Tile to="/admin/records/new" icon="✎" title="기록 등록" desc="회원별 대회 기록 입력" />
             <Tile
               to="/admin/records/upload"
