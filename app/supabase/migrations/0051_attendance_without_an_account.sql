@@ -186,11 +186,33 @@ begin
 
   -- A name that belongs to a member must go through the member path, or the
   -- register grows two rows for one person and only one of them counts toward
-  -- anything. Nicknames are unique in `members` today, so the lookup is exact.
-  if exists (select 1 from public.members m where m.nickname = v_name) then
+  -- anything.
+  --
+  -- Compared through `lower()` because that is what uniqueness in `members`
+  -- actually means: the index is `members_nickname_lower_uq on (lower(nickname))`,
+  -- read out of the live catalogue rather than inferred from the column. A
+  -- case-sensitive `=` here would let a row named 'foo' sit beside member 'Foo'
+  -- — the check would pass and nothing downstream would ever recognise the two
+  -- as one person.
+  if exists (
+    select 1 from public.members m
+     where lower(m.nickname) = lower(v_name)
+  ) then
     raise exception 'that nickname belongs to a member; mark them by id'
       using errcode = '23505';
   end if;
+
+  -- THIS CHECK IS TIME-OF-CHECK-TO-TIME-OF-USE AND CANNOT BE MADE OTHERWISE.
+  -- No constraint spans `attendance` and `members`, so a signup committing
+  -- between this SELECT and the INSERT below still leaves a name-only row
+  -- shadowing a real member.
+  --
+  -- Kept anyway, because what it catches is the common case — staff typing the
+  -- name of somebody who already has an account — while the race needs a signup
+  -- inside the same moment. The consequence is bounded too: a duplicate register
+  -- row, which `attendance_link_name_v1` below exists to merge. It is not a
+  -- wrong count and not an authorisation hole. Written down so the next reader
+  -- does not mistake a filter for a guarantee.
 
   v_marker := public.current_member_id();
 
@@ -204,6 +226,97 @@ begin
         marked_by     = excluded.marked_by,
         updated_at    = now()
   returning * into v_row;
+
+  return v_row;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Linking a name-only row to the member it turned out to be.
+--
+-- THIS EXISTS BECAUSE THE DESIGN ABOVE CLAIMS IT. The comment on the aggregate
+-- policy says a paper-register row "counts once its person is linked", and a
+-- claim like that is not free: without this function the only way to link is a
+-- bare UPDATE, and a bare UPDATE hits `attendance_one_row_per_member` with a
+-- raw 23505 the moment that member already has a row for the same activity.
+-- That collision is not exotic — it is what happens whenever somebody was
+-- marked on paper AND marked again in the app, which is the ordinary state of
+-- any training that straddles the two systems.
+--
+-- So the merge is the point, not the update. Both rows describe one person at
+-- one activity and exactly one may survive.
+--
+-- WHICH ONE WINS. The member row does, and its status is kept. The name-only
+-- row is the older, hand-copied record; the member row was entered in the app by
+-- staff who were looking at the pool. When they disagree, the later and more
+-- direct observation is the one to believe. The discarded value is reported back
+-- so a caller can say what it dropped rather than silently choosing.
+create or replace function public.attendance_link_name_v1(
+  p_activity_id  uuid,
+  p_display_name text,
+  p_member_id    uuid
+)
+returns public.attendance
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_name    text;
+  v_named   public.attendance;
+  v_member  public.attendance;
+  v_row     public.attendance;
+begin
+  if not public.is_staff() then
+    raise exception 'only staff may link attendance' using errcode = '42501';
+  end if;
+
+  v_name := nullif(btrim(p_display_name), '');
+  if v_name is null or p_member_id is null then
+    raise exception 'activity, name and member are all required' using errcode = '22023';
+  end if;
+
+  -- Locked in a fixed order — the name-only row first, then the member row —
+  -- so two staffers linking the same person cannot deadlock against each other.
+  -- The order is by role rather than by id because it has to be reproducible
+  -- from reading this function, which a uuid comparison would not be.
+  select * into v_named
+    from public.attendance
+   where activity_id = p_activity_id
+     and member_id is null
+     and display_name = v_name
+     for update;
+
+  if not found then
+    raise exception 'no unlinked attendance named % at that activity', v_name
+      using errcode = 'P0002';
+  end if;
+
+  select * into v_member
+    from public.attendance
+   where activity_id = p_activity_id
+     and member_id = p_member_id
+     for update;
+
+  if found then
+    -- Both exist. Keep the member row, drop the copy, and report what was lost.
+    delete from public.attendance where id = v_named.id;
+
+    if v_named.status is distinct from v_member.status then
+      raise notice 'discarded paper status % for % in favour of %',
+        v_named.status, v_name, v_member.status;
+    end if;
+
+    v_row := v_member;
+  else
+    -- Only the name row exists, so linking is the plain case: fill in the
+    -- member and clear the name. `display_name` is cleared rather than kept
+    -- because the row now has a better name — `members.nickname` — and leaving
+    -- a stale copy is how the two drift when somebody renames themselves.
+    update public.attendance
+       set member_id    = p_member_id,
+           display_name = null,
+           updated_at   = now()
+     where id = v_named.id
+    returning * into v_row;
+  end if;
 
   return v_row;
 end $$;
@@ -287,3 +400,4 @@ $function$;
 grant execute on function public.attendance_for_activity_v1(uuid) to authenticated;
 grant execute on function public.attendance_mark_v1(uuid, uuid, text, boolean) to authenticated;
 grant execute on function public.attendance_mark_name_v1(uuid, text, text, boolean) to authenticated;
+grant execute on function public.attendance_link_name_v1(uuid, text, uuid) to authenticated;
