@@ -76,6 +76,207 @@ const trainingKey = (date: string) => `training:${date}`
 const raceKey = (category: string, date: string, name: string) =>
   `race:${category}:${date}:${name}`
 
+// ------------------------------------------------------- the double-count guard
+//
+// EMITTED INTO THE SQL RATHER THAN CHECKED IN NODE, because run.ts opens no
+// database connection at all — it writes a script to stdout and psql runs it.
+// A guard in the generator can only see the spreadsheet; the counters it has to
+// read live in the database, so the check has to travel with the statements.
+//
+// Placed immediately after `begin;` and before the first write, so a refusal
+// aborts the transaction with nothing done rather than half of it.
+//
+// WHAT IT IS GUARDING AGAINST. team_event_rankings_v1 computes TWO lifetime
+// tallies, and both of them add a legacy counter (0016:154-157):
+//
+//   lifetime_present = historical_attendance_count_legacy + count(present|late)
+//   lifetime_late    = historical_late_count_legacy       + count(late)
+//
+// Those columns are the club's paper totals for the period before the app, and
+// this import loads the per-date grid they summarise. So a member holding a
+// non-zero counter is counted twice. Nothing errors, no screen looks wrong, and
+// the numbers are simply too big — which is why 지각왕 is the more dangerous of
+// the pair: a doubled late count is small enough to stay plausible.
+//
+// BOTH COUNTERS ARE READ, and checking only the attendance one would miss half
+// of it. A period the LATE counter already covers double-counts 지각왕 exactly
+// as silently.
+//
+// BLAST RADIUS — four of the six ranking buckets are unaffected. The legacy
+// terms appear at 0016:154-157 and nowhere else; h1_present, h2_present,
+// h1_late and h2_late (0016:158-169) are computed purely from `marks` with no
+// legacy term, so the half-year rankings stay correct.
+//
+// Note what that does NOT say. All six metric/period pairs ARE exposed — the
+// unpivot at 0016:176-181 emits attendance and late for lifetime, h1 and h2
+// alike, and `pairs` guarantees each one reaches the client. So the correct
+// statement is "only the two lifetime buckets carry a legacy term", not "only
+// the lifetime buckets are exposed". Same conclusion about the damage, opposite
+// reason, and the wrong version would tell the next reader that h1/h2 never
+// reach a screen.
+//
+// TODAY IT CANNOT FIRE. Measured 2026-09-03 against the dev database: 47
+// members, of which 0 carry a non-zero historical_attendance_count_legacy and 0
+// carry a non-zero historical_late_count_legacy — the maximum of both columns
+// is 0. toSql.ts also inserts new members with both counters at 0 on purpose;
+// see the note on the members INSERT.
+//
+// SO IT IS A TRIPWIRE, NOT DEAD WEIGHT. It exists for the day somebody
+// backfills those counters from the sheet — the 상반기/지각/하반기/지각 columns
+// are sitting right there in ☆명단(출석부) — and then re-runs the importer. A
+// future reader who finds that it has never fired should leave it alone: never
+// firing is what a working tripwire looks like.
+//
+// It reads only pre-existing members, which is the correct set: the members
+// INSERT below is `on conflict ... do nothing`, so a row that already carries a
+// non-zero counter keeps it, and one this import creates starts at zero.
+
+function doubleCountGuard(data: ClubData): string[] {
+  if (data.attendance.length === 0) return []
+
+  // Lowercased and deduplicated to match the attendance INSERT's join, which is
+  // `lower(m.nickname) = lower(v.nickname)`. A guard keyed differently from the
+  // write it guards would pass on exactly the rows the write then loads.
+  const nicknames = [...new Set(data.attendance.map((a) => a.nickname.toLowerCase()))].sort()
+
+  const chunks: string[] = []
+  for (let i = 0; i < nicknames.length; i += 4) {
+    chunks.push('      ' + nicknames.slice(i, i + 4).map(lit).join(', '))
+  }
+
+  const message = [
+    'refusing to import: the attendance grid names member(s) whose legacy counters are',
+    'already non-zero, and loading it would double-count them silently.',
+    '',
+    '  %',
+    '',
+    'team_event_rankings_v1 (0016:154-157) ADDS historical_attendance_count_legacy to',
+    'lifetime_present and historical_late_count_legacy to lifetime_late. This import loads',
+    'the per-date grid those counters summarise, so a member holding either is counted',
+    'twice, with no error and nothing on screen that looks wrong. The half-year buckets',
+    '(0016:158-169) carry no legacy term and stay correct; the two lifetime ones do not.',
+    '',
+    'Zero the two counters for the members named above, then re-run. Nothing has been',
+    'written: this ran before the first insert and the transaction is aborting.',
+  ].join('\n')
+
+  return [
+    '-- Double-count guard. See the long note in toSql.ts; normally silent.',
+    'do $$',
+    'declare',
+    '  v_offenders text;',
+    'begin',
+    "  select string_agg(m.nickname, ', ' order by m.nickname)",
+    '    into v_offenders',
+    '    from public.members m',
+    '   where lower(m.nickname) in (',
+    chunks.join(',\n'),
+    '   )',
+    '     and coalesce(m.historical_attendance_count_legacy, 0)',
+    '       + coalesce(m.historical_late_count_legacy, 0) <> 0;',
+    '  if v_offenders is not null then',
+    `    raise exception '${message.replace(/'/g, "''")}', v_offenders;`,
+    '  end if;',
+    'end $$;',
+    '',
+  ]
+}
+
+// -------------------------------------------------- the identity-drift guard
+//
+// FOUND BY RUNNING THE IMPORT, NOT BY READING IT (2026-09-02). Re-importing the
+// published sheet against a dev database that already held it created SIX new
+// members — and four of them matched a member already there on BOTH real_name
+// and birth_date_text. Four people now existed twice, with 46 attendance rows
+// and part of 66 records filed against the copy. Every statement had said
+// `INSERT 0 0` the run before; nothing errored; the row counts simply grew.
+//
+// THE CAUSE IS THAT THE IMPORT'S IDENTITY KEY IS A CELL A PERSON EDITS.
+// `on conflict (lower(nickname)) do nothing` makes nickname the identity, and
+// parse.ts derives nickname from the sheet's 짧은이름 column. Change that cell —
+// which is an ordinary thing for the president to do — and the same human
+// becomes a different member as far as this import is concerned. It is the
+// lesson CLAUDE.md already records about cleanup.sql's `marked_by`, in a new
+// place: a mutable column is not evidence of identity.
+//
+// It matters far more now than it did. As a thing somebody runs by hand once,
+// this was a rare mistake with a person watching the counts. On a schedule it
+// is an unattended job that silently duplicates a member every time a name is
+// tidied, and the duplicates are what 랭킹 and 출석 then count.
+//
+// SO THE GUARD REFUSES RATHER THAN REPAIRS. Merging two member rows, or
+// renaming one, decides where somebody's attendance and records live — that is
+// a person's call, not an importer's. What the importer owes is to stop where
+// somebody is looking instead of appending a second copy of a member quietly.
+//
+// TWO LIMITS, BOTH REAL:
+//
+//   - It only sees a member carrying both a real name and a birth date in the
+//     sheet. A row missing either is not compared, and could still duplicate.
+//   - real_name is editable in the app through set_my_real_name. A member who
+//     has corrected their own name no longer matches the sheet's spelling, so
+//     the guard cannot see that pair. birth_date_text has no such path today,
+//     which is why the match needs both rather than either.
+//
+// It is therefore a tripwire for the common case, not a proof of uniqueness.
+// The real repair is an identity the sheet cannot rewrite — a stable member
+// number, which the sheet does have as 번호 and which nothing currently loads.
+// That is a schema change and belongs to whoever picks this up next.
+
+function identityDriftGuard(data: ClubData): string[] {
+  const rows = data.members.filter((m) => m.realName !== '' && m.birthDateText !== '')
+  if (rows.length === 0) return []
+
+  return [
+    '-- Identity-drift guard. See the long note in toSql.ts; normally silent.',
+    'do $$',
+    'declare',
+    '  v_offenders text;',
+    'begin',
+    "  select string_agg(v.nickname || ' (already present as ' || m.nickname || ')', ', '",
+    '                    order by v.nickname)',
+    '    into v_offenders',
+    '    from (values',
+    rows
+      .map(
+        (m) =>
+          `      (${lit(m.nickname)}, ${lit(m.realName)}, ${lit(m.birthDateText)})`,
+      )
+      .join(',\n'),
+    '    ) as v(nickname, real_name, birth_date_text)',
+    '    join public.members m',
+    '      on m.real_name = v.real_name',
+    '     and m.birth_date_text = v.birth_date_text',
+    '     and lower(m.nickname) <> lower(v.nickname)',
+    // Only rows that would actually insert. Where the nickname already exists,
+    // `do nothing` applies and no second copy can be created — flagging those
+    // would fire on every run for the pair that legitimately shares a short
+    // name and got a disambiguated nickname.
+    '   where not exists (select 1 from public.members e',
+    '                      where lower(e.nickname) = lower(v.nickname));',
+    '  if v_offenders is not null then',
+    `    raise exception '${IDENTITY_DRIFT_MESSAGE.replace(/'/g, "''")}', v_offenders;`,
+    '  end if;',
+    'end $$;',
+    '',
+  ]
+}
+
+const IDENTITY_DRIFT_MESSAGE = [
+  'refusing to import: the sheet names member(s) who are already in the database under a',
+  'different nickname, and loading them would create a second copy of the same person.',
+  '',
+  '  %',
+  '',
+  'The import identifies a member by nickname, which parse.ts derives from the sheet 짧은이름',
+  'column. Editing that cell therefore turns an existing member into a new one, and their',
+  'attendance and records are filed against the copy. Matched here on real name AND birth date.',
+  '',
+  'Decide what should happen, because the importer cannot: either rename the existing member',
+  'row to the sheet spelling (the usual answer, and it keeps their history), or rename the',
+  'sheet back. Nothing has been written: this ran before the first insert.',
+].join('\n')
+
 // ----------------------------------------------------------------- the script
 
 export function toSql(data: ClubData, options: SqlOptions = {}): string {
@@ -91,6 +292,9 @@ export function toSql(data: ClubData, options: SqlOptions = {}): string {
   out.push('\\set ON_ERROR_STOP on')
   out.push('begin;')
   out.push('')
+
+  out.push(...doubleCountGuard(data))
+  out.push(...identityDriftGuard(data))
 
   // -------------------------------------------------------------- marked_by
   //
