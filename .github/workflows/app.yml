@@ -55,6 +55,35 @@ jobs:
       - name: Migration numbers are unique
         run: ./scripts/check-migration-numbers.sh
 
+      # package.json and package-lock.json must agree about the version.
+      #
+      # This is the drift that got through twice. A release bumps package.json on
+      # the release branch, that branch merges to main, and dev keeps the old
+      # number — while the lock drifts separately and by a different amount: at
+      # v0.2.0 and v0.3.0 the lock still said 0.1.0 after package.json had moved
+      # twice. Both times it was found by a person comparing two files by hand,
+      # and the second time was on the very release cut to end the first.
+      #
+      # `npm ci` does not catch it. It compares the dependency tree, and these
+      # two `version` fields are not part of that — the tree was byte-identical
+      # across the fix. So the check has to be its own step.
+      #
+      # It cannot see whether dev matches the latest TAG, which is the other half
+      # of the drift; that still needs the carry-back PR named in CLAUDE.md. What
+      # it does close is the half that lives inside one commit, and it closes it
+      # before review rather than after release.
+      - name: package.json and package-lock.json agree on the version
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          LOCK=$(node -p "require('./package-lock.json').version")
+          NESTED=$(node -p "require('./package-lock.json').packages[''].version")
+          if [ "$PKG" != "$LOCK" ] || [ "$PKG" != "$NESTED" ]; then
+            echo "::error::version fields disagree — package.json=$PKG lock=$LOCK lock.packages['']=$NESTED"
+            echo "::error::a release bumps all three; see the release section of CLAUDE.md"
+            exit 1
+          fi
+          echo "ok: all three version fields are $PKG"
+
       - uses: actions/setup-node@v4
         with:
           # Matches the version this project is developed on (v24.14.1). There is
