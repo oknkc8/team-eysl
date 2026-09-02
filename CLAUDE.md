@@ -267,6 +267,20 @@ Four things that cost real time when skipped:
   **And a duplicated number raises no error anywhere today.** `schema_migrations` is keyed on the full filename rather than the number, so `0036_a.sql` and `0036_b.sql` sit down as two perfectly ordinary rows. Nothing complains on apply, in CI, or in review — which is a gap in CI rather than a law of nature, since a duplicate numeric prefix is trivially detectable by a machine that looks once. Until that check exists, reading the filenames side by side is what finds it. The number is still the lead's to assign; these are the places to look before assigning one.
 - **Never reconstruct a function body from a report.** `CREATE OR REPLACE` on an existing function is the same trap as porting the result parser: writing 0024 from a teammate's description silently dropped `p_user_agent` and changed the conflict target from `(member_id, endpoint)` to `(endpoint)` — the first would have broken the client's call, the second the device cap, and both would have applied cleanly. Read the current definition out of the migration that owns it and change only the line you came to change.
 
+  **And "the migration that owns it" is the LATEST one, which is not the one that introduced the thing you are preserving.** 2026-09-03, `0054`: the lead told an agent to restore `enqueue_object_deletion`'s comment from "the migration that added the advisory lock" — `0040`. That pointer was wrong in the most expensive available direction. `0040` carries the *superseded* deadlock bound ("two concurrent MULTI-row deletes"), and `0046` exists precisely to correct it to "any two transactions touching the same two paths in opposite orders". Following the instruction would have restored one correction while **re-introducing the error behind the other** — and the diff would have looked like a faithful restoration.
+
+  The agent noticed because it measured instead of trusting the pointer:
+
+```
+0036  117 lines  advisory_lock=False   <- predates the lock
+0040  250 lines  advisory_lock=True    <- lock added here, narrow bound
+0046   71 lines  advisory_lock=True    <- lock + BOTH corrections
+```
+
+  So the rule has a second half. **Find the owner by walking every migration that touches the object and taking the last one, not by remembering which one introduced the feature.** A comment block that records corrections is exactly the kind that gets restored from the wrong generation, because the older version reads as authoritative — it is longer, it introduced the mechanism, and nothing in it says it was later found wrong.
+
+  The same agent then verified the restoration mechanically rather than by eye: it asserted two sentences unique to `0046`'s version were present in what it copied, made exactly two changes, and diffed to show **seven differing lines, all of them its own**. That is the check to copy — not "it looks restored" but "here is every line that differs, and here is why each one does".
+
 ## PR review loop
 
 Every PR follows the same cycle, and it repeats without asking for approval between rounds:
@@ -322,6 +336,14 @@ Three later cases sharpened the same rule, each one a thing that reading the cod
 
 It was found by planting stale offers and waiting for a real scheduled tick. **A scheduled job is only verified by a run that had something to do.**
 
+**A trap recorded here was itself produced by a trap recorded here, and the retraction is the entry.** On 2026-09-03 this section briefly carried a paragraph saying `scripts/migrate.sh` has no `set -e`, so a missing `psql` let it run to the end, print `done: 0 applied` and exit 0. **Every part of that was false.** `_env.sh:3` runs `set -euo pipefail` in the calling shell, `migrate.sh` sources it before any psql call, and the original aborts with 127 — verified by running it from a path where its globs resolve.
+
+The measurement that produced the false claim was `./scripts/migrate.sh 2>&1 | tail -20`, read as exit 0. **A pipeline's status is the last command's**, which was `tail`. That is the trap described two paragraphs below this one, and it was walked into while writing a paragraph about a different one.
+
+Two things to take from it. **A pipe on the left of a status check invalidates the check**, and knowing that is not the same as remembering it at the moment you are busy proving something else — so make the exit-code read a separate, unpiped command whenever the exit code is the finding. And **a first reproduction that is convenient is not a reproduction**: a later attempt, copying the script to `/tmp`, "confirmed" exit 0 for a third reason entirely — the copy's relative path to `supabase/migrations` no longer resolved, so the loop found nothing and returned before any failure. Two different accidents produced the same wrong answer before the script was finally run where its own paths worked.
+
+What survives is small and real: `psql` is keg-only on this machine, so the bare command is missing from PATH, and `migrate.sh` now says so by name rather than leaving a reader to read `command not found` as a connection problem.
+
 **A view's grants are the whole gate.** `authenticated=arwdDxtm` on a table is unremarkable — RLS is what refuses. The identical string on a view means the opposite, because there is no RLS behind it: `member_public_v` was auto-updatable, DEFINER-mode, exposed `role`, and let any approved member PATCH themselves to `master_admin` (closed in `0019`). Three grant audits printed that string and read it as ordinary. When auditing, **split views from tables and read them under different rules.**
 
 **`npx tsc --noEmit` does not report the truth on this machine.** A wrapper rewrites its output to "TypeScript compilation completed" and swallows real errors; twelve of them sat behind that for hours while `npm run build` was failing. Run `./node_modules/.bin/tsc --noEmit` and check the exit code. The same caution applies to any tool whose output looks suspiciously tidy.
@@ -336,7 +358,11 @@ This is the most dangerous tool failure on the list, because every other one ann
 
 **The same wrapper rewrites `git` and `gh`, and it invents plausible answers rather than failing.** Verified 2026-08-26: `git status --short` printed the single word `ok` in a clean tree, and `gh pr list --state open --json …` printed `[]` while PR #8 was open — `gh pr list --state all` printed `[]` too, so even "there have never been any PRs" was on offer. The GitHub API returned the PR immediately.
 
-`[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Prefix with `rtk proxy` to get the real output, or ask the GitHub API directly. Never let a wrapper's empty listing be the reason you skipped a step.
+`[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Ask the GitHub API directly, or read git through a Python `subprocess.run`, which nothing sits in front of. Never let a wrapper's empty listing be the reason you skipped a step.
+
+**Do not reach for `rtk proxy`. It is not installed on this machine** — `command -v rtk` finds nothing (verified 2026-09-03), and earlier revisions of this file prescribed it here and below as the remedy. That advice was worse than useless: `rtk proxy git status --short 2>/dev/null` exits non-zero with **empty stdout**, which is indistinguishable from a clean tree, so the prescribed cure reproduces the exact disease — and more quietly, because whoever ran it believes they took the precaution. Measured the same minute: the rtk form returned nothing while `subprocess.run(['git','status','--porcelain'])` returned two untracked files.
+
+Two rules fall out. **Never write `2>/dev/null` on a command whose emptiness is load-bearing** — that flag is what turns "the command does not exist" into "there is nothing there". And when a negative result is about to justify skipping a step, get it from a second tool that has no wrapper in its path.
 
 **`gh pr create` invents a reason rather than failing.** Two measurements on 2026-08-26. It answered `No commits between dev and <branch>` for a branch that was genuinely one commit ahead — `gh api repos/oknkc8/team-eysl/compare/dev...<branch>` returned `{"status":"ahead","ahead_by":1}` at the same moment. And it answered `Head sha can't be blank, Base sha can't be blank, … Head ref must be a branch` for two refs that both existed on the remote.
 
@@ -475,7 +501,7 @@ The two look identical on the terminal and share no cause: one is the anchor mov
 
 **`ps` is the worst of these, and the reason is that its lie is the answer you wanted.** `git status` printing `ok` is obviously not git's output. `gh pr list` printing `[]` at least looks odd for a repo with open PRs. But `ps | grep <anything>` returning nothing looks exactly like *"that program is not running"* — so it **confirms rather than contradicts**, and an investigation stops. Every "I checked, nothing was running" in this project's history was produced this way.
 
-**Read `/proc` instead.** `ls -d /proc/[0-9]* | wc -l` for a count, `/proc/<pid>/comm` and `/proc/<pid>/cmdline` for what a process is. Nothing sits between those files and the truth. `rtk proxy ps` also works, but it puts a wrapper in the path and wrappers are the subject.
+**Read `/proc` instead.** `ls -d /proc/[0-9]* | wc -l` for a count, `/proc/<pid>/comm` and `/proc/<pid>/cmdline` for what a process is. Nothing sits between those files and the truth. (An earlier revision offered `rtk proxy ps` as a second option here; `rtk` is not installed on this machine — see the git/gh section above. And `/proc` is Linux: this project is developed on darwin, where those paths do not exist, so on macOS read processes through a Python `subprocess.run(['ps', ...])` instead.)
 
 **And the interception depends on how the command is invoked, which is why two people measuring the same thing disagree.** Measured on 2026-08-26, same shell, seconds apart:
 
@@ -517,6 +543,21 @@ Every other trap in this section is a tool answering about the wrong input. This
 Grep for what you mean — `vitest run 2>&1 | grep -E "Test Files|Tests "` — and never take the last N lines of a summary whose failure line comes first.
 
 **And the thing that actually caught it was arithmetic, not output.** 532 was lower than the 555 from before the merge, and a merge that adds a migration cannot remove tests. Had the numbers happened to line up, the run would have been reported green. So: **a count that moved the wrong way is a failure to investigate, not a curiosity.** Three separate agents arrived at that habit on 2026-08-26 — a test tally, a column count going 9 to 10, and this — which makes it the most reliable check any of us has, and it is not a check at all. It is noticing.
+
+**A failed vitest HOOK reports its file's tests as SKIPPED, not failed, and the summary still reads mostly green.** Measured 2026-09-03, by three agents independently:
+
+```
+ FAIL  src/app/router.test.ts
+ Error: Hook timed out in 10000ms.        <- a beforeAll, not an assertion
+ Test Files  1 failed | 43 passed (44)
+      Tests  725 passed | 55 skipped (780)
+```
+
+**781 became 725 and nothing said "failed" about a single test.** The 55 are that file's whole suite, and `skipped` is the word vitest uses for tests a broken hook never reached. Read past the file line and the run looks like a healthy suite that happens to skip a few.
+
+The cause was load, not code: `router.test.ts`'s `beforeAll` dynamically imports the router, which eagerly imports every page, and with several agents on one machine that exceeds vitest's 10s default. Each of the three ruled out their own change by removing it and watching the failure persist, and it passes alone (55/55) and at a raised timeout (781/781). `hookTimeout: 30_000` is now in `vite.config.ts` rather than on anybody's command line, because CI runs the bare `npm test` on a shared runner and meets the same wall with nobody watching.
+
+The transferable part is not the timeout. It is that **`skipped` is a failure word here**, and that the arithmetic caught it again: 781 → 725 is a count that moved the wrong way, which the paragraph above already names as the most reliable check any of us has.
 
 **A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
 
