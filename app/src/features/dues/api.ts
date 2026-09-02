@@ -77,6 +77,7 @@ export type MyDuesRow = {
   half: Half
   due_amount: number
   /** What a staffer entered. NOT what the club received — see the header. */
+  has_payment: boolean
   paid_amount: number
   paid_on: string | null
 }
@@ -97,6 +98,7 @@ export type DuesRosterRow = {
   short_name: string | null
   avatar_path: string | null
   due_amount: number
+  has_payment: boolean
   paid_amount: number
   paid_on: string | null
   note: string | null

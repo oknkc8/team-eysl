@@ -133,10 +133,29 @@ function PeriodForm({ periods }: { periods: DuesPeriod[] }) {
     setHalf(suggested.half)
   }, [suggested, touched])
 
+  // The period this form is about, if it already exists.
+  //
+  // WITHOUT THIS THE AMOUNT COULD NEVER BE CORRECTED. save_dues_period_v1 has an
+  // update path, and this form always sent null, so submitting an existing
+  // (year, half) hit the duplicate refusal. The only visible recovery was to
+  // DELETE the period and recreate it — which cascades every payment recorded
+  // against it. Setting 2026 하반기 to 5,000 by mistake, keying in twenty
+  // members, then noticing it should be 50,000 meant destroying twenty payment
+  // records to fix one number.
+  //
+  // Matched on (year, half) rather than tracked in state because the form is
+  // pre-filled from the data and the staffer may type their way onto an
+  // existing half; the question "does this one exist" has to be asked of the
+  // values in the fields, not of how they got there.
+  const existing = useMemo(
+    () => periods.find((p) => p.year === Number(year) && p.half === half) ?? null,
+    [periods, year, half],
+  )
+
   const save = useMutation({
     mutationFn: () =>
       saveDuesPeriod({
-        periodId: null,
+        periodId: existing?.period_id ?? null,
         year: Number(year),
         half,
         amount: Number(amount),
@@ -165,7 +184,19 @@ function PeriodForm({ periods }: { periods: DuesPeriod[] }) {
 
   return (
     <section className="card">
-      <h2>새 반기 등록</h2>
+      <h2>{existing ? '반기 회비 수정' : '새 반기 등록'}</h2>
+      {/* The form pre-fills the next unused half, so landing on an existing one
+          means the staffer typed their way there — and a button still saying
+          「등록」 would let them overwrite an amount believing they were adding a
+          period. Naming it is the whole of the fix; the payments themselves are
+          untouched either way, which is the point of using the update path
+          rather than delete-and-recreate. */}
+      {existing ? (
+        <p className="muted">
+          {existing.year}년 {existing.half === 1 ? '상반기' : '하반기'}가 이미 있습니다. 저장하면 금액만
+          바뀌고 이미 기록된 납부는 그대로 남습니다.
+        </p>
+      ) : null}
 
       <div className="formrow">
         <div className="field">
@@ -218,7 +249,7 @@ function PeriodForm({ periods }: { periods: DuesPeriod[] }) {
 
       <div className="actions">
         <button className="btn" disabled={!valid || save.isPending} onClick={() => save.mutate()}>
-          {save.isPending ? '저장 중…' : '등록'}
+          {save.isPending ? '저장 중…' : existing ? '금액 수정' : '등록'}
         </button>
         {message && (
           <p role="alert" className="authMsg error">

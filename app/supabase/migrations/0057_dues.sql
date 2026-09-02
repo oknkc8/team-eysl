@@ -382,6 +382,7 @@ returns table (
   year        int,
   half        int,
   due_amount  int,
+  has_payment boolean,
   paid_amount int,
   paid_on     date
 )
@@ -410,6 +411,18 @@ begin
            d.year,
            d.half,
            d.amount,
+           -- THE ROW'S EXISTENCE, NOT ITS SIZE. Without this the client has to
+           -- infer presence from `paid_amount > 0`, and a payment recorded as 0
+           -- then reads as no payment at all: the screen says 「납부 기록 없음」
+           -- about a row that exists, and hides the control that would remove
+           -- it. The whole design of this feature rests on absence, 0 and N
+           -- being three different facts, and inferring the first from the
+           -- second collapses two of them.
+           --
+           -- my_activity_fees_v1 already returns exactly this as `paid`; the
+           -- half-year side simply did not, and the asymmetry is what let the
+           -- defect through.
+           p.member_id is not null,
            coalesce(p.amount, 0),
            p.paid_on
       from public.dues_periods d
@@ -486,6 +499,7 @@ returns table (
   short_name  text,
   avatar_path text,
   due_amount  int,
+  has_payment boolean,
   paid_amount int,
   paid_on     date,
   note        text
@@ -534,6 +548,10 @@ begin
            v.short_name,
            v.avatar_path,
            v_amount,
+           -- Presence, not size. See the note in my_dues_summary_v1: a payment
+           -- recorded as 0 is a row, and inferring presence from the amount
+           -- makes it invisible to the screen that would remove it.
+           p.member_id is not null,
            coalesce(p.amount, 0),
            p.paid_on,
            p.note

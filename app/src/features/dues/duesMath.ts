@@ -38,6 +38,21 @@ export type Half = 1 | 2
 
 /** A row of `my_dues_summary_v1`, narrowed to what the arithmetic needs. */
 export type DuesAmounts = {
+  /**
+   * Whether a payment ROW EXISTS, which is not the same question as whether the
+   * amount is above zero, and conflating them is what this field exists to stop.
+   *
+   * A staffer can record 0 — 「참석했지만 받지 않음」 is a real fact the sheet
+   * carries. Inferring presence from `paid_amount > 0` made that row read as no
+   * record at all: the screen said 「납부 기록 없음」 about a row that existed and
+   * then hid the control that would have removed it. The row was invisible and
+   * unremovable, which is the worst of both readings.
+   *
+   * The server answers it now (`p.member_id is not null`), the same way
+   * my_activity_fees_v1 always did for session fees. That asymmetry between the
+   * two halves of this feature is what let the defect through.
+   */
+  has_payment: boolean
   due_amount: number
   paid_amount: number
 }
@@ -90,7 +105,7 @@ export function periodLabel(year: number, half: Half): string {
  * establish.
  */
 export function hasRecordedPayment(row: DuesAmounts): boolean {
-  return row.paid_amount > 0
+  return row.has_payment
 }
 
 /**

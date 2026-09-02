@@ -59,30 +59,30 @@ describe('hasRecordedPayment', () => {
   it('asks whether anything was entered, not whether the charge was met', () => {
     // A PARTIAL entry counts as recorded. Comparing against due_amount instead
     // would make this false and would assert a shortfall the data cannot show.
-    expect(hasRecordedPayment({ due_amount: 50000, paid_amount: 30000 })).toBe(true)
-    expect(hasRecordedPayment({ due_amount: 50000, paid_amount: 50000 })).toBe(true)
-    expect(hasRecordedPayment({ due_amount: 50000, paid_amount: 1 })).toBe(true)
+    expect(hasRecordedPayment({ due_amount: 50000, has_payment: true, paid_amount: 30000 })).toBe(true)
+    expect(hasRecordedPayment({ due_amount: 50000, has_payment: true, paid_amount: 50000 })).toBe(true)
+    expect(hasRecordedPayment({ due_amount: 50000, has_payment: true, paid_amount: 1 })).toBe(true)
   })
 
   it('is false only when nothing has been entered', () => {
-    expect(hasRecordedPayment({ due_amount: 50000, paid_amount: 0 })).toBe(false)
+    expect(hasRecordedPayment({ due_amount: 50000, has_payment: false, paid_amount: 0 })).toBe(false)
   })
 })
 
 describe('recordLabel', () => {
   it('describes the record and never adjudicates a debt', () => {
-    expect(recordLabel({ due_amount: 50000, paid_amount: 30000 })).toBe('납부 기록 있음')
-    expect(recordLabel({ due_amount: 50000, paid_amount: 0 })).toBe('납부 기록 없음')
+    expect(recordLabel({ due_amount: 50000, has_payment: true, paid_amount: 30000 })).toBe('납부 기록 있음')
+    expect(recordLabel({ due_amount: 50000, has_payment: false, paid_amount: 0 })).toBe('납부 기록 없음')
   })
 
   it('never says 미납 or 완납', () => {
     // The words this module must not put on screen. A partial payment is the
     // case somebody would most naturally label 미납, so it is the one to pin.
     const labels = [
-      recordLabel({ due_amount: 50000, paid_amount: 0 }),
-      recordLabel({ due_amount: 50000, paid_amount: 30000 }),
-      recordLabel({ due_amount: 50000, paid_amount: 50000 }),
-      recordLabel({ due_amount: 50000, paid_amount: 60000 }),
+      recordLabel({ due_amount: 50000, has_payment: false, paid_amount: 0 }),
+      recordLabel({ due_amount: 50000, has_payment: true, paid_amount: 30000 }),
+      recordLabel({ due_amount: 50000, has_payment: true, paid_amount: 50000 }),
+      recordLabel({ due_amount: 50000, has_payment: true, paid_amount: 60000 }),
     ]
     for (const label of labels) {
       expect(label).not.toContain('미납')
@@ -91,13 +91,29 @@ describe('recordLabel', () => {
   })
 })
 
+  // The defect the review found. A staffer may record 0 — 「참석했지만 받지
+  // 않음」 is a real fact — and inferring presence from `paid_amount > 0` made
+  // that row read as no record at all, so the screen said 「납부 기록 없음」
+  // about a row that existed and hid the control that would remove it.
+  it('counts a zero payment as a record, because the row exists', () => {
+    expect(hasRecordedPayment({ due_amount: 50000, has_payment: true, paid_amount: 0 })).toBe(true)
+    expect(recordLabel({ due_amount: 50000, has_payment: true, paid_amount: 0 })).toBe('납부 기록 있음')
+  })
+
+  // And the other direction, so the flag is not merely ignored: a large amount
+  // with no row is still no record. This pair is what makes the field load
+  // bearing rather than decorative.
+  it('does not invent a record from an amount when no row exists', () => {
+    expect(hasRecordedPayment({ due_amount: 50000, has_payment: false, paid_amount: 50000 })).toBe(false)
+  })
+
 describe('summariseDues', () => {
   // 2026 상반기 fully entered, 2026 하반기 partly, 2025 하반기 not at all.
   // Every number is distinct so a swapped field cannot pass.
   const rows = [
-    { due_amount: 50000, paid_amount: 50000 },
-    { due_amount: 50000, paid_amount: 30000 },
-    { due_amount: 40000, paid_amount: 0 },
+    { due_amount: 50000, has_payment: true, paid_amount: 50000 },
+    { due_amount: 50000, has_payment: true, paid_amount: 30000 },
+    { due_amount: 40000, has_payment: false, paid_amount: 0 },
   ]
 
   it('totals the charge side', () => {
@@ -124,6 +140,23 @@ describe('summariseDues', () => {
     expect(summariseDues([])).toEqual({ due: 0, recordedCount: 0, unrecordedCount: 0 })
   })
 })
+
+  // The mutation the review named as surviving, and why it did: every other
+  // fixture puts `paid: true` beside a positive amount, so nothing separated
+  // "a payment was recorded" from "the amount is above zero". A FREE SESSION
+  // separates them — fee 0, attended, paid, and nothing changed hands.
+  //
+  // Without this, `if (row.paid)` could become `if (row.paid_amount > 0)` and
+  // the suite would stay green while every free session vanished from the
+  // count.
+  it('counts a free session that was settled', () => {
+    const totals = summariseActivityFees([
+      { fee_amount: 0, paid: true, paid_amount: 0 },
+      { fee_amount: 15000, paid: true, paid_amount: 15000 },
+    ])
+    expect(totals.paidCount).toBe(2)
+    expect(totals.unpaidCount).toBe(0)
+  })
 
 describe('summariseActivityFees', () => {
   const rows = [
