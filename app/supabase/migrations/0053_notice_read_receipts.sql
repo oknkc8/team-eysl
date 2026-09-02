@@ -13,10 +13,16 @@
 -- expressible as a policy over this table alone.
 --
 --   marking read    the row's member_id must come from the session, never from
---                   the client. A policy can check `member_id =
---                   current_member_id()`, but it cannot SUPPLY it, so a WITH
---                   CHECK still leaves the client naming itself and the whole
---                   value of the receipt resting on the client being honest.
+--                   the client. A policy can CHECK `member_id =
+--                   current_member_id()` but cannot SUPPLY it, so the client
+--                   still has to name itself and every caller has to get that
+--                   right. (An earlier version of this note said a WITH CHECK
+--                   left the value resting on the client being HONEST. That was
+--                   wrong and worth correcting: PostgreSQL rejects an insert
+--                   naming somebody else's member_id, so the policy is a real
+--                   boundary. What it cannot do is remove the parameter, and a
+--                   parameter that does not exist is the one that cannot be
+--                   wrong — the same argument 0047 makes about storage paths.)
 --
 --   reading back    who read a notice is staff-only, and a member must not be
 --                   able to see who else read. A SELECT policy of
@@ -29,6 +35,14 @@
 -- grant on the table is revoked as well as the policies being absent: RLS
 -- already refuses, and the standing grant is the half that has to stay wrong
 -- for a future `create policy` to become a leak — 0014's argument, unchanged.
+--
+-- THIS IS A CLAIM ABOUT CLIENT ACCESS, NOT A DATABASE-WIDE INVARIANT. The
+-- revoke deliberately leaves `service_role` alone, so anything holding the
+-- service key can UPDATE read_at directly and the "written once" property above
+-- does not bind it. That is the same latitude every other table in this schema
+-- gives it and removing it here alone would buy nothing, but the sentence is
+-- worth writing down: "all access goes through the functions" is true of anon
+-- and authenticated, which is who the sentence is about.
 --
 -- ============================================================================
 -- WHY FIRST OPEN WINS
@@ -44,11 +58,16 @@
 -- were they last on this page", answer a question nobody asked, and destroy the
 -- one that was.
 --
--- It is also the cheaper concurrency story. A member's phone and laptop opening
--- the same notice at once are two INSERTs racing on the primary key; one wins,
--- the other does nothing, and neither takes a row lock or a re-read. `do update`
--- would have both writing, in an order nothing defines, to a column whose value
--- would be wrong either way.
+-- It is also the cheaper concurrency story, though not a contention-free one.
+-- A member's phone and laptop opening the same notice at once are two INSERTs
+-- racing on the primary key. The second BLOCKS until the first commits — an
+-- insert against a matching unique key waits, which PostgreSQL documents — and
+-- then does nothing. So there is a wait, and what there is not is a second
+-- write. `do update` would have both writing, in an order nothing defines, to a
+-- column whose value would be wrong either way.
+--
+-- Strictly, the first COMMITTED insert wins. A first attempt that rolls back
+-- never observably existed.
 --
 -- ============================================================================
 -- ONE BEHAVIOUR TO KNOW ABOUT BEFORE READING THE OUTPUT
@@ -68,6 +87,19 @@
 -- people, and there is no name to list for somebody the roster no longer
 -- admits. It is recorded here because a count that silently drops is exactly
 -- the shape this project keeps mistaking for a defect elsewhere.
+
+-- ============================================================================
+-- ONE THING THE GENERATED TYPES GET WRONG
+-- ============================================================================
+--
+-- `member_public_v.short_name` and `.avatar_path` are both nullable, and
+-- `supabase gen types` renders this function's OUT columns as plain `string`.
+-- So TypeScript will accept `reader.avatar_path.startsWith(...)` and it will
+-- throw at runtime for any reader who has not set an avatar.
+--
+-- The screens are not written yet, which is the good moment to say it: whatever
+-- calls this must treat both as `string | null`. That is a limitation of the
+-- generator's view of RETURNS TABLE, not of the data.
 
 -- ---------------------------------------------------------------------------
 create table if not exists public.notice_reads (
