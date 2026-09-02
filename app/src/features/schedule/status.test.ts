@@ -16,6 +16,7 @@ function application(over: Partial<MyApplication> = {}): MyApplication {
     wait_order: null,
     offer_status: 'none',
     offer_expires_at: null,
+    details: null,
     ...over,
   }
 }

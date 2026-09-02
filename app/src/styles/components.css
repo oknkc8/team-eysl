@@ -1190,3 +1190,293 @@ textarea.field {
   font-size: var(--text-base);
   line-height: var(--leading-loose);
 }
+
+/* ------------------------------------------------------------------ 나의 성과
+
+   His .achievementBadgeGrid / .attBadge / .pbMoment* (upstream:1101-1128),
+   moved onto our tokens.
+
+   Five columns, which is his layout and the reason the row reads as a ladder
+   rather than a list. It is tight: --app-width is 430px, so each tile is about
+   76px, and he drops his own type to 8px to fit. We do not follow him down —
+   tokens.css raised the floor to --text-2xs (9px) deliberately — so the tiles
+   are allowed to grow taller instead of the text getting smaller. */
+.badgeGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0 0 var(--gap-list);
+  padding: 0;
+}
+
+.badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  min-height: 118px;
+  padding: var(--space-3) var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  text-align: center;
+}
+
+/* Greyed rather than hidden: a member should see how many tiers are left. */
+.badge.locked {
+  opacity: 0.45;
+  filter: grayscale(0.65);
+}
+
+.badgeIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-pill);
+  background: var(--ink-fill);
+  color: var(--ink-inverse);
+  font-size: var(--text-base);
+  font-weight: var(--weight-black);
+}
+
+.badge.locked .badgeIcon {
+  background: var(--fill);
+  color: var(--muted);
+}
+
+.badge b {
+  font-size: var(--text-xs);
+  color: var(--ink);
+}
+
+.badge p {
+  margin: 0;
+  font-size: var(--text-2xs);
+  line-height: var(--leading-tight);
+  color: var(--muted);
+  /* Korean wraps mid-word by default, which turns 팀아이슬 into 팀아이 / 슬 in a
+     76px column. keep-all breaks on spaces instead. */
+  word-break: keep-all;
+}
+
+.badgeProgress {
+  margin: 0 0 var(--gap-list);
+  padding: var(--space-4) var(--pad-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--fill-soft);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* A heading row already carries its own margin; the divider inside it must not
+   add a second one. Mirrors the existing .titleRow .title rule. */
+.titleRow .listDivider {
+  margin: 0;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- PB 모먼트 */
+.pbList {
+  display: grid;
+  gap: var(--gap-list);
+  margin-bottom: var(--gap-list);
+}
+
+.pbCard {
+  padding: var(--space-4) var(--pad-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.pbHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.pbHead b {
+  font-size: var(--text-md);
+  color: var(--ink);
+}
+
+.pbHead span {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.pbRecord {
+  margin-bottom: var(--space-1);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-black);
+  letter-spacing: var(--track-tight);
+  color: var(--ink);
+  /* The two times sit either side of an arrow; equal-width figures stop them
+     shifting against each other between cards. */
+  font-variant-numeric: tabular-nums;
+}
+
+.pbDelta {
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-heavy);
+  color: var(--ok-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.pbMsg {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--muted);
+}
+
+.pbEvent {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted-soft);
+}
+
+/* ------------------------------------------------------------ 월간 활동 요약
+
+   His .monthSwitch (upstream:40). The arrows are real buttons at the 44px tap
+   target the rest of the app uses, not the bare glyphs he ships. */
+.monthSwitch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  padding: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.monthSwitch button {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-lg);
+}
+
+.monthSwitch button:active {
+  background: var(--fill);
+}
+
+.monthSwitch b {
+  font-size: var(--text-md);
+  font-weight: var(--weight-heavy);
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------- 일정 캘린더
+
+   His .calendar / .day / .dot (upstream:40-58), on our tokens. Seven equal
+   columns; a blank cell is an empty <span> that occupies its slot and nothing
+   else. */
+.calendar {
+  margin-bottom: var(--space-5);
+}
+
+.calendarHead,
+.calendarDays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+
+.calendarHead {
+  margin-bottom: var(--space-2);
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+/* The first column is Sunday and the last Saturday, which is the one piece of
+   colour a Korean calendar is expected to carry. */
+.calendarHead span:first-child {
+  color: var(--danger-fg);
+}
+
+.calendarHead span:last-child {
+  color: var(--link);
+}
+
+.calDay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  /* At least a finger wide. The nav bar is 44px and so is this: a calendar is
+     the densest tap target in the app and the easiest to miss. */
+  min-height: var(--tap);
+  padding: var(--space-2) 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.calDay:active {
+  background: var(--fill);
+}
+
+/* Today is outlined; the selected day is filled. Two signals because they are
+   two different facts, and they are usually the same square. */
+.calDay.isToday {
+  border-color: var(--line);
+  font-weight: var(--weight-bold);
+}
+
+.calDay.isSelected {
+  background: var(--ink-fill);
+  border-color: var(--ink-fill);
+  color: var(--ink-inverse);
+}
+
+.calDots {
+  display: flex;
+  gap: 2px;
+  min-height: 5px;
+}
+
+.calDot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--muted);
+}
+
+/* One colour per kind, deliberately not reusing a tag palette: these are five
+   pixels wide and have to be told apart at a glance rather than read. */
+.calDot.training {
+  background: var(--ok-fg);
+}
+
+.calDot.race {
+  background: var(--link);
+}
+
+.calDot.event {
+  background: var(--amber-fg);
+}
+
+/* On the filled day the dots would otherwise disappear into the ink. */
+.calDay.isSelected .calDot {
+  background: var(--ink-inverse);
+}

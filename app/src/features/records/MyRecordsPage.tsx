@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { useCurrentUser } from '../auth/useCurrentUser'
+import { useSession } from '../auth/SessionProvider'
+import { viewerKey } from '../../lib/queryKeys'
 import { isStaff } from '../auth/schema'
 import { FilteredRecords, useRecordFilter } from './FilteredRecords'
 import { RecordFilters } from './RecordFilters'
@@ -12,7 +14,11 @@ export function MyRecordsPage() {
 
   // One query for every tab: they are readings of the same rows, so changing a
   // filter is a re-render rather than a fetch.
-  const query = useQuery({ queryKey: ['my-records'], queryFn: getMyRecords })
+  const { session } = useSession()
+  const query = useQuery({
+    queryKey: viewerKey(['my-records'], session?.user.id),
+    queryFn: getMyRecords,
+  })
 
   return (
     <div className="page">

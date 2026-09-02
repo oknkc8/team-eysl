@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
 import { AsyncSection } from '../../components/ui/AsyncSection'
@@ -6,11 +6,15 @@ import { getTeamEventRankings } from './api'
 import {
   KIND_TITLE,
   PERIODS,
+  TOP_RANK_LIMIT,
   countListsFor,
   formatSeconds,
   groupByStroke,
+  hasHiddenRanks,
   isRankingKind,
   isRankingsEmpty,
+  rankDisplay,
+  rankToggleLabel,
   type CountRow,
   type ImprovementRow,
   type RankingPeriod,
@@ -176,60 +180,101 @@ function Rows<T extends CountRow | ImprovementRow>({
   render: (row: T) => string
   emptyLabel: string
 }) {
+  const [expanded, setExpanded] = useState(false)
+
   if (rows.length === 0)
     return <div style={{ ...CARD, fontSize: 12, color: '#6b7178' }}>{emptyLabel}</div>
 
+  // Five by default, the rest behind the button — his final77 behaviour. A
+  // collapsed row is never rendered rather than hidden with CSS; there is no
+  // state inside a row for that to lose.
+  const visible = expanded ? rows : rows.slice(0, TOP_RANK_LIMIT)
+
   return (
-    <ol style={{ ...CARD, listStyle: 'none', margin: 0, padding: 4 }}>
-      {rows.map((row, index) => (
-        // Rank is not unique — tied members share it — so the nickname goes into
-        // the key as well, and the index keeps it stable if a refetch ever
-        // returns the same person twice.
-        <li
-          key={`${row.rank}-${row.nickname}-${index}`}
+    <>
+      <ol style={{ ...CARD, listStyle: 'none', margin: 0, padding: 4 }}>
+        {visible.map((row, index) => (
+          // Rank is not unique — tied members share it — so the nickname goes into
+          // the key as well, and the index keeps it stable if a refetch ever
+          // returns the same person twice.
+          <li
+            key={`${row.rank}-${row.nickname}-${index}`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 10,
+              minHeight: 44,
+              padding: '0 10px',
+              borderTop: index === 0 ? 'none' : '1px solid #e1e5ea',
+            }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+              {/* One circle for every rank — final77-unified-rank-badges dropped
+                  the tinted first place, so the podium is told apart by the medal
+                  inside rather than by the colour behind it.
+
+                  The aria-label keeps the number: 🥇 is announced inconsistently
+                  across screen readers, and "1위" is what the row actually means. */}
+              <span
+                aria-label={`${row.rank}위`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxSizing: 'border-box',
+                  minWidth: 36,
+                  width: 36,
+                  height: 36,
+                  flex: '0 0 36px',
+                  borderRadius: 999,
+                  background: '#f3f4f6',
+                  border: '1px solid #e1e3e7',
+                  color: '#6f737a',
+                  fontSize: row.rank <= 3 ? 18 : 14,
+                  fontWeight: 800,
+                  lineHeight: 1,
+                  overflow: 'hidden',
+                }}
+              >
+                {rankDisplay(row.rank)}
+              </span>
+              <b
+                style={{
+                  fontSize: 13,
+                  color: '#111317',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {row.nickname}
+              </b>
+            </span>
+            <span style={{ fontSize: 12, color: '#11805b', flexShrink: 0 }}>{render(row)}</span>
+          </li>
+        ))}
+      </ol>
+      {hasHiddenRanks(rows.length) && (
+        <button
+          type="button"
+          onClick={() => setExpanded((open) => !open)}
+          aria-expanded={expanded}
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 10,
+            width: '100%',
             minHeight: 44,
-            padding: '0 10px',
-            borderTop: index === 0 ? 'none' : '1px solid #e1e5ea',
+            marginTop: 10,
+            border: '1px solid #dedfe3',
+            borderRadius: 13,
+            background: '#f7f7f8',
+            color: '#222',
+            fontSize: 12,
+            fontWeight: 800,
           }}
         >
-          <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <span
-              aria-label={`${row.rank}위`}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                minWidth: 24,
-                height: 24,
-                borderRadius: 999,
-                background: row.rank === 1 ? '#edf7f2' : '#f5f6f8',
-                color: row.rank === 1 ? '#11805b' : '#6b7178',
-                fontSize: 11,
-                fontWeight: 700,
-              }}
-            >
-              {row.rank}
-            </span>
-            <b
-              style={{
-                fontSize: 13,
-                color: '#111317',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {row.nickname}
-            </b>
-          </span>
-          <span style={{ fontSize: 12, color: '#11805b', flexShrink: 0 }}>{render(row)}</span>
-        </li>
-      ))}
-    </ol>
+          {rankToggleLabel(expanded)}
+        </button>
+      )}
+    </>
   )
 }

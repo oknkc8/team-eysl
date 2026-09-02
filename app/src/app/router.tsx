@@ -1,8 +1,14 @@
 import { createBrowserRouter, Outlet, ScrollRestoration } from 'react-router'
-import { RequireAuth, RequireMasterAdmin, RequireStaff } from './guards'
+import {
+  RequireAuth,
+  RequireMasterAdmin,
+  RequireRecordManager,
+  RequireStaff,
+} from './guards'
 import { LoginPage, PendingPage } from '../features/auth/LoginPage'
 import { SignupPage } from '../features/auth/SignupPage'
 import { MyPage } from '../features/profile/MyPage'
+import { MonthlyActivityPage } from '../features/achievements/MonthlyActivityPage'
 import { ApplicationAdminPage } from '../features/schedule/ApplicationAdminPage'
 import { HomePage } from '../features/home/HomePage'
 import { MyAttendancePage } from '../features/attendance/MyAttendancePage'
@@ -12,26 +18,33 @@ import { NoticeListPage } from '../features/notices/NoticeListPage'
 import { NoticeDetailPage } from '../features/notices/NoticeDetailPage'
 import { NoticeEditPage } from '../features/notices/NoticeEditPage'
 import { ScheduleListPage } from '../features/schedule/ScheduleListPage'
+import { ScheduleCalendarPage } from '../features/schedule/ScheduleCalendarPage'
 import { ActivityDetailPage } from '../features/schedule/ActivityDetailPage'
 import { ActivityEditPage } from '../features/schedule/ActivityEditPage'
 import { MyRecordsPage } from '../features/records/MyRecordsPage'
 import { MemberRecordsPage } from '../features/records/MemberRecordsPage'
 import { AdminRecordEditPage } from '../features/records/AdminRecordEditPage'
+import { RecordUploadListPage } from '../features/records/RecordUploadListPage'
 import { MemberListPage } from '../features/members/MemberListPage'
 import { MemberDetailPage } from '../features/members/MemberDetailPage'
 import { MemberActivityPage } from '../features/members/MemberActivityPage'
 import { MemberApprovalPage } from '../features/members/MemberApprovalPage'
 import { MemberRolesPage } from '../features/members/MemberRolesPage'
 import { MemberAccessPage } from '../features/members/MemberAccessPage'
+import { MemberLinkPage } from '../features/members/MemberLinkPage'
 import { MediaFolderListPage } from '../features/media/MediaFolderListPage'
 import { MediaFolderPage } from '../features/media/MediaFolderPage'
 import { ResourceListPage } from '../features/media/ResourceListPage'
 import { MyRacesPage } from '../features/schedule/MyRacesPage'
 import { EventHubPage } from '../features/events/EventHubPage'
 import { EventRankingPage } from '../features/events/EventRankingPage'
+import { StrokeRankingPage } from '../features/events/StrokeRankingPage'
 import { ChatPage } from '../features/chat/ChatPage'
 import { DmPage } from '../features/chat/DmPage'
 import { NotificationSettingsPage } from '../features/push/NotificationSettingsPage'
+import { BoardListPage } from '../features/board/BoardListPage'
+import { BoardDetailPage } from '../features/board/BoardDetailPage'
+import { BoardEditPage } from '../features/board/BoardEditPage'
 
 /**
  * The frame above every route, and the only thing in it is scroll position.
@@ -94,6 +107,11 @@ export const router = createBrowserRouter([
           // the whole gate this route needs.
           { path: '/mypage', element: <MyPage /> },
           { path: '/attendance', element: <MyAttendancePage /> },
+          // 월간 활동 요약, his `#activity` page. Every approved member reads
+          // their own month and my_monthly_activity_v1 (0034) takes no member id,
+          // so RequireAuth is the whole gate — the server cannot be asked for
+          // somebody else's month.
+          { path: '/activity', element: <MonthlyActivityPage /> },
           { path: '/notices', element: <NoticeListPage /> },
           { path: '/notices/:noticeId', element: <NoticeDetailPage /> },
           { path: '/schedule', element: <ScheduleListPage /> },
@@ -111,6 +129,13 @@ export const router = createBrowserRouter([
           // Ranked matching puts the literal /schedule/new ahead of the sibling
           // /schedule/:activityId below, the same trap /notices/new springs.
           { path: '/schedule/new', element: <ActivityEditPage /> },
+          // 일정 캘린더. A literal sibling of /schedule/:activityId, so ranked
+          // matching is what keeps it from being read as an activity id — the
+          // same reason /schedule/new and /schedule/mine are safe beside it.
+          // Every approved member reads the same month and the rows come back
+          // under the policies that already govern activities, so RequireAuth is
+          // the whole gate this route needs.
+          { path: '/schedule/calendar', element: <ScheduleCalendarPage /> },
           // 나의 대회 신청 내역. A literal sibling of /schedule/:activityId, so
           // ranked matching is what keeps it from being read as an activity id —
           // the same reason /schedule/new above is safe next to it. Every approved
@@ -124,6 +149,10 @@ export const router = createBrowserRouter([
           // president's app does — the RPC refuses anyone else in the database, so
           // this guard keeps nobody out who the server would have answered.
           { path: '/events', element: <EventHubPage /> },
+          // Static before the parameterised route. React Router ranks by
+          // specificity so the order is not load-bearing, but reading it in this
+          // order is how somebody sees that /events/stroke is not a :kind.
+          { path: '/events/stroke', element: <StrokeRankingPage /> },
           { path: '/events/:kind', element: <EventRankingPage /> },
           { path: '/records', element: <MyRecordsPage /> },
           { path: '/members', element: <MemberListPage /> },
@@ -163,6 +192,51 @@ export const router = createBrowserRouter([
           // 알림 설정. Every approved member manages their own devices, and
           // push_subscriptions_self (0004) confines each of them to their own rows.
           { path: '/settings/notifications', element: <NotificationSettingsPage /> },
+          // 기록 관리 screens — WIDER than RequireStaff, and deliberately so.
+          //
+          // can_manage_records() (0004:159-169) is admin, master_admin, OR a member
+          // whose team_role is 코치. These three screens sat under RequireStaff,
+          // which excludes coaches, so the database trusted a coach to file a
+          // record while the router refused them the screen. The comment that used
+          // to live here even recorded the mismatch without closing it.
+          //
+          // The president's app settles it under the scope rule: his
+          // openRecordUploadManager() refuses anyone who is not
+          // isAdminUser() || teamRole === '코치' (final93:4216-4223), and his own
+          // toast names them — 총관리자·부관리자·코치만 결과지를 업로드할 수 있습니다.
+          //
+          // Presentation, like every other guard here: upsert_record() and the
+          // record_uploads policies check can_manage_records() themselves.
+          {
+            element: <RequireRecordManager />,
+            children: [
+              // Under /admin so it shares no segment shape with /records: a member
+              // typing the URL meets the guard rather than a sibling member route
+              // that ranked matching might award them instead.
+              { path: '/admin/records/new', element: <AdminRecordEditPage /> },
+              // 결과지 업로드. Beside 기록 추가 rather than under it: the same job,
+              // a file instead of a form.
+              //
+              // The only lazy route in the tree, and the reason is SheetJS: it is
+              // ~900kB, larger than the rest of this app put together. Imported
+              // statically it would land in the main bundle and every member would
+              // download a parser for a screen they cannot open, on a phone, before
+              // seeing the notice list.
+              {
+                path: '/admin/records/upload',
+                lazy: async () => ({
+                  Component: (await import('../features/records/AdminRecordUploadPage'))
+                    .AdminRecordUploadPage,
+                }),
+              },
+              // 결과지 목록. NOT lazy, unlike its sibling above: it lists rows and
+              // deletes one, and imports no parser at all.
+              //
+              // `uploads` plural beside `upload` singular: two literal segments, so
+              // ranked matching never has to choose between them.
+              { path: '/admin/records/uploads', element: <RecordUploadListPage /> },
+            ],
+          },
           {
             element: <RequireStaff />,
             children: [
@@ -177,35 +251,11 @@ export const router = createBrowserRouter([
               // screen asks is_staff() itself and prints a Korean refusal rather
               // than rendering one member's history as if it were the club's.
               { path: '/admin/applications', element: <ApplicationAdminPage /> },
-              // Under /admin so it shares no segment shape with /records: a member
-              // typing the URL meets RequireStaff rather than a sibling member route
-              // that ranked matching might award them instead. Filing a result stays
-              // genuinely staff-only — can_manage_records() is what decides it —
-              // unlike the schedule editor, which 0015 opened to every member.
-              { path: '/admin/records/new', element: <AdminRecordEditPage /> },
-              // 결과지 업로드. Beside 기록 추가 rather than under it: the same job,
-              // a file instead of a form. RequireStaff is presentation here as
-              // everywhere — upsert_record() checks can_manage_records() itself, so
-              // the screen cannot file anything the database would not accept.
-              //
-              // Worth knowing the two gates are not the same set: can_manage_records()
-              // (0004:159-169) also admits a member whose team_role is 코치, while
-              // is_staff() does not, so a coach who is not an admin can be refused
-              // this screen and still be allowed the write behind it.
-              //
-              // The only lazy route in the tree, and the reason is SheetJS: it is
-              // ~900kB, which is larger than the rest of this app put together.
-              // Imported statically it would land in the main bundle and every
-              // member would download a parser for a screen they cannot open, on a
-              // phone, before seeing the notice list. `lazy` fetches it when a
-              // staffer actually opens the screen.
-              {
-                path: '/admin/records/upload',
-                lazy: async () => ({
-                  Component: (await import('../features/records/AdminRecordUploadPage'))
-                    .AdminRecordUploadPage,
-                }),
-              },
+              // 기록 추가 · 결과지 업로드 · 결과지 목록 moved to RequireRecordManager
+              // below. They were here, and that was the bug: can_manage_records()
+              // admits a 코치 and isStaff() does not, so a coach the database trusts
+              // to file records could not open the screens that file them.
+
               // Ranked matching puts the literal /notices/new ahead of the sibling
               // /notices/:noticeId above, so the staff branch wins despite being
               // declared later — a member who types the URL lands on RequireStaff.
@@ -230,10 +280,40 @@ export const router = createBrowserRouter([
                   // 내보내기·권한 지정/해제는 총관리자만 (index.html:1127) — and
                   // set_member_blocked_v1 refuses anyone else in the database.
                   { path: '/members/blocked', element: <MemberAccessPage /> },
+                  // 회원 연결. Master-admin for the strictest reason on this
+                  // branch of the tree: link_member_login_v1 moves an auth
+                  // account between member rows and deletes the row it came
+                  // from. Its neighbours end or grant access; this one decides
+                  // whose history an account owns, and there is no undo inside
+                  // the app. Both RPCs behind the screen check
+                  // is_master_admin() themselves and raise 42501 — verified
+                  // against the dev database, where an `admin` who is not a
+                  // master was refused — so this guard only keeps people off a
+                  // screen whose every button the server would reject.
+                  { path: '/members/link', element: <MemberLinkPage /> },
                 ],
               },
             ],
           },
+          // 자유게시판. Every one of these is RequireAuth and none is
+          // RequireStaff, which is the whole shape of his board: the ＋ that
+          // opens 글 작성 is unconditional markup (upstream:1279) and applyRole()
+          // never touches a board control, so any approved member writes here.
+          //
+          // Editing is the one narrow permission, and it is narrower than any
+          // guard can say — the author of the row at this id, and not staff
+          // (upstream:2639 refuses a non-author, and he made no admin case for
+          // it). A RequireStaff copy of /board/:postId/edit would be the thing
+          // this file keeps warning about: a guard that looks like it decides
+          // something while update_board_post_v1 is what actually does. The
+          // screen mirrors the RPC instead and prints a Korean refusal.
+          //
+          // Ranked matching puts the literal /board/new ahead of the sibling
+          // /board/:postId, the same trap /notices/new springs.
+          { path: '/board', element: <BoardListPage /> },
+          { path: '/board/new', element: <BoardEditPage /> },
+          { path: '/board/:postId', element: <BoardDetailPage /> },
+          { path: '/board/:postId/edit', element: <BoardEditPage /> },
         ],
       },
       { path: '*', element: <div style={{ padding: 24 }}>페이지를 찾을 수 없습니다.</div> },

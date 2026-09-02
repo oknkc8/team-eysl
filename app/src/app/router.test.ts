@@ -7,13 +7,16 @@ import { matchRoutes, type RouteObject } from 'react-router'
 let router: (typeof import('./router'))['router']
 let RequireAuth: (typeof import('./guards'))['RequireAuth']
 let RequireStaff: (typeof import('./guards'))['RequireStaff']
+let RequireRecordManager: (typeof import('./guards'))['RequireRecordManager']
 let RequireMasterAdmin: (typeof import('./guards'))['RequireMasterAdmin']
 
 beforeAll(async () => {
   vi.stubEnv('VITE_SUPABASE_URL', 'https://ourdevproject.supabase.co')
   vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_test')
   ;({ router } = await import('./router'))
-  ;({ RequireAuth, RequireStaff, RequireMasterAdmin } = await import('./guards'))
+  ;({ RequireAuth, RequireStaff, RequireMasterAdmin, RequireRecordManager } = await import(
+    './guards',
+  ))
 })
 
 afterAll(() => vi.unstubAllEnvs())
@@ -22,6 +25,7 @@ const NOTICE_ID = '00000000-0000-4000-8000-000000000001'
 const ACTIVITY_ID = '00000000-0000-4000-8000-000000000002'
 const MEMBER_ID = '00000000-0000-4000-8000-000000000003'
 const FOLDER_ID = '00000000-0000-4000-8000-000000000004'
+const POST_ID = '00000000-0000-4000-8000-000000000005'
 
 /**
  * The guards and the screen a path lands on, in order.
@@ -39,6 +43,11 @@ function guardsFor(pathname: string) {
       const element = m.route.element as { type?: unknown } | undefined
       if (element?.type === RequireMasterAdmin) return 'master'
       if (element?.type === RequireStaff) return 'staff'
+      // Without this the record routes report NO guard rather than the wrong
+      // one, which reads as 'unguarded' — a far more alarming failure than the
+      // real change. A guard the labeller does not know is a guard it cannot
+      // see.
+      if (element?.type === RequireRecordManager) return 'records'
       if (element?.type === RequireAuth) return 'auth'
       return m.route.path ?? 'layout'
     })
@@ -184,15 +193,28 @@ describe('record routes are guarded by tree position', () => {
     expect(guardsFor('/records')).toEqual(['auth', '/records'])
   })
 
-  // Filing a result is staff-only in the tree, and can_manage_records() is what
-  // enforces it in the database — upsert_record() raises 42501 for anyone else,
-  // so reaching this screen is not the same as being allowed to write.
-  it('puts filing a record behind RequireStaff', () => {
-    expect(guardsFor('/admin/records/new')).toEqual(['auth', 'staff', '/admin/records/new'])
+  // Filing a result is behind RequireRecordManager, NOT RequireStaff, and the
+  // difference is a 코치: can_manage_records() (0004:159-169) admits one and
+  // is_staff() does not. These assertions previously said 'staff', which is the
+  // mismatch this PR closes — the database trusted a coach to file a record
+  // while the router refused them the screen.
+  //
+  // Still presentation either way: upsert_record() raises 42501 for anyone the
+  // database does not admit, so reaching the screen is not being allowed to write.
+  it('puts filing a record behind RequireRecordManager', () => {
+    expect(guardsFor('/admin/records/new')).toEqual(['auth', 'records', '/admin/records/new'])
   })
 
-  it('puts the sheet upload behind RequireStaff too', () => {
-    expect(guardsFor('/admin/records/upload')).toEqual(['auth', 'staff', '/admin/records/upload'])
+  // The guard has to be the wider one specifically, not merely present.
+  it('does not put the record screens behind the staff guard', () => {
+    expect(guardsFor('/admin/records/new')).not.toContain('staff')
+    expect(guardsFor('/admin/records/upload')).not.toContain('staff')
+    expect(guardsFor('/admin/records/uploads')).not.toContain('staff')
+  })
+
+  it('puts the sheet upload and its history behind RequireRecordManager too', () => {
+    expect(guardsFor('/admin/records/upload')).toEqual(['auth', 'records', '/admin/records/upload'])
+    expect(guardsFor('/admin/records/uploads')).toEqual(['auth', 'records', '/admin/records/uploads'])
   })
 
   it('does not let the member records route swallow the admin path', () => {
@@ -241,6 +263,23 @@ describe('member routes are guarded by tree position', () => {
     expect(guardsFor('/members/approval')).not.toContain('/members/:memberId')
     expect(guardsFor('/members/roles')).not.toContain('/members/:memberId')
     expect(guardsFor('/members/blocked')).not.toContain('/members/:memberId')
+    // The newest literal sibling, and the one with the most to lose if ranked
+    // matching ever went the other way: an admin typing this URL would land on a
+    // member detail page for an id reading "link" instead of on the guard.
+    expect(guardsFor('/members/link')).not.toContain('/members/:memberId')
+  })
+
+  // 회원 연결, and it belongs with its three neighbours for a stricter reason
+  // than any of them. link_member_login_v1 moves an auth account from one member
+  // row to another and deletes the row it came from: approval decides whether
+  // somebody is let in, blocking decides whether they stay, and this decides
+  // WHOSE HISTORY AN ACCOUNT OWNS. There is no undo inside the app. Both RPCs
+  // behind the screen check is_master_admin() themselves and raise 42501 —
+  // verified against the dev database, where an `admin` who is not the master
+  // was refused — so this guard keeps nobody off a screen the server would have
+  // answered for them.
+  it('puts 회원 연결 behind RequireMasterAdmin', () => {
+    expect(guardsFor('/members/link')).toEqual(['auth', 'staff', 'master', '/members/link'])
   })
 
   // The two drill-downs deliberately do NOT sit behind RequireStaff, and the
@@ -366,5 +405,87 @@ describe('my race history route is guarded by tree position', () => {
   it('keeps it on RequireAuth only', () => {
     expect(guardsFor('/schedule/mine')).not.toContain('staff')
     expect(guardsFor('/schedule/mine')).not.toContain('master')
+  })
+})
+
+describe('board routes are guarded by tree position', () => {
+  // /board/new is a literal sibling of the dynamic /board/:postId, so which one
+  // answers is decided by ranked matching rather than declaration order — the
+  // same pairing that made /notices/new worth its own test. If the dynamic route
+  // won, 글 작성 would open a detail screen for a post called "new".
+  it('sends /board/new to the editor, not the detail route', () => {
+    expect(guardsFor('/board/new')).toEqual(['auth', '/board/new'])
+    expect(guardsFor('/board/new')).not.toContain('/board/:postId')
+  })
+
+  it('puts the list and one post on RequireAuth', () => {
+    expect(guardsFor('/board')).toEqual(['auth', '/board'])
+    expect(guardsFor(`/board/${POST_ID}`)).toEqual(['auth', '/board/:postId'])
+  })
+
+  it('puts the edit route on RequireAuth', () => {
+    expect(guardsFor(`/board/${POST_ID}/edit`)).toEqual(['auth', '/board/:postId/edit'])
+  })
+
+  // The load-bearing one. Writing here is open to every approved member — the ＋
+  // is unconditional markup in his app (upstream:1279) — so a staff guard on any
+  // of these four would lock the board's own audience out of it. Editing is
+  // narrower than staff, not wider: the author alone, which no position in the
+  // tree can express, so update_board_post_v1 decides it and the screen mirrors
+  // that. A RequireStaff here would be a guard that contradicts the database in
+  // both directions at once.
+  it('never sends a board route through a role guard', () => {
+    for (const path of ['/board', '/board/new', `/board/${POST_ID}`, `/board/${POST_ID}/edit`]) {
+      expect(guardsFor(path)).not.toContain('staff')
+      expect(guardsFor(path)).not.toContain('master')
+    }
+  })
+
+  it('does not fall through to the catch-all', () => {
+    expect(guardsFor('/board')).not.toContain('*')
+    expect(guardsFor(`/board/${POST_ID}`)).not.toContain('*')
+  })
+})
+
+describe('월간 활동 요약 is guarded by tree position', () => {
+  // RequireAuth and nothing more, for the same reason as /mypage above:
+  // my_monthly_activity_v1 (0034) takes no member id and derives the caller from
+  // the session, so there is no URL that reaches somebody else's month. A staff
+  // guard here would keep members off their own summary and protect nothing.
+  it('puts /activity on RequireAuth only', () => {
+    expect(guardsFor('/activity')).toEqual(['auth', '/activity'])
+  })
+
+  it('does not put a member’s own summary behind a staff guard', () => {
+    expect(guardsFor('/activity')).not.toContain('staff')
+    expect(guardsFor('/activity')).not.toContain('master')
+  })
+
+  // A literal sibling of /attendance rather than a parameterised route, so it
+  // must not be swallowed by the catch-all.
+  it('does not fall through to the catch-all', () => {
+    expect(guardsFor('/activity')).not.toContain('*')
+  })
+})
+
+describe('일정 캘린더 is guarded by tree position', () => {
+  // A literal beside /schedule/:activityId. Ranked matching has to prefer the
+  // literal, or the calendar is read as an activity id and the member lands on a
+  // detail page for an activity that does not exist — the same trap
+  // /schedule/new and /schedule/mine already sit next to.
+  it('sends /schedule/calendar to the calendar, not the detail route', () => {
+    expect(guardsFor('/schedule/calendar')).toEqual(['auth', '/schedule/calendar'])
+  })
+
+  it('keeps it on RequireAuth only', () => {
+    expect(guardsFor('/schedule/calendar')).not.toContain('staff')
+    expect(guardsFor('/schedule/calendar')).not.toContain('master')
+  })
+
+  // The neighbours it must not have displaced.
+  it('leaves the sibling schedule routes matching as before', () => {
+    expect(guardsFor('/schedule/new')).toEqual(['auth', '/schedule/new'])
+    expect(guardsFor('/schedule/mine')).toEqual(['auth', '/schedule/mine'])
+    expect(guardsFor(`/schedule/${ACTIVITY_ID}`)).toEqual(['auth', '/schedule/:activityId'])
   })
 })

@@ -1,5 +1,7 @@
+import { BASE_URL, FIXTURE_NICK_PREFIX } from '../playwright.config'
 import type { Page } from '@playwright/test'
-import { APP_ENV, PASSWORD, STATE, expect, openAs, test, waitForScreen } from './fixtures'
+import { APP_ENV, PASSWORD, STATE, directRequest, expect, openAs, test, waitForScreen } from './fixtures'
+import { recordOwnedSignup } from './ownedSignups'
 
 /**
  * 가입 신청, driven the way the defect was found: by pressing the button.
@@ -34,19 +36,23 @@ test.use({ storageState: { cookies: [], origins: [] } })
  *
  * The suite is fullyParallel and reruns against a shared dev database, so a
  * fixed nickname would collide with its own previous run and the failure would
- * read as a product bug. The `pwtest` prefix is the contract cleanup.sql matches
- * on, and lowercase keeps the derived address (`lower(nickname)@eysl.local`)
- * equal to the nickname, which is what makes cleanup's `email like
- * 'pwtest%@eysl.local'` match it too.
+ * read as a product bug. The worktree namespace makes concurrent runs distinct;
+ * cleanup records the ids returned by these real signups rather than matching
+ * either this nickname or its derived email address.
  *
  * SINCE 0032 THE SHAPE IS PART OF THE CONTRACT: 이름/출생년도/성별/지역. Only the
  * name segment carries the unique part, because that is the segment the format
  * leaves free — the other three are constrained, and putting the entropy in the
- * region would work equally well but would move the `pwtest` prefix off the
- * front of the derived address and break cleanup's LIKE.
+ * region would work equally well but would move the visible fixture marker out
+ * of the name segment.
  */
 function freshNickname(tag: string) {
-  const unique = `pwtest${tag}${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`
+  // The full nickname has an eight-character /98/남/관악 suffix and the server
+  // caps it at 30 characters. Five base36 digits leave room for the namespace
+  // and every current tag while keeping 60 million concurrent choices.
+  const unique = `${FIXTURE_NICK_PREFIX}${tag}${Math.floor(Math.random() * 36 ** 5)
+    .toString(36)
+    .padStart(5, '0')}`
   return `${unique.toLowerCase()}/98/남/관악`
 }
 
@@ -54,14 +60,14 @@ function freshNickname(tag: string) {
  * What seed.sql gives pwtestmember, restated because the guard reads it.
  *
  * These four values have to agree with `pwtest_accounts` in seed.sql — the
- * fixture there is `('pwtestmember', …, 1970, '남')` — and there is no way to
+ * fixture there is `(`${FIXTURE_NICK_PREFIX}member`, …, 1970, '남')` — and there is no way to
  * ask the database for them from inside a browser, since `anon` holds no SELECT
  * on members and that is the whole reason the guard lives server-side. So they
  * are duplicated deliberately and named in one place rather than inlined into
  * four assertions.
  */
 const SEEDED = {
-  nickname: 'pwtestmember',
+  nickname: `${FIXTURE_NICK_PREFIX}member`,
   birthYY: '70',
   gender: '남',
   /** Any year but the seeded one: a namesake, and therefore a different person. */
@@ -87,6 +93,43 @@ async function signInAs(page: Page, nickname: string, password = PASSWORD) {
   await page.getByLabel('닉네임').fill(nickname)
   await page.getByLabel('비밀번호').fill(password)
   await page.getByRole('button', { name: '로그인' }).click()
+}
+
+/**
+ * Keep an exact, local record of a signup test's own rows. A fresh browser
+ * proves the real login works without changing the anonymous page that drove
+ * signup; cleanup receives only these ids and never infers ownership from text.
+ */
+async function recordSignup(page: Page, nickname: string, password = PASSWORD) {
+  const browser = page.context().browser()
+  if (!browser) throw new Error('signup ownership: browser is unavailable')
+
+  const context = await browser.newContext({ baseURL: BASE_URL, locale: 'ko-KR', timezoneId: 'Asia/Seoul' })
+  const probe = await context.newPage()
+  try {
+    await signInAs(probe, nickname, password)
+    await probe.waitForURL('**/pending', { timeout: 20_000 })
+    const authUserId = await probe.evaluate(() => {
+      const storageKey = Object.keys(localStorage).find(
+        (key) => key.startsWith('sb-') && key.endsWith('-auth-token'),
+      )
+      if (!storageKey) throw new Error('signup ownership: no Supabase session')
+      const raw = localStorage.getItem(storageKey)
+      const id = raw ? (JSON.parse(raw) as { user?: { id?: unknown } }).user?.id : undefined
+      if (typeof id !== 'string') throw new Error('signup ownership: session has no user id')
+      return id
+    })
+    const member = await directRequest(probe, {
+      path: `/rest/v1/members?auth_user_id=eq.${authUserId}&select=id`,
+    })
+    const rows = JSON.parse(member.body) as { id?: unknown }[]
+    if (rows.length !== 1 || typeof rows[0]?.id !== 'string') {
+      throw new Error(`signup ownership: expected one member row for ${authUserId}`)
+    }
+    recordOwnedSignup({ authUserId, memberId: rows[0].id })
+  } finally {
+    await context.close()
+  }
 }
 
 /**
@@ -128,6 +171,7 @@ test('가입 신청부터 승인까지 실제로 이어진다', async ({ page, b
   await expect(page.getByRole('heading', { name: `${nickname} 가입 신청 완료` })).toBeVisible({
     timeout: 20_000,
   })
+  await recordSignup(page, nickname)
 
   // 2. The new account signs in. This is the half that always worked and the
   //    half that made the break invisible, so it is asserted rather than assumed.
@@ -191,6 +235,7 @@ test('이미 쓰는 닉네임은 한국어로 거절한다', async ({ page }) =>
   await expect(page.getByRole('heading', { name: `${nickname} 가입 신청 완료` })).toBeVisible({
     timeout: 20_000,
   })
+  await recordSignup(page, nickname)
 
   // The same nickname again. A unique index arbitrates, not a check-then-insert
   // that a second signup could slip between.
@@ -213,6 +258,7 @@ test('대소문자만 다른 닉네임도 같은 닉네임으로 본다', async 
   await expect(page.getByRole('heading', { name: `${nickname} 가입 신청 완료` })).toBeVisible({
     timeout: 20_000,
   })
+  await recordSignup(page, nickname)
 
   // members_nickname_lower_uq is case-insensitive and the derived address is
   // lowercased, so these must not be allowed to become two people.
@@ -249,6 +295,7 @@ test('짧은 비밀번호는 화면과 서버 양쪽에서 막힌다', async ({ 
   // would show up here as nickname_taken.
   const retry = await anonRpc(page, { p_nickname: nickname, p_password: PASSWORD })
   expect(JSON.parse(retry.body)).toEqual({ ok: true })
+  await recordSignup(page, nickname)
 
   // While we are here: `anon` cannot read the roster, which is what made the
   // check above impossible and is worth pinning in its own right.
@@ -287,6 +334,7 @@ test('status·role 을 함께 보내면 함수 자체가 매칭되지 않는다'
   const nickname = freshNickname('esc')
   const created = await anonRpc(page, { p_nickname: nickname, p_password: PASSWORD })
   expect(JSON.parse(created.body)).toEqual({ ok: true })
+  await recordSignup(page, nickname)
 
   await signInAs(page, nickname)
   await page.waitForURL('**/pending', { timeout: 20_000 })
@@ -348,8 +396,10 @@ test('닉네임 형식을 화면과 서버 양쪽에서 강제한다', async ({ 
   expect(JSON.parse(plain.body)).toMatchObject({ ok: false, reason: 'nickname_parts' })
 
   // And the format is usable, not merely enforceable.
-  const good = await anonRpc(page, { p_nickname: freshNickname('fmt'), p_password: PASSWORD })
+  const nickname = freshNickname('fmt')
+  const good = await anonRpc(page, { p_nickname: nickname, p_password: PASSWORD })
   expect(JSON.parse(good.body)).toEqual({ ok: true })
+  await recordSignup(page, nickname)
 })
 
 test('명단에 이미 있는 회원은 새 계정을 만들지 못한다', async ({ page }) => {
@@ -407,6 +457,7 @@ test('명단에 이미 있는 회원은 새 계정을 만들지 못한다', asyn
     p_password: PASSWORD,
   })
   expect(JSON.parse(namesake.body)).toEqual({ ok: true })
+  await recordSignup(page, `${SEEDED.nickname}/${SEEDED.otherBirthYY}/${SEEDED.gender}/관악`)
 })
 
 test('가입 대기 회원은 회원 정보를 하나도 읽지 못한다', async ({ page }) => {
@@ -417,6 +468,7 @@ test('가입 대기 회원은 회원 정보를 하나도 읽지 못한다', asyn
   await expect(page.getByRole('heading', { name: `${nickname} 가입 신청 완료` })).toBeVisible({
     timeout: 20_000,
   })
+  await recordSignup(page, nickname)
   await signInAs(page, nickname)
   await page.waitForURL('**/pending', { timeout: 20_000 })
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import type { AsyncQuery } from '../../components/ui/AsyncSection'
+import { viewerKey } from '../../lib/queryKeys'
 import {
   listDmMessages,
   listGroupMessages,
@@ -49,7 +50,14 @@ export function useChatRoom(input: { room: Room; myMemberId: string }): ChatRoom
   const otherMemberId = room.kind === 'dm' ? room.otherMemberId : null
 
   const query = useQuery({
-    queryKey: otherMemberId ? ['chat', 'dm', otherMemberId] : ['chat', 'group'],
+    // Keyed by the viewer as well as the room. listDmMessages(other) returns
+    // the conversation between the VIEWER and `other`, so a key naming only
+    // `other` would have served a second member on the same browser somebody
+    // else's private thread. myMemberId rather than the auth id, to match
+    // ['chat','dm-threads', myMemberId] next door.
+    queryKey: otherMemberId
+      ? viewerKey(['chat', 'dm', otherMemberId], myMemberId)
+      : viewerKey(['chat', 'group'], myMemberId),
     queryFn: () => (otherMemberId ? listDmMessages(otherMemberId) : listGroupMessages()),
     // A room is a conversation people watch, not a cached page — the socket
     // keeps it current and a refocus should not repaint it from scratch.
@@ -94,16 +102,27 @@ export function useChatRoom(input: { room: Room; myMemberId: string }): ChatRoom
   }, [otherMemberId, belongsHere])
 
   const mutation = useMutation({
-    mutationFn: (vars: { pendingId: string; body: string }) =>
-      sendMessage({ roomType: room.kind, body: vars.body, recipientId: otherMemberId }),
+    mutationFn: (vars: { pendingId: string; body: string; file: File | null }) =>
+      sendMessage({
+        roomType: room.kind,
+        body: vars.body,
+        recipientId: otherMemberId,
+        file: vars.file,
+      }),
     onMutate: () => setSaveState('saving'),
-    onSuccess: (row, vars) => {
+    onSuccess: (result, vars) => {
+      const row = result.message
       // Drop the optimistic copy by its own id and merge the server row by its
       // id. If the socket echo already claimed the pending bubble, the drop
       // finds nothing and reconcile replaces the row in place — one bubble
       // either way, whichever arrived first.
       setThread((current) => reconcile(dropMessage(current, vars.pendingId), row))
-      setSaveState('saved')
+      // THE ROW IS SENT EITHER WAY. An object that did not land leaves an
+      // attachment that will not open yet, and 0047 records why deleting the
+      // message instead would be worse — the realtime subscription is INSERT
+      // only, so the recipient would keep a message the database no longer has.
+      // Reporting 'error' here is about the attachment, not the message.
+      setSaveState(result.uploadFailed ? 'error' : 'saved')
     },
     onError: (_error, vars) => {
       setThread((current) => markFailed(current, vars.pendingId))
@@ -112,11 +131,11 @@ export function useChatRoom(input: { room: Room; myMemberId: string }): ChatRoom
   })
 
   const submit = useCallback(
-    (body: string) => {
+    (body: string, file: File | null = null) => {
       const trimmed = body.trim()
-      // send_message_v1() refuses an empty body, so this is the same rule said
-      // early enough to cost no round trip.
-      if (trimmed === '') return
+      // send_message_v1() takes text OR an attachment, so a file with no caption
+      // is a message. Refusing on empty text alone would drop it.
+      if (trimmed === '' && !file) return
 
       const pendingId = newPendingId()
       setThread((current) =>
@@ -126,12 +145,20 @@ export function useChatRoom(input: { room: Room; myMemberId: string }): ChatRoom
           sender_id: myMemberId,
           recipient_id: otherMemberId,
           body: trimmed,
-          attachment_path: null,
-          attachment_type: null,
+          // The optimistic bubble cannot know the path — send_message_v1 has not
+          // been called yet — but it can say an attachment is coming, so the
+          // pending row does not render as a bare empty bubble for a file-only
+          // message.
+          attachment_path: file ? '' : null,
+          attachment_type: file ? file.type || 'application/octet-stream' : null,
+          // The one field the optimistic bubble can fill honestly: the sender
+          // picked this name, so it is already known here and does not have to
+          // wait for the round trip the path and type do.
+          attachment_name: file ? file.name : null,
           created_at: new Date().toISOString(),
         }),
       )
-      mutation.mutate({ pendingId, body: trimmed })
+      mutation.mutate({ pendingId, body: trimmed, file })
     },
     [mutation, myMemberId, otherMemberId],
   )
@@ -139,6 +166,11 @@ export function useChatRoom(input: { room: Room; myMemberId: string }): ChatRoom
   const retry = useCallback(
     (message: ChatMessage) => {
       setThread((current) => dropMessage(current, message.id))
+      // Retry re-sends the TEXT only. The File is gone by now — it lived in the
+      // composer's state and was cleared on submit — so a retry of a failed
+      // attachment send would write a second message with an attachment_path
+      // nothing ever uploads to. Better to resend the words and let the sender
+      // pick the file again.
       submit(message.body ?? '')
     },
     [submit],

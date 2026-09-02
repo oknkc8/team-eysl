@@ -4,8 +4,11 @@ import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { SaveState } from '../../components/ui/SaveState'
 import { MemberAvatar } from '../members/MemberAvatar'
+import { MyAchievements } from '../achievements/MyAchievements'
 import { ROLE_LABEL } from '../members/api'
 import { supabase } from '../../lib/supabase'
+import { viewerKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
 import {
   getMyProfile,
   removeMyAvatar,
@@ -18,7 +21,11 @@ import {
 type SaveKind = 'idle' | 'saving' | 'saved' | 'error'
 
 export function MyPage() {
-  const query = useQuery({ queryKey: ['my-profile'], queryFn: getMyProfile })
+  const { session } = useSession()
+  const query = useQuery({
+    queryKey: viewerKey(['my-profile'], session?.user.id),
+    queryFn: getMyProfile,
+  })
 
   return (
     <div className="page">
@@ -41,11 +48,17 @@ function Profile({ profile }: { profile: MyProfile }) {
       <PhotoCard profile={profile} />
       <RealNameCard profile={profile} />
 
+      {/* Above 내 메뉴, where he puts it (upstream:1289-1292): the badges are
+          the reason to open 마이페이지, and a list of links is not. It fetches
+          on its own, so a failed achievements call cannot blank the profile. */}
+      <MyAchievements />
+
       <h2 className="listDivider">내 메뉴</h2>
       <nav className="list">
         <Tile to="/records" title="나의 기록" desc="개인 최고 기록과 변화" />
         <Tile to="/schedule/mine" title="나의 대회 신청 내역" desc="신청한 대회와 지난 참가 기록" />
         <Tile to="/attendance" title="출석 현황" desc="출석·지각 기록 보기" />
+        <Tile to="/activity" title="월간 활동 요약" desc="달마다 훈련·대회·출석률" />
         <Tile to="/events" title="이벤트" desc="출석왕·지각왕·기록 단축왕" />
       </nav>
 

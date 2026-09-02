@@ -5,7 +5,9 @@ import { useCurrentUser } from '../auth/useCurrentUser'
 import { isStaff } from '../auth/schema'
 import { getLatestNotice, type Notice } from '../notices/api'
 import { ActivityCard } from '../schedule/ActivityCard'
-import { todayKey } from '../schedule/order'
+import { hasFinished, todayKey } from '../schedule/order'
+import { viewerKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
 import { listSchedule, type ScheduleEntry } from '../schedule/api'
 
 /** How many of the club's next activities the home screen previews — his three. */
@@ -39,6 +41,7 @@ const UPCOMING_SHOWN = 3
  */
 export function HomePage() {
   const { user } = useCurrentUser()
+  const { session } = useSession()
   const staff = isStaff(user)
 
   const noticeQuery = useQuery({ queryKey: ['notice-latest'], queryFn: getLatestNotice })
@@ -46,14 +49,21 @@ export function HomePage() {
   // The same query key 일정's 전체 tab uses, deliberately: whichever screen a
   // member opens first pays for the fetch and the other is instant, and the two
   // can never disagree about who holds a seat.
-  const scheduleQuery = useQuery({ queryKey: ['schedule', 'all'], queryFn: () => listSchedule() })
+  // Carries `mine`, so it is the viewer's answer too. Viewer last, because
+  // every invalidation of this uses the bare ['schedule'].
+  const scheduleQuery = useQuery({
+    queryKey: viewerKey(['schedule', 'all'], session?.user.id),
+    queryFn: () => listSchedule(),
+  })
 
   // listSchedule returns a 30-day tail of past activities after the upcoming
   // ones (sortUpcomingFirst), and neither section here wants them: "다가오는"
   // means what it says, and an activity a member attended last week is not the
   // one they need reminding about.
   const rows = scheduleQuery.data
-  const upcoming = rows?.filter((entry) => entry.activity.activity_date >= todayKey())
+  // Not finished, rather than not yet started: a race in progress is exactly
+  // what 다가오는 일정 should still be showing.
+  const upcoming = rows?.filter((entry) => !hasFinished(entry.activity, todayKey()))
   // Already sorted nearest-first, so the first match is the next one.
   const nextMine =
     upcoming === undefined ? undefined : (upcoming.find((entry) => entry.mine !== null) ?? null)
@@ -103,6 +113,11 @@ export function HomePage() {
         <h2>바로가기</h2>
       </div>
       <nav className="list" aria-label="바로가기">
+        {/* His drawer files 자유게시판 under 게시판 beside 공지
+            (upstream:1421). We have no drawer and the bottom nav has five fixed
+            destinations, so this tile is the only way to the board — the same
+            reason 사진·영상 and 자료실 are here. */}
+        <Tile to="/board" icon="✎" title="자유게시판" desc="회원 누구나 쓰는 게시판" />
         <Tile to="/chat" icon="✉" title="채팅" desc="단체 대화와 1:1 메시지" />
         <Tile to="/media" icon="▦" title="사진·영상" desc="폴더별 훈련·대회 기록" />
         <Tile to="/files" icon="▤" title="자료실" desc="폴더에 담기지 않은 파일" />

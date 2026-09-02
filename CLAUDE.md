@@ -11,7 +11,11 @@ TEAM EYSL — a Korean swimming club's member/training-management PWA ("TEAM EYS
 - `index.html` (~3,850 lines) **is** the app: markup, all CSS (one `<style>` block), and all JS (five `<script>` blocks, ~270 flat global functions) in one file.
 - `sw.js` — service worker (network-first fetch, web push handling).
 - `manifest.webmanifest`, `icon-*.png` — PWA manifest/icons.
-- The legacy app has no build step of its own: no bundler, no framework, no tests. Every commit on `upstream` is "Add files via upload" — the president maintains it by uploading edited files through the GitHub web UI. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
+- The legacy app has no build step of its own: no bundler, no framework, no tests. Most of `upstream`'s history is "Add files via upload" — **79 commits, and that number has not moved since 2026-08-26** — because the president used to maintain it by uploading edited files through the GitHub web UI. **He stopped doing that on 2026-08-26.** Everything since carries a real subject. **Re-measured 2026-09-02: 164 commits total, of which 10 are `team-eysl-bot`'s** (it was 130 and 2 on 08-31 — he shipped 34 commits on 09-02 alone).
+
+*A survey agent reported 162 and 32 for these two the same afternoon. It was not wrong; it had fetched an hour earlier, before `v124`. **An upstream count is only true as of the fetch that produced it**, so record the fetch, not just the date — and re-fetch before quoting somebody else's number.*
+
+`team-eysl-bot` is a GitHub Action, and by 09-02 it is **the deployment mechanism rather than an occasional helper**: each feature now ships as a `.github/workflows/apply-vNNN.yml` plus a `scripts/patch_vNNN.py`, so a human commit ("Add vNNN shell patch") states the intent and a bot commit ("Enable X in app shell") performs it minutes later. So "who wrote this" has two answers, and **they mean different things** — read the human commit for what he wanted and the bot commit for what actually reached `index.html`. Expect the code to read as iteratively patched rather than designed (functions redefined later in the file to wrap earlier ones, at least one dead stub function, `escAttr` defined twice) — that's the normal state of this file, not a regression you introduced.
 - The **rewrite** lives in `app/` and does have tooling: `app/package.json` (Vite, TypeScript, Vitest), SQL migrations under `app/supabase/migrations/`, and CI in `.github/workflows/`. Commands run from `app/`; the legacy root stays frozen because it is what production still serves.
 - **There is no linter.** `app/package.json` has no eslint dependency and no `lint` script — `npx eslint` silently resolves to an unrelated global v6.4.0 and fails on the config. The only gates that exist are `./node_modules/.bin/tsc --noEmit` (which reads `src` only), `./node_modules/.bin/tsc -p tsconfig.functions.json` (which reads `supabase/functions`), and `./node_modules/.bin/vitest run`. Do not claim a lint pass; three separate agents reported running one before this was checked.
 
@@ -62,7 +66,7 @@ VAPID public key is hardcoded at `index.html:1341`. Subscribe/unsubscribe (~1350
 
 `origin` is **oknkc8/team-eysl**, a fork we own (ADMIN). `upstream` is **cutepms123-blip/team-eysl**, the club president's original — we have READ only there and must never assume push access. Work happens on `dev` and branches off it. Both repos are **public**, so no key, token, or `.env` may ever be committed.
 
-The president edits `upstream` by uploading files through the GitHub web UI (every upstream commit is "Add files via upload"), so `upstream/main` can move without warning and without a merge-friendly history. Pull from it; don't expect to rebase onto it cleanly.
+The president edits `upstream` mostly by uploading files through the GitHub web UI (79 of 130 commits; the reality check above says when and how that changed), so `upstream/main` can move without warning and without a merge-friendly history. Pull from it; don't expect to rebase onto it cleanly.
 
 **He is still actively building.** 13 commits landed between 2026-08-24 17:11 and 2026-08-25 12:30 alone, adding ~410 lines. Assume upstream has moved since you last looked, and re-check before assuming a feature is missing from his app rather than merely missing from the copy you read.
 
@@ -78,11 +82,54 @@ final59-event-top5-yoy
 
 Walking `git show <sha>:sw.js | grep VERSION` across `origin/main..upstream/main` is the cheapest way to see what a batch of uploads was actually about — far faster than reading a whole-file diff, and it names his intent rather than yours.
 
+**But the walk tells you only what he meant to do — it is no evidence at all that the file ran.** Verified 2026-08-26: `sw.js` **failed to parse for 29 consecutive releases**, `final47` through `final83`. One character on line 3 — `e.waitUntil(` is closed and `self.addEventListener(` never is.
+
+```
+a2afc67  final78-swimming-team-board   node --check -> SyntaxError: missing ) after argument list
+265e14d  final85-push-true-reset       node --check -> ok   (first version that parses)
+```
+
+A service worker that throws SyntaxError never installs, so for all 31 there was no `pushManager`, no `push` event and no cache. The VERSION string kept getting a new name throughout. The releases he named `push-repair`, `push-autofix` and `push-clean-start` were **fixing push inside a file the browser refused to read.**
+
+So put one step between the walk and any conclusion drawn from it. Do not settle whether something parses by counting brackets by eye — ask `node --check`. A question about a parser is answerable by a parser and by nothing else, and running the real one sweeps every commit in the range for free.
+
+**And the name can be wrong about the contents, not merely about whether they
+ran.** `final69-events-gender-first2026` sounds like the gender-split stroke
+ranking. It does not contain one: no `stroke_rankings`, no gender split, only an
+`openFunEventPage` that predates the feature. The ranking enters at
+`final71-event-data-rpc` and reaches its current shape at `final75-medal-rank`.
+
+So **before porting a release by name, grep the release for the thing the name
+promises.** One loop settles it:
+
+```bash
+for c in $(git log --format=%h --reverse origin/main..upstream/main); do
+  printf '%s %s\n' "$c" "$(git show "$c:index.html" | grep -c '<the identifier>')"
+done
+```
+
 Two traps in reading his diffs. A whole-file re-upload makes reformatting look like change, so separate real behaviour from churn before concluding anything. And an upload can be **truncated**: `3d1be2b` cut `index.html` to 246 lines and `954d9a7` restored it two minutes later, so a per-commit diff across that pair shows enormous phantom changes. Diff cumulatively (`origin/main..upstream/main`) unless you specifically need one commit.
 
 ## Workflow rules
 
 **Never commit straight to `dev` or `main`.** Every feature or fix branches off `dev`, gets a PR, and merges back into `dev`.
+
+**Always branch off `dev`, never off another branch that is still in flight.** This is not style. **Every PR here is squash-merged**, so when the branch you forked from lands, its file arrives on `dev` as a *brand-new blob with no ancestry in common with your copy.* Git then sees one path created independently twice and raises an **add/add conflict** on a file neither of you may have meaningfully changed. That is what happened to `chore/ci-migration-numbers`, and it cost more time on 2026-08-26 than any other single thing.
+
+**Three things about that conflict, because the obvious reading of it is wrong in a dangerous direction.**
+
+**A two-dot diff measures staleness, not danger.** `git diff origin/dev..<branch>` compares tips, so it reports everything that landed on `dev` since you forked as *deletions* — even though a merge would never delete them. `CLAUDE.md | 14 --------------` looked like a PR about to revert someone's work; it was not. Reproduced with `git merge-tree --write-tree`, the merged `CLAUDE.md` came out **byte-identical** to `dev`'s. A three-way merge does not drop lines present on one side only. The two-dot diff fires on every branch that is behind, so as an alarm it is **all false positives** — read it as "this branch lacks things `dev` has", which is a reason to look, not a verdict.
+
+**The danger is in the resolution, not in the diff.** An add/add conflict offers whole files, not hunks. Taking "ours" is where work disappears — and it disappears **silently, having never appeared in the diff anyone reviewed**. So the fix is not a better conflict resolution; it is not having the conflict:
+
+```bash
+git switch -c fix/<thing> origin/dev
+git checkout origin/<stale-branch> -- <the one path you want>
+```
+
+The resulting file list *is* the proof. If it names one path, nothing else can have moved.
+
+**And do not infer one artifact's behaviour from a different artifact's output.** The two-dot `--stat` and the merge result are two different products of the same two commits, and reading the first to predict the second produced a confident, wrong, team-wide rule. When the question is "what will the merge do", the answer comes from `git merge-tree`, which performs the merge.
 
 **`main` is our release line** (changed 2026-08-25; it previously mirrored the president's upstream). `dev` merges into it through a `chore/release-vX.Y.Z` PR, and the merge commit gets a matching `vX.Y.Z` tag. Nothing else lands on `main`.
 
@@ -125,6 +172,34 @@ Fill in every section of `.github/PULL_REQUEST_TEMPLATE.md`; write "해당 없�
 
 The light pass is deliberately conservative and reports "이미 좋습니다" when the text needs nothing, so a clean PR body costs one quick call and no edits.
 
+## Model routing
+
+**Set by the user on 2026-08-31, after a day that merged twenty-odd PRs and ran codex up to
+five passes on one of them. The cost of convergence was not being measured by anybody.**
+
+| Work | Model |
+|---|---|
+| Leading, planning, deciding scope, judging a disagreement | `opus` (or `fable`) |
+| Implementing, reviewing, writing tests, writing migrations | `sonnet` |
+| Reading, looking something up, counting, confirming a file exists | `haiku` |
+
+Pass `model=` explicitly on every `Agent` call. An agent that inherits the parent's model is
+almost always more expensive than the work needs.
+
+**A running agent's model cannot be changed.** Spawning is where the choice is made, so a
+long-lived teammate started on the wrong tier stays there until it finishes — replace it on
+its next spawn rather than trying to correct it mid-flight.
+
+**codex is the expensive path and needs a reason.** Migrations, RLS, auth, money — one pass,
+at `high` effort where the diff earns it. Reach for a `sonnet` subagent first everywhere else;
+five rounds on one PR each found something real, and that is exactly why nobody stopped to
+ask what the finding cost.
+
+**Reviews still may not be self-approvals.** The tier came down; the separate-lane rule did
+not. A `sonnet` reviewer in its own context is the default, and it has repeatedly found real
+defects here — a recursive `jsonb_strip_nulls`, an assertion that treated its own error
+message as a pass, a nullability regression reported as `dev` being red.
+
 ## Feature team
 
 Non-trivial feature work runs through a standing team of subagents, spawned in parallel from one message. Small mechanical edits don't need it — a new screen, a schema change, or anything touching auth does.
@@ -133,15 +208,43 @@ Non-trivial feature work runs through a standing team of subagents, spawned in p
 |---|---|---|
 | Architect | `oh-my-claudecode:architect` (opus) | stack decisions, module boundaries, where authority lives |
 | PM | `oh-my-claudecode:planner` (opus) | scope, phasing, what ships in this slice |
-| DBA | `everything-claude-code:database-reviewer` | schema, RLS policies, constraints, migration safety |
+| DBA | `ecc:database-reviewer` | schema, RLS policies, constraints, migration safety |
 | UX | `oh-my-claudecode:designer` | IA, routes, component composition, states and save feedback |
-| Reviewer | codex `gpt-5.6-sol` via CLI | adversarial second opinion; see `<codex_delegation>` |
+| Reviewer | codex `gpt-5.6-luna` via CLI | adversarial second opinion; see `<codex_delegation>` |
+
+**Four of the five ship with plugins, and only one of those needs installing.** `architect`,
+`planner` and `designer` come from `oh-my-claudecode`, which is already present. The DBA does not:
+it lives in a marketplace that has since been **renamed**, so the agent id in the table is
+`ecc:database-reviewer` and not the `everything-claude-code:…` this file carried until 2026-09-02.
+
+```
+/plugin marketplace add affaan-m/ECC     # the repo redirects from affaan-m/everything-claude-code
+/plugin install ecc@ecc                  # marketplace "ecc", plugin "ecc"
+```
+
+**A missing agent does not announce itself as missing** — the brief simply never runs, and the
+role's work quietly becomes nobody's. Check the agent list before spawning the team, rather than
+after reading a plan with no schema review in it. Installing `ecc` also brings a **GateGuard hook**
+that demands a fact list before the first Bash command and before first touching each file; it is
+not a malfunction, and the facts it asks for are cheap on a file you have already read.
 
 Four things that cost real time when skipped:
 
 - **A teammate's idle notification is not a report.** Their final message does not reach the lead automatically — ask for the full deliverable via `SendMessage` (bare name, no `@session` suffix) or it is lost.
 - **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
+
+  **2026-09-02 is the cheapest example this project has.** An upstream survey came back with file:line evidence throughout and one confident conclusion: 자유게시판 is "완전히 새로운 기능, CLAUDE.md에 전혀 없음 … 우리 백로그에 없는 완전 신규 기능이라 별도 스코프 논의가 필요". Every word about *his* app was right. The claim about **ours** was wrong — we shipped it in `#13`, it has four components under `app/src/features/board/` and two migrations (`0033`, `0037`), and it is the **first item** in `HANDOFF.md`'s 「되는 것」 list.
+
+  The shape is worth naming, because "demand evidence" would not have caught it: the agent was asked to survey **upstream**, so it evidenced upstream thoroughly and asserted the *comparison* from memory. **An agent's evidence covers what you sent it to look at; the half of a comparison that lives on your side arrives unchecked.** Acting on it would have meant rebuilding a finished feature. One `git log --oneline | grep -i "free board"` refuted it.
 - **Hand out migration numbers up front; do not let agents pick.** Checking `ls` and the ledger immediately before writing narrows the race, it does not close it — `0020` and `0024` were each claimed twice on 2026-08-25, the second collision forty-eight seconds apart, by parties who had both just checked. Resolving it afterwards means renaming a file, deleting a ledger row and re-applying, with a window where the ledger and the directory disagree. Assign `0031` to one agent and `0032` to the next in their briefs, or give only one of them the task.
+
+  **Where you look before handing a number out is the other half of the rule.** A local `ls` is not an answer — a worktree cannot see another worktree's unmerged files. That is exactly the 2026-08-26 failure: a directory listing was read in one worktree and the number judged free. There are two places to look.
+
+  - `public.schema_migrations` — everything already applied is here, and because the dev database is shared, every branch's work collects in it.
+  - `app/supabase/migrations/` on **every remote branch** — files not yet applied but whose names somebody has already claimed. **`git fetch` first**, or the refs you are reading are as stale as the listing you were trying to avoid.
+  - `git worktree list`, then that directory in each — a file written five minutes ago in a sibling worktree and not yet pushed appears in **neither** of the two places above.
+
+  **And a duplicated number raises no error anywhere today.** `schema_migrations` is keyed on the full filename rather than the number, so `0036_a.sql` and `0036_b.sql` sit down as two perfectly ordinary rows. Nothing complains on apply, in CI, or in review — which is a gap in CI rather than a law of nature, since a duplicate numeric prefix is trivially detectable by a machine that looks once. Until that check exists, reading the filenames side by side is what finds it. The number is still the lead's to assign; these are the places to look before assigning one.
 - **Never reconstruct a function body from a report.** `CREATE OR REPLACE` on an existing function is the same trap as porting the result parser: writing 0024 from a teammate's description silently dropped `p_user_agent` and changed the conflict target from `(member_id, endpoint)` to `(endpoint)` — the first would have broken the client's call, the second the device cap, and both would have applied cleanly. Read the current definition out of the migration that owns it and change only the line you came to change.
 
 ## PR review loop
@@ -149,12 +252,42 @@ Four things that cost real time when skipped:
 Every PR follows the same cycle, and it repeats without asking for approval between rounds:
 
 1. Open the PR (template filled, `/humanize-korean 가볍게` on the body).
-2. Self-review with codex: `gpt-5.6-sol`, `model_reasoning_effort=medium` for routine diffs, `high` when the diff touches auth, RLS, migrations, or money.
+2. Self-review with codex: `gpt-5.6-luna`, `model_reasoning_effort=medium` for routine diffs, `xhigh` when the diff touches auth, RLS, migrations, or money.
 3. Post the verdict as a PR comment — findings and their severity, in Korean.
 4. Fix every critical and high finding, push to the same branch, and note the fix in the thread.
 5. Merge into `dev` only when **all three** hold: CI is green, no critical or high finding is left open, and anything the change claims to do has actually been exercised (a migration applied and queried back, a screen loaded, a test run). Mediums and lows may ship with a note saying why they were deferred.
 
+**One step in this loop cannot be performed at all here.** `/humanize-korean` is installed as a plugin skill (`~/.claude/plugins/cache/im-not-ai/humanize-korean/…`) and is **absent from the available-skills list**, which carries every other plugin's skills. Both the bare name and the qualified `humanize-korean:humanize-korean` answer `Unknown skill` — verified 2026-08-26 from a subagent and from the lead session alike.
+
+So there is nobody here to hand it to. Until that changes: **do the light pass by hand** — read the Korean prose once for the constructions the skill targets, fix what is stiff, and **leave the template's checkbox unticked with the reason written in it.** Do not tick it, and do not quietly skip it. The intent of the rule stands; the tool named in it does not currently exist for us, and a checklist ticked by convention has stopped being a check.
+
+Note the shape of how that was nearly recorded wrongly, **twice, in opposite directions**. First: three searches came back empty — `~/.claude/skills`, `~/.claude/commands`, the project `.claude` — and the conclusion drawn was *"not installed on this machine"* when the honest claim was much narrower, *not in the three directories checked, under the name tried.* A plugin skill lives in none of those three. Then, correcting that, the lead asserted the pass was **the lead's to run** — without trying it, and it fails there too. Both errors are the same move: a claim about the world inferred from a claim about one's own search. The rule two sections above catches both, in two halves — a check that finds nothing must first prove it was capable of finding something, and **an assertion that somebody else can do a thing is worth exactly as much as a check that they can.**
+
 A review finding is not fixed because the diff changed — it is fixed when the fix is verified the same way the defect was found. Grants were the lesson: `revoke ... from public` looked correct and left `anon` holding EXECUTE until the live ACL was queried.
+
+**A revoke goes wrong in both directions, and the second one is the quiet one.**
+
+```
+0014   revoke ... from public          left anon holding EXECUTE      <- kept what it should not
+0043   revoke ... from authenticated   took EXECUTE something needed  <- removed what it must not
+```
+
+`0043` widened three storage helpers and revoked `public, anon, authenticated` from each with no matching grant, reasoning that they are called by storage policies and by each other, never by a browser. The second half is true and **the conclusion does not follow: an RLS policy expression is evaluated as the CALLING role.** When a member uploads a file it is `authenticated` that executes `is_my_media_object_path()` inside `team_files_insert`'s WITH CHECK. `SECURITY DEFINER` decides whose privileges the *body* runs with; it does not excuse the caller from needing EXECUTE.
+
+So the revoke broke **every upload in the app** — media, 자료실 and notice attachments, not merely the new library — with `permission denied for function is_my_media_object_path`. **The migration applied cleanly and nothing failed until the next upload.**
+
+**Neither the migration text nor the diff showed it.** Both read as correct, because "revoke then grant to authenticated" is the right idiom for an RPC the browser calls and these did not look like that. What found it was the live ACL with the changed functions set beside their unchanged siblings:
+
+```
+is_my_avatar_object_path     postgres=X | service_role=X | authenticated=X
+is_my_team_file_path         postgres=X | service_role=X | authenticated=X
+team_file_is_readable        postgres=X | service_role=X | authenticated=X
+is_my_media_object_path      postgres=X | service_role=X                     <- changed
+media_object_is_claimed      postgres=X | service_role=X                     <- changed
+team_file_library_allows_me  postgres=X | service_role=X                     <- changed
+```
+
+**You do not have to know the correct ACL to see that only three differ.** That is the general move and it costs one query: after changing an object, list it next to the objects you did not change and look for the column that stopped matching.
 
 Three later cases sharpened the same rule, each one a thing that reading the code could not have caught:
 
@@ -185,6 +318,39 @@ This is the most dangerous tool failure on the list, because every other one ann
 
 `[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Prefix with `rtk proxy` to get the real output, or ask the GitHub API directly. Never let a wrapper's empty listing be the reason you skipped a step.
 
+**`gh pr create` invents a reason rather than failing.** Two measurements on 2026-08-26. It answered `No commits between dev and <branch>` for a branch that was genuinely one commit ahead — `gh api repos/oknkc8/team-eysl/compare/dev...<branch>` returned `{"status":"ahead","ahead_by":1}` at the same moment. And it answered `Head sha can't be blank, Base sha can't be blank, … Head ref must be a branch` for two refs that both existed on the remote.
+
+That is the dangerous half: not a failure but a plausible wrong answer. "No commits between" reads as *you forgot to commit*, and sends you to re-push a branch that was never the problem.
+
+So when PR creation claims there are no commits or no refs, **check with `gh api repos/<owner>/<repo>/compare/<base>...<head>` before believing it.** Two things get past it: adding `--repo oknkc8/team-eysl` explicitly, which is the cheaper thing to try first, and POSTing to `gh api repos/<owner>/<repo>/pulls` directly, which created PR #18 immediately after `pr create` had refused.
+
+**A check that finds nothing and then declares a pass is worse than no check.** The two entries above are instances of one failure, and this repository met it in six shapes on 2026-08-26 alone.
+
+- `grep` returned 11 of 12. In another case it returned 0 against files containing 19.
+- `gh pr list` printed `[]` for an open PR. `--state all` printed `[]` too.
+- `git show` piped into `sha256sum` produced `e3b0c442…` — **the hash of the empty string.** Nothing was compared; the file was never read.
+- A failed `cd` left a 0-byte file behind, and scanning that file read as "there are no Edge Functions".
+- A schema extractor matched a stub earlier in the file, printed `Tables: 0`, and then announced `UNION PRESERVED`.
+- A conflict-marker scan reported three `-- =========` comment banners as conflicts. That is the same failure running backwards — a check that finds what is not there burns an hour and can talk somebody into "resolving" a healthy file.
+
+What they share is that **the result is indistinguishable from "there was nothing to find"**. So the rule is one line: when a check returns zero, **first establish that the check was capable of finding something.** That the input was not empty, that the pattern hits a known positive, that the tool actually ran.
+
+The general form, of which the hash is the memorable instance: **anything that must not be empty gets its size or row count checked before its content is trusted.** `wc -c` on the file, `len()` on the list, a `count(*)` on the query, an `assert` on the extracted block. A comparison of two empty things succeeds.
+
+`e3b0c442…` is worth memorising because it is that failure wearing a disguise — the sha256 of the empty string, produced when `git show` writes its error to stderr and `sha256sum` hashes nothing. It is a well-formed 64-character hash and it means "nothing was read". **Treat it as an automatic failure in any verification pipeline.**
+
+**That rule has a false-positive mode, and it is the mirror image of the hash.** `wc -c < file` returned **0** for a 49,714-byte file — but only when chained into the same call, behind the wrapped redirect that had just written it. `sha256sum` in that same call returned the correct hash, and run separately, python, `os.stat`, `ls -l` and `wc -c` all agreed on 49,714. The wrapper's redirect finishes asynchronously, so a size check chained behind it reads the file too early.
+
+The direction is the whole point. `e3b0c442…` is an empty result that means a real problem; this is an **empty result that means nothing is wrong** — so the rule above, applied literally, condemns a healthy file and sends somebody hunting a defect that does not exist.
+
+The rule stands, with one condition attached: **do not chain a size check into the same call as a wrapped redirect that produced the file.** Check it in a separate call. What made this diagnosable was `sha256sum` being right in the same breath that `wc -c` was wrong — one tool reading early, not a file that was empty. Two tools side by side found it; either one alone would have concluded the file was empty.
+
+**Count what your cause explains against what you observed.** On 2026-08-26 a signup rate limit was found to be real — a 417ms refusal carrying an error code, a retry timer and a Korean sentence — and was then offered as the explanation for about forty failing e2e tests. It explained nine. Seeding never calls `register_member`, and exactly one spec touches the signup RPC, so thirty seconds of reading would have settled it. The reading did not happen because the artefact was so specific that it felt like proof of more than it proved.
+
+**That is this section's failure running in the opposite direction.** Everywhere above, the danger is an **empty** result that looks like an absence. Here it is a **very specific** result that looks wider than it is. Both end an investigation early, and the arithmetic is the cheap guard against the second one: nine against forty fails on sight.
+
+**And a workaround deserves the same scepticism as the code it works around.** In that same episode the neighbour's preview server was verified to be real, the port genuinely taken, and `reuseExistingServer` genuinely capable of returning a green run against somebody else's bundle — every claim about the problem checked. Then a two-line override was trusted without checking whether it reached everything, and it did not: it moved the first browser and left every second browser on the old port, because the fixtures import the base URL as a **constant** rather than reading the resolved config. **Every claim about the problem was checked and no claim about the fix was**, and that asymmetry is the whole of it.
+
 **And even the real compiler never looks at `app/supabase/functions/`.** `app/tsconfig.json` has `"include": ["src", "vite.config.ts"]`, so the Edge Function source is outside every gate this repo has: tsc does not read it, and vitest transpiles the tests beside it without typechecking. A type error in `push-notify/index.ts` would be caught by nothing and would first surface as a failed deploy or a runtime error in production.
 
 That makes "typecheck passes" narrower than it sounds, and it is the kind of claim that gets repeated because it was true about the part somebody happened to be looking at. **Say which tree you checked, not just that the check was green.**
@@ -193,13 +359,653 @@ That makes "typecheck passes" narrower than it sounds, and it is the kind of cla
 
 **Both typecheck commands have to be run; neither implies the other.** `npm run typecheck` reads `src`, `npm run typecheck:functions` reads `supabase/functions`, and a green one says nothing about the other tree.
 
+**`member_link_summary_v1` is left out of `src/types/database.ts` on purpose, and `npm run db:types` silently puts it back.** It is granted EXECUTE to **no client role** — the live ACL on 2026-08-26 is `{postgres=X/postgres,service_role=X/postgres}`, with no `authenticated` and no `anon`. The browser therefore cannot call it, and keeping it out of the types means calling it by mistake **breaks the compile instead of throwing at runtime in front of a 총관리자.**
+
+`db:types` overwrites the whole file, so that decision leaves no trace inside it: after regenerating, check whether this function came back and take it out again.
+
+**And that is not the only thing regenerating changes. It also drops `| null` from nullable parameters.** Verified 2026-08-27 while adding `0048`:
+
+```
+OLD (committed)     p_notice_id: string | null   p_expected_updated_at: string | null
+NEW (regenerated)   p_notice_id: string          p_expected_updated_at: string
+```
+
+**The old file was right.** `save_notice_v1` signals "create" by passing `p_notice_id` as null and branches on `p_notice_id is null` — **the generator cannot see that a plpgsql parameter is nullable, so it produces a type that forbids a call the function was designed to accept.** `notices/api.ts:338,342` stopped compiling the moment the file was rewritten.
+
+Note the shape of the failure rather than the two field names, because the names will change. Regenerating is something you do while working on your *own* feature, and the breakage lands in **somebody else's**: left unexamined it reads as *"my change broke notices"*, and the next move is to go looking in the wrong file. Nothing in the diff says "the generator did this" — the line simply lost four characters.
+
+So after `npm run db:types`, two checks rather than one: whether `member_link_summary_v1` came back, **and whether any nullable parameter lost its `| null`.** `git diff src/types/database.ts` shows both in one read; restore by hand and say why in a comment, as `save_notice_v1` now does.
+
+**This is one deliberate exception, not a policy.** Do not generalise it into "strip every ungranted function" — `gen-types.sh` is supposed to describe the whole schema, and a rule that quietly narrows it would make the generated file lie about the database. If another function ever earns the same treatment, it earns its own line here.
+
+**A second thing `db:types` reverts, found the hard way on 2026-08-31.** `save_notice_v1`'s
+`p_notice_id` and `p_expected_updated_at` are `string | null` in the committed
+`database.ts`, and **the generator has never produced that.** It was hand-written in
+`2ab2153` (#24); `gen-types.sh` pipes `supabase gen types` straight over the file with no
+post-step. A DEFAULT makes the generator emit an *optional* parameter — `p_attachment_path?:
+string`, as `send_message_v1` shows — never a nullable one. So a regeneration silently
+narrows both to bare `string`, and `notices/api.ts`'s deliberate `?? null` (which its own
+comment explains: null means "create rather than update") stops compiling.
+
+**The dangerous part is how that failure presents.** It looks exactly like `dev` being red,
+because the two broken lines are in a file the regenerator never touched. It was reported
+that way. The check that would have settled it is `git diff origin/dev -- <file>` — and the
+one that was used, `git diff HEAD`, answers a different question once the regenerated file
+is committed: not "does this match dev" but "has anything changed since my last commit".
+Its empty output is the same shape as every other empty result on this page.
+
+**The worktree anchor moves to a different worktree mid-session.** Seen twice on 2026-08-26. Once, `git add … && git commit` ran in **`feat/admin-claim`** instead of `fix/media-delete-orphans`; the other time, `claim2`'s `git mv` succeeded in `admin-claim` and the very next `git commit` ran in **`fix/media-delete-orphans`**. **Neither committed anything, and that is purely because the other tree happened to be clean.** Had it been dirty, somebody else's work would have gone in under our commit message.
+
+It takes two forms, and they need different detection.
+
+- **Split** — git and the shell point at different places. A relative `git add` then fails with a `pathspec` error, so it is comparatively visible.
+- **Whole-session move** — `pwd` and `git rev-parse` **agree with each other and both point somewhere wrong.** A check that compares the two will never catch this one.
+
+**Checking beforehand cannot prevent it.** The move can happen between the check and the command, so two separate calls guarantee nothing about each other. The branch has to be proven **inside the very shell that does the work.**
+
+```bash
+git branch --show-current | grep -qx <branch> && git <cmd>
+```
+
+This form is the one to use because it **refuses** when it is wrong. `git rev-parse --abbrev-ref HEAD && git <cmd>` only prints the branch and then runs anyway, so it is caught only if a person reads the output.
+
+**A guard that reports has to be read by somebody; a guard that short-circuits cannot be misread.** That distinction matters more than the command itself — whenever building a new check, decide what happens on failure first, then pick the form.
+
+The guard fired for real while this paragraph was being written, stopping a commit from landing in `feat/admin-claim`. Separately, the worktree directory itself came back on another agent's branch; what saved the work then was not the guard but **committing and pushing after every edit**. The guard protects where a commit lands, not whether the checkout is still yours.
+
+**But git itself is not lying — and an earlier version of this section said it was.** The claim that `git status` and `git log` report the wrong branch was investigated and disproved. `claim2` followed the `.git` pointer in 14 worktrees to read each `HEAD` file directly, then ran `branch --show-current`, `rev-parse --abbrev-ref HEAD` and `status --short --branch` in every one of them, bare and substituted: **70 readings, zero disagreements**, the multi-line `status` included. Every reading that looked wrong was true about a different directory.
+
+**Each git command is honest about wherever it is standing at that instant. The anchor is what moves.** Three sightings on 2026-08-26, each with somebody's work in reach:
+
+- The lead believed it was in `free-board` and was standing in `chore/e2e-parallel-isolation` — another agent's tree, holding 161 uncommitted lines. A `CLAUDE.md` edit sat beside them for five minutes.
+- `claim2`'s shell was anchored in `enrol`, also not its own, **holding one unpushed commit.** Nothing was lost only because there was nothing to commit.
+- `badges2` drifted through six trees in one session — `strokes`, `free-board`, `admin-claim`, `cinum`, `porting`, `enrol` — and one `git add` of three paths ran in the wrong one. Harmless only because those paths were unmodified there.
+
+**In all three, what prevented harm was the state of the tree that was landed in, not any defence.** The lead's edit sat beside 161 uncommitted lines and happened not to disturb them; `claim2`'s tree held an unpushed commit and there happened to be nothing to add; `badges2`'s three paths happened to be unmodified where the `git add` really ran. No tool refused anything in any of the three.
+
+**So do not read "nothing happened" as evidence that something protected you.** It usually means the tree you drifted into was quiet at that moment, which is a fact about somebody else's working state and not a property of your setup. The same drift onto a dirty tree writes another agent's uncommitted work into your commit.
+
+Keeping the disproved version would have been worse than writing nothing. It teaches people to distrust `git status`, and **the accident still happens to someone who distrusts it**: `status` honestly reports a stranger's branch, and the reader has no way to tell the branch is a stranger's.
+
+**What the guard does not cover.** It compares against a branch name, so it protects a **change**. It cannot protect a path that **reads** while the anchor is wrong and then decides from what it read. That is the path that caught the lead, who was reading and editing rather than committing, so the guard had nowhere to fire.
+
+**`git -C <absolute path>` is not the escape hatch it looks like.** It is available in some sessions and refused in others, and where it is refused the refusal *follows* the drift rather than correcting it. Measured by `badges2` while the anchor was wrong:
+
+| command | result |
+|---|---|
+| `pwd` | `…/worktrees/free-board` — drifted; the assigned tree was `badges-medals` |
+| `git -C …/badges-medals rev-parse` | **refused**: "must target its own worktree" |
+| `git -C …/free-board rev-parse` | allowed → `chore/e2e-parallel-isolation` |
+
+The guard's notion of "its own worktree" **is** the drifting anchor, so `-C` was permitted only toward where the drift had already gone and refused toward the real tree. Where `-C` is available, prefer it: it looks at the right place rather than merely refusing the wrong one. Where it is refused, use `EnterWorktree` and then confirm the move happened with `pwd` + `branch` + `HEAD`, not with the tool's success line.
+
+**And `board2` narrowed exactly when `-C` works, which turns out to be the unhelpful half.** It succeeds when the anchor is sound and you are reading *another* tree. It is refused when you have drifted and are trying to reach **your own** tree — because at that moment your own tree is the "shared checkout" as far as the harness is concerned. **So it is missing precisely when it is needed, and present only when it was not.**
+
+**The recovery that does work is `EnterWorktree`, then the work.** `board2` recovered that way four times in a single turn, and `claim2` did the same and confirmed the move with `pwd` + `branch` + `HEAD` rather than the tool's success line. Treat `-C` as a convenience for reading somebody else's tree from a healthy session, not as a remedy for drift.
+
+**And settle a branch switch by SHA, never by its success message.** `git switch -C` once printed its success line while `HEAD` had not moved. That is consistent with the anchor explanation — it may well have switched a different tree — so the only claim worth writing down is the operational one: after switching, compare `git rev-parse HEAD` against the SHA you expected.
+
+**The read path is not a hypothetical, and the reading that drifts may be your verification.** Writing this very section, `badges2` patched `CLAUDE.md` in `lead-docs-pr`, confirmed in python that all 37 lines were additions and every original line survived, and then ran `git diff --numstat origin/dev -- CLAUDE.md` to confirm it. The answer was **`0 76` — nothing added, 76 lines deleted.** The anchor had moved to `admin-claim`/`feat/notice-attachments` between the write and the check, so git honestly described *that* tree's file. Re-entering the right worktree and asking again gave `37 0`.
+
+Two things make this the sharpest instance on the page. **`pwd` and `git rev-parse --show-toplevel` agreed with each other and were both wrong** — the whole-session move described above, which no comparison between them can catch. And the wrong answer was not merely wrong but **alarming**: "you deleted 76 lines" is exactly the reading that provokes a `checkout --` or a `reset --hard`, so believing it would have destroyed the work it was meant to protect. **Prove the location in the same call as the check** — `echo $(git branch --show-current)` beside the diff — for reads as well as for writes.
+
+**A second way to be handed alarming false deletions: diff against a `dev` that moved.** Checking the same file an hour later, `git diff --numstat origin/dev -- CLAUDE.md` reported **17 added, 26 deleted** — and those 26 were content from a PR that had merged between the fetch and the check, which the branch simply did not carry yet. Nothing had been deleted. Asking about the branch's **own** base instead, `git diff HEAD -- CLAUDE.md`, answered `14 0`, which was the truth.
+
+The two look identical on the terminal and share no cause: one is the anchor moving under you, the other is the base moving ahead of you. **Both are avoided by asking about your own change rather than about a moving reference** — make `git diff HEAD` the habit, and keep `origin/dev` comparisons for the question they actually answer, which is how far behind you are.
+
+**`ps` is the worst of these, and the reason is that its lie is the answer you wanted.** `git status` printing `ok` is obviously not git's output. `gh pr list` printing `[]` at least looks odd for a repo with open PRs. But `ps | grep <anything>` returning nothing looks exactly like *"that program is not running"* — so it **confirms rather than contradicts**, and an investigation stops. Every "I checked, nothing was running" in this project's history was produced this way.
+
+**Read `/proc` instead.** `ls -d /proc/[0-9]* | wc -l` for a count, `/proc/<pid>/comm` and `/proc/<pid>/cmdline` for what a process is. Nothing sits between those files and the truth. `rtk proxy ps` also works, but it puts a wrapper in the path and wrappers are the subject.
+
+**And the interception depends on how the command is invoked, which is why two people measuring the same thing disagree.** Measured on 2026-08-26, same shell, seconds apart:
+
+```
+bare      ps -e | wc -l        31        <- wrong
+$( )      ps -e | wc -l      1100        correct
+          ls -d /proc/[0-9]* | wc -l
+                             1100        ground truth
+
+bare      wc -l < file          0        <- wrong
+$( )      wc -l < file         31        correct
+bare      wc -l   file         31        correct
+```
+
+**The wrapper intercepts the command as typed; it does not reach inside `$( )` command substitution.** So the same query gives two different answers depending on where you put it, and the bare form — the one you type when you are checking something quickly — is the one that lies.
+
+That has a cheap consequence worth using: **run it bare and substituted, and if they disagree, the bare one is wrong.** It also means a verification that happens to wrap everything in `$( )` will fail to reproduce a real bug and can talk you into telling a colleague their correct finding is mistaken. That nearly happened while this paragraph was being written.
+
+Two more from the same session. **`cat` fabricated a truncation count**: a 31-line file printed with `... (1065 lines truncated)` appended, and 31 + 1065 is 1096 against a real 1080 — **the invented number nearly reconciled the two figures being compared**, which is worse than an obvious lie because it manufactures exactly the reassurance that ends an investigation. And the standing rule about `pwtest` rows still holds — **a row count means nothing without a paired "is a runner active" check** — but `ps` cannot supply that second half, so pair it with `/proc`.
+
+**A wrapper can also forge line numbers while reporting the content correctly.** `grep -n` placed `<codex_delegation>` at line 454, and `sed -n '445,462p'` duly printed that very block — in a file where it actually lived at **line 371 of 384**. Content right, coordinates wrong, which makes it the only member of this family that survives a spot-check: you read what was printed, recognise it, and therefore believe the number that arrived with it.
+
+Harmless while reading; dangerous the moment you write. `sed -i '454s/…/…/'` edits a real line, the wrong one, and exits 0.
+
+**So do not address a file by line number.** Anchor an edit on unique surrounding text — which is what the Edit tool does — and where a line number is genuinely needed, take it from the Read tool or from python rather than from a wrapped `grep -n`.
+
+**`| tail -N` on a test summary is a false-green generator.** `vitest` prints the file tally and the test tally on adjacent lines, and `tail` keeps the wrong one:
+
+```
+$ vitest run 2>&1 | tail -4
+      Tests  532 passed (532)          <- reads as a clean run
+
+what tail dropped, one line above:
+ Test Files  2 failed | 30 passed (32)
+```
+
+Every other trap in this section is a tool answering about the wrong input. This one is different and worse: **the tool answered correctly and the reader was handed the wrong half.** Nothing was broken, nothing was wrapped, and the output was true.
+
+Grep for what you mean — `vitest run 2>&1 | grep -E "Test Files|Tests "` — and never take the last N lines of a summary whose failure line comes first.
+
+**And the thing that actually caught it was arithmetic, not output.** 532 was lower than the 555 from before the merge, and a merge that adds a migration cannot remove tests. Had the numbers happened to line up, the run would have been reported green. So: **a count that moved the wrong way is a failure to investigate, not a curiosity.** Three separate agents arrived at that habit on 2026-08-26 — a test tally, a column count going 9 to 10, and this — which makes it the most reliable check any of us has, and it is not a check at all. It is noticing.
+
 **A suite that needs `app/.env` passes for every developer and fails only where nobody is watching.** `vitest run` on a fresh checkout dies before its first assertion: `endpoint.rule.test.ts` imports `MAX_PUSH_DEVICES` from `src/features/push/api.ts`, that pulls in `src/lib/env.ts`, and `env.ts` zod-validates `import.meta.env` at module load and throws `Missing or invalid environment variables: VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY`. What satisfies it locally is `app/.env` — git-ignored, so present on every machine that has ever been set up and absent everywhere else.
+
+**Do not read that as being about one file.** The door is not `endpoint.rule.test.ts`; it is **any test whose import graph reaches `src/lib/env.ts`**, however indirectly. On 2026-08-26 there were two — `achievements.test.ts` joined it through the achievements feature — and the number grows with every feature that imports from `src/lib`. A reader who checks the one filename named here, on a tree where the other one is the problem, concludes this section does not apply to them.
+
+The way to find today's set is to make the condition and look, not to grep for a name:
+
+```
+mv app/.env app/.env.off && npx vitest run; mv app/.env.off app/.env
+```
 
 The local pass is therefore not evidence about CI, and the failure direction is the awkward one: it is green for everyone who could notice and red only in the place nobody watches until a PR is already open. Reading the workflow would never have found it. It took copying the tree without `.env` and running the suite there, which is the general move — **to predict a fresh checkout, make one.**
 
 `.github/workflows/app.yml` supplies two synthetic values scoped to the Unit tests step alone rather than to the job. Job-wide would have been shorter and would have quietly guaranteed that a step which genuinely needs real configuration passes anyway; granting the env only where the need was demonstrated keeps every other step failing honestly.
 
+### A write that succeeds without writing anything
+
+Everything above is a **read** that returned nothing and looked like an absence.
+The write side has the same failure, and it is quieter.
+
+```
+BEGIN
+INSERT 0 0     <- here
+COMMIT
+```
+
+`INSERT 0 0`. The transaction succeeded, `ON_ERROR_STOP` did not fire, `COMMIT`
+printed. A `cross join lateral` had selected zero members because the `pwtest%`
+rows had been cleaned up in between - and **an INSERT that matches nothing is not
+an error, it is an ordinary zero-row insert.**
+
+Without reading the count back, the next step was photographing an empty screen -
+and an empty screen does not look like a failure, it looks like *"there must not
+be any data yet."* So: **a successful `INSERT`/`UPDATE`/`DELETE` does not mean rows
+were affected, and `COMMIT` does not mean the intended thing happened.** Read it
+back with `select count(*)`.
+
+### `str.replace` fails silently in both directions
+
+Patch scripts are how source gets edited here, because the worktree pin bounces
+`Write`/`Edit` at random. One line makes them safe:
+
+```python
+n = src.count(old)
+assert n == 1, 'anchor appears %d times, expected exactly 1' % n
+src = src.replace(old, new)
+```
+
+**Both directions are needed and both fired within ten minutes.** Without the
+assertion, an import was added on an anchor that did not exist in that file: zero
+matches, the script printed success, the file was rewritten unchanged, and only
+`tsc` caught it. With the assertion, a patch to `details?: unknown` followed by a
+closing brace was refused because it matched **three** places in one file - it
+would have silently retyped `ActivityRow` and `ApplicationRow` as a side effect of
+editing `ActivityInput`.
+
+This is the `0024` trap in a different costume. There, a function body was
+reconstructed from a description and lost `p_user_agent`; here a block is replaced
+from memory and lands nowhere. Both are **failing to confirm the target is the
+thing you think it is.** Pair it with `assert len(src) > 0` after reading, so an
+empty read cannot be written over a real file.
+
+### A pipe replaces the exit code with the last command's
+
+`tsc --noEmit | head` reports `head`'s status, which is `0` whether or not the
+compiler found errors - and the errors scroll past looking like ordinary output.
+Redirect to a file and check `$?`, or read `${PIPESTATUS[0]}`. **Any tool whose
+exit code you care about must not be the left-hand side of a pipe.** Same family as
+the `| tail -N` false green above: the tool answered honestly and the shell threw
+the answer away.
+
+### Some APIs answer the question next to the one you asked
+
+Three, all met while photographing screens:
+
+| asked | actually answered |
+|---|---|
+| `waitForLoadState('networkidle')` | the network went quiet - **not** that the screen finished rendering |
+| `scrollIntoViewIfNeeded()` | the element's *label* was visible, so nothing was "needed"; the input stayed behind the fixed nav |
+| `screenshot({fullPage: true})` | the whole document - painting `position: fixed` chrome through the middle of it |
+
+The first one's fix is `waitForScreen()`, which is what the suite actually uses —
+10 spec files call it. **Prefer a wait that asserts the state you mean over one
+that asserts a proxy for it.**
+
+*(An earlier version of this paragraph told you to wait on `aria-busy` going to
+zero and called that the general convention. It is not. Measured 2026-08-31,
+`aria-busy` appears **once** in `src` — `AsyncSection.tsx:55` — and **zero** times
+anywhere in `e2e`; no spec has ever waited on it. The claim did not start here: it was circulated as
+settled team convention and written down on that authority, without anybody grepping
+for it. That is the part worth keeping — **a convention arriving from a trusted source
+is still an unverified claim about a codebase**, and relaying one costs exactly what
+inventing one costs once it is in the file. **A convention is a claim about a
+codebase; grep for it before writing it down.**)*
+
+### Empty because the data is missing, or empty because the code is right
+
+These need opposite responses, and telling them apart is the whole of it.
+
+Three screens photographed empty in one sitting on 2026-08-27. **All three were
+empty because our code was correct:**
+
+- 월간 활동 요약 showed `0회 / 0%` - the fixture's attendance is anchored to March
+  and July, so August is legitimately empty.
+- 나의 대회 신청 내역 was blank - every seeded race falls on days 10-12 and 20-22,
+  and the run was on the 27th, so `hasFinished` correctly removed 신청하기.
+- The board list read as junk - `cleanup.sql` scopes by `author_id`, not a title
+  prefix, so natural titles are torn down identically and the epoch suffix that made
+  it look like test debris was never needed.
+
+Seeding more data fixes none of them: **the question was wrong, not the answer.**
+Compare the `INSERT 0 0` case above, which *is* missing data and *is* fixed by
+seeding. Treating the second kind as the first leads to seeding harder, watching it
+stay empty, and eventually suspecting code that was right all along.
+
+And the assertion that let all three through was the same one:
+`expect(h1).toBeVisible()` is **true of an empty screen**. An assertion that cannot
+fail on the emptiness you are guarding against is not guarding against it.
+
+### Words on a screen are not code, so no gate is aiming at them
+
+Two people hit this independently. It is a different family from everything above -
+not *"a check that cannot find it"* but **"no check is looking at this layer."**
+
+- A record-upload screen said 「파일은 이 기기 안에서만 읽습니다. **서버로 올라가지
+  않으며**...」. It was true when written. **A PR made it false** - the same PR whose
+  author had that file open.
+- A notice-attachment failure said 「목록에서 제거하고 다시 올려주세요」. A retry fix
+  made that false too: failed files now re-upload on save. It survived three review
+  passes.
+
+```
+typecheck   passes - it is a string
+tests       pass   - nothing asserts the sentence
+review      passes - reviewers check that the code is right, not that the code
+                     agrees with the Korean beside it
+git diff    silent - the line was never touched, so it never appears
+```
+
+**The dangerous case is not somebody else's stale copy. It is your own change making
+a sentence false that you did not edit** - precisely what a diff cannot show, because
+a diff shows what changed and this is a thing that *should* have changed and did not.
+
+So when you change behaviour, **search for sentences that describe that behaviour**
+instead of trusting the diff. One of the two was found by accident; the other was
+found because a screenshot had to be taken - which is a reason to keep the screenshot
+step even where nobody asked for a picture.
+
+### A gate that never touched the code path at all
+
+`safeObjectName` left Korean in storage object keys, and Supabase Storage rejects
+those with `400 InvalidKey`. **Five upload paths were broken for Korean filenames** -
+media, 자료실, notice attachments, result sheets, chat - which is the default case in
+this club. Four were already merged. Two agents reproduced it independently.
+
+Every gate was green, and honestly so:
+
+```
+typecheck, all trees   pass - it is a string
+unit tests             pass - they assert what safeObjectName RETURNS, never that
+                              storage accepts it
+browser e2e            pass - not one of them uploads a file
+```
+
+**The `team-files` bucket held zero objects.** No test in the repository had ever
+sent bytes to storage.
+
+**Code that talks to an external service is unverified until one test makes that
+round trip.** Asserting its inputs and outputs as tightly as you like says nothing
+about whether the other side accepts them. Three cheap symptoms: **is there zero data
+on the far side** (bucket objects, table rows), **is there a test that makes the round
+trip**, and **does that test assert the response.** Zero is the strongest of the
+three - an empty destination after months means nobody has walked the path end to
+end, and green gates then are not evidence of safety but evidence that the gates do
+not reach it.
+
+### Two migrations that `create or replace` the same function
+
+`create or replace` rewrites the whole body; it is not a delta. When two in-flight
+migrations both redefine one function **the later one erases the earlier**, and
+"later" means two different things:
+
+- **a fresh database** applies in filename order, so the higher number wins
+- **the shared dev database** applies in *wall-clock* order, so whoever re-applied
+  most recently wins - and re-applying an older migration silently reverts a newer one
+
+Two rules, and the second is the one that gets skipped:
+
+1. **Writing:** include the union, not your delta - carry the other migration's arm
+   even if it has not merged.
+2. **After applying:** read the live definition back and confirm your arm survived -
+   `select prosrc from pg_proc where proname = '<function>';`
+
+Without step 2 nobody learns their migration was quietly undone.
+
+### Applying an unmerged migration to the shared dev database
+
+It is legitimate - verifying a migration requires applying it. But **from that moment
+every agent's e2e reflects somebody's unmerged branch**, and the schema and the
+deployed code point at different commits.
+
+This cost a full investigation: notices could not be created, in the app as well as in
+tests, because an unmerged migration had revoked `notices_write` in favour of an RPC
+that only the unmerged code calls. The investigator scanned all 41 migrations on their
+own branch, found the policy created and never dropped, and concluded somebody had
+hand-edited the database. **A reasonable inference, and wrong** - the file was on a
+branch their `ls` could not see, which is the same blind spot that makes a local
+listing useless for claiming a migration number.
+
+So: **when the live database disagrees with the migrations, suspect an unmerged
+migration before suspecting a hand edit.** The question is answerable only across every
+branch:
+
+```bash
+git log --all -S '<policy or function name>' -- app/supabase/migrations/
+```
+
+The duty runs the other way too: **if you apply an unmerged migration to the shared
+database, tell the team**, or somebody else pays for a state only you can see.
+
+### A new worktree starts with three things missing, not one
+
+The fresh-checkout trap above is about `app/.env`. A new worktree is missing three:
+
+```
+node_modules            absent -> ./node_modules/.bin/tsc: No such file or directory
+<worktree>/.env         absent -> scripts/psql.sh refuses with ".env not found"
+<worktree>/app/.env     absent -> vitest dies in env.ts's zod validation
+```
+
+**There are two `.env` files and they are different.** The root one drives the psql
+scripts; `app/.env` drives vite and vitest. **psql working tells you nothing about
+whether vitest will run.** Each satisfies a different gate, and one succeeding does not
+license an inference about the others - which is the same shape as "say which tree you
+checked" two sections up.
+
+This is `.gitignore` behaving correctly, so it is a cost to pay rather than a defect to
+fix, but knowing it in advance saves three separate failures.
+
+### Ask git by a named ref, not by `HEAD`
+
+While the anchor is drifting, `git rev-parse HEAD` answers about whatever tree it is
+standing in - honestly, which is the problem. **Asking by branch name gets the right
+answer regardless of where the command is standing**, because the name resolves through
+the ref rather than through the current directory. Same lesson as `git -C`, and cheaper
+than either that or `EnterWorktree`.
+
+### `cleanup.sql` cannot see a signup row that has no auth user
+
+One `pwtest` member survived every teardown for **3.8 days**, outliving many full suite
+runs. Two agents each read `pwtest members = 1`, correctly paired it with a liveness
+check, and correctly left it alone - because a run really was live both times.
+
+It is unreachable for a structural reason:
+
+```
+nickname       pwtest.../98/남/관악
+status         pending
+auth_user_id   NULL          <- the reason
+```
+
+`cleanup.sql` reaches button-created accounts through a `pwtest%@eysl.local` **auth
+join**, and reaches the fixed fixtures by their known ids. This row has neither: its id
+is random and it has no auth user for the join to find, so it falls between both arms.
+
+Any signup path that writes a `members` row without an `auth.users` row produces one.
+Until the predicate covers it, **`pwtest members = 1` is that row** - and everybody who
+applies the liveness rule correctly will find no runner, conclude "leak", and spend the
+time again.
+
+### Counting processes does not answer "is anything contending with me"
+
+Eleven `writes.spec` tests failed together, and the diagnosis offered to the team
+was **machine saturation**, on this evidence:
+
+```
+playwright/vite preview processes running: 26
+```
+
+That number was real, and it was irrelevant. Read properly through
+`/proc/<pid>/cwd`, the 26 broke down like this:
+
+```
+humanride-cmd-motion   3   <- a different project on the same machine
+repo-infra-mcap-clock  3   <- a different project
+align-fix              3   <- a different project
+free-board             3   <- ours, but a 2.8-day-old dead playwright-mcp server
+chatattach             2   <- the only thing touching our database
+```
+
+**One.** The real cause was somewhere else entirely: the branch was based before
+`#24`, so its screens still used the direct-insert path while `notices_write` had
+already been revoked. Merging `dev` turned it green, 110/110.
+
+Two rules come out of it. **Counting processes is not asking the question** — the
+question is whether anything is touching *our* worktree and *our* database, and
+`/proc/<pid>/cwd` is what answers it. And **ask the shared resource, not the
+process table**: the seeded advisory lock in `pg_locks` is the real answer here,
+and `#22` exists to provide it.
+
+This is the mirror of the empty-result family above. There, a zero looked like an
+absence. Here **a large, specific, genuinely-measured number looked like
+evidence** — and it is the more seductive of the two, because it feels like
+having done the work.
+
+It reproduces easily. Scanning `/proc` on 2026-08-31 for the same purpose turned
+up **162** candidate processes; every one was an MCP server, mostly belonging to
+other projects, and the count of real test runners under `team-eysl` was **zero**.
+The filter is the whole job, and the unfiltered number is worth nothing.
+
+### A mutable column is not evidence of ownership
+
+`cleanup.sql` decides what to delete. One of its arms keyed on `attendance.marked_by`
+— the staffer who tapped — and that is a column **somebody else's write can stamp**.
+`attendance_mark_v1` ends with:
+
+```sql
+on conflict (activity_id, member_id) do update
+  set status = excluded.status,
+      marked_by = excluded.marked_by,   -- here
+      updated_at = now()
+```
+
+So a test admin toggling a row that already existed **acquires** it: the row was
+somebody else's, one column becomes ours, and afterwards nothing tells that row apart
+from one the suite created. **An upsert makes "created" and "updated"
+indistinguishable after the fact**, and any cleanup keyed on a field the upsert writes
+inherits that ambiguity.
+
+The rule: **key a teardown on what the row *is* — `member_id`, `activity_id` — not on
+who last touched it.** Identity columns cannot be reassigned by another party's write.
+
+**Two things stop that being a one-line fix, and both came from asking the schema
+rather than reasoning about it.**
+
+```
+attendance_member_id_fkey     ON DELETE CASCADE
+attendance_activity_id_fkey   ON DELETE CASCADE
+attendance_marked_by_fkey     NO ACTION          <- and marked_by is NOT NULL
+```
+
+The identity arms are already redundant for foreign-key purposes — deleting the member
+or the activity cascades the row. But `marked_by` is NO ACTION, so a row carrying a
+test account's stamp that teardown does **not** delete blocks `delete from
+public.members` with 23503 and wedges the whole teardown, including the `auth.users`
+deletes whose email is UNIQUE — so the next seed fails too. And the column cannot be
+nulled out of the way, because it is NOT NULL. Dropping the arm trades a data-loss
+risk for a total-teardown failure.
+
+**And on this database the arm had never fired on real data.** Every attendance row a
+test account has stamped is on a test member and a test activity, and no spec marks a
+real member or a real activity — they all use seeded ids. The hazard is real; the
+trigger has not been built yet.
+
+**And that distinction had to be drawn against a real loss, which is what makes it
+worth writing down.** Attendance really did fall, 249 to 234. The drop is sound: the
+249 snapshot carries `with_login = 5`, and six pwtest sign-in accounts would have made
+it 11, so no fixtures were resident when it was taken — and `attendance_member_id_fkey`
+cascades, so residue cannot outlive the members it hangs on. The arithmetic closes on
+the same reading: 15 lost splits into 10 no-login and 5 with-login.
+
+The `marked_by` acquisition was then offered as the cause. It is a genuine hazard and
+it is **not** the proven cause: no spec marks a real member or a real activity, so the
+path has never run. **A measurement proves a loss; it does not prove a route** — and a
+mechanism that would explain the loss beautifully still has to be shown to have fired.
+The route here remains unknown; a deleted activity cascading is the likeliest
+candidate and was not confirmed. Closing the hazard was still right. Attributing the
+loss to it would not have been.
+
+**The two arms that looked redundant were the safe ones.** Because `member_id` and
+`activity_id` cascade, deleting the member or the activity already takes the row — so
+those arms delete nothing that would not go anyway. **The only arm doing independent
+work was the destructive one.** A predicate can look like belt and braces while
+exactly one strand is load-bearing, and it is worth checking which.
+
+The asymmetry also decides what a mistake *looks like*. Keyed on `marked_by`, a wrong
+guess **deletes somebody's data quietly**. Keyed on identity only, a row this file
+cannot classify **blocks the teardown loudly** with a bare 23503 naming nothing but a
+constraint — so the fix does not merely narrow the predicate, it converts silent
+destruction into a stop. Prefer the version that fails where somebody is looking.
+
+**And the file already knew.** Two comments, twenty-five lines apart:
+
+```
+:179  "marked_by is the staffer who tapped, member_id is who was marked,
+       and the write suite creates rows where only the second is ours"
+
+:204  "the dev database's own 관리자 account ... is the master_admin recorded
+       as marked_by on every imported attendance row. Deleting it would ...
+       take the club register with it"
+```
+
+The second names the link exactly — `marked_by` is what ties the club's entire
+attendance register to this file — and guards one direction: *do not delete that
+account.* The first reasons about rows the suite **creates**, where both columns are
+new and deleting is right. Neither considered the third case, in which the account
+survives and the **stamp moves to us**.
+
+So the hazard was written down, in the same file, twenty-five lines below the arm that
+realised it. **A comment that identifies a risk protects only the direction its author
+was facing.** When you find one, do not read it as coverage — read it as a list of
+things that touch the object, and then ask what else does.
+
+### The prefix is not reserved where you think it is
+
+`cleanup.sql` rests its safety on `pwtest` never belonging to a real member. **Only
+half of that is enforced.**
+
+```
+importer   RESERVED_NICKNAME_PREFIX = 'pwtest', case-insensitive, both source names
+signup     no check at all -- 0032 deliberately exempts it so that fixtures named
+           `pwtestadmin` keep working
+```
+
+And signup derives the address from the nickname (`0028`):
+`v_email := lower(v_nickname) || '@eysl.local'`. Follow a real person who signs up as
+`pwtestfoo`: the address becomes `pwtestfoo@eysl.local`, cleanup's auth arm matches it
+on the email shape, the FK nulls their `auth_user_id`, and the orphan arm then removes
+the member row. **Teardown deletes a real member.**
+
+`LIKE` opens the other half. The address is lowercased and the nickname is not, so
+`PWtestfoo` matches the email arm and **not** the nickname arm: auth row deleted,
+member row orphaned, and nothing can reach it again. Widening to `ilike` does not fix
+this — it closes the orphan case by making the first case worse.
+
+**Do not "fix" this by rejecting the prefix at signup.** `signup.spec.ts` builds its
+accounts through the real 가입 flow — `freshNickname()` returns
+`pwtest<tag><base36><rand>/98/남/관악` — because the roster-guard test has to use the
+seeded fixture's name. Reject the prefix at the door and that spec dies on the spot,
+which is the same wall `0032` hit when it left the format check off this path.
+
+So this is recorded as **a defect, not a fix**. The direction worth exploring is not a
+wider or narrower prefix but **not inferring from names at all**: `signup.spec.ts`
+knows the ids of the accounts it creates, and a teardown handed that list has no
+reason to look at a nickname — which is what the header of `cleanup.sql` was reaching
+for in the first place. That needs design, so no migration number is claimed for it
+yet; it may not need one.
+
+One measured narrowing, because it decides how urgent this is: `freshNickname()`
+lowercases its whole result, so **the suite never produces `PWtest…`**. The
+case-sensitivity half is reachable only by a real person typing mixed case, not by our
+own fixtures. And `signup.spec.ts:45` already knows the coupling — it warns that
+changing the region "would move the `pwtest` prefix off the front of the derived
+address and break cleanup's LIKE." Another comment naming the dependency exactly and
+guarding one direction of it.
+
+### The check command counts itself
+
+A `/proc` sweep for test runners reported processes in six worktrees. They were not
+runners. **The scanning command's own `cmdline` held the search terms**, so it matched
+itself, once per shell in the pipeline. Counting by executable instead gave zero.
+
+Nearly every entry on this page is a false *negative* — a check that found nothing and
+looked like an absence. This is the false *positive*, and it costs the same: believed,
+it says "somebody is running, do not touch the database", and work stops for a reason
+that does not exist. **Exclude your own pid, and match on the executable rather than on
+the command line.**
+
+### `git diff` is rewritten here too, and it takes the reviewer's input with it
+
+Reviewing `#46`, `git diff` came back as a **summary** under a `--- Changes ---` header
+with a fabricated banner, `// ... 90 more lines (total: 110)`. Running `grep -c "^+"`
+over that output returned **0** for a diff of **246 added lines**.
+
+This is the worst placement in the whole wrapper family. `git status` printing `ok` is
+obviously not git. An empty `gh pr list` is at least odd. But **a diff is the input to
+review itself** — a reviewer who trusts it reviews a summary while believing they read
+the change, and any count taken off it is wrong in whichever direction the summary
+elided.
+
+Reconstruct rather than parse: `git show <ref>:<path>` for both sides, recompute with
+python's `difflib`. Same family as `cat`'s invented truncation count, and more
+expensive, because it corrupts the artefact the decision is made from.
+
 Reviews are cheap here because the diffs are small; keep them small so this stays true.
+
+## Handoff log
+
+**`docs/HANDOFF.md` is where the work state lives, and keeping it current is part of the job.**
+
+This file explains the repository. `HANDOFF.md` explains the *session* — who is holding which
+branch, which migration numbers are spoken for, what the next three tasks are and why, what we
+decided that the code cannot show, and the questions still waiting on the president. None of
+that is recoverable from `git log`.
+
+**It exists because none of the local state travels.** `~/.claude/projects/…/memory/` is on one
+machine. So are the worktrees, the two git-ignored `.env` files, and every conversation. Picking
+this project up on another machine means reading the repository and nothing else, so anything a
+newcomer needs has to be **in the repository** — in `CLAUDE.md` if it is a durable rule, in
+`HANDOFF.md` if it is the current state.
+
+**Update it when the state it describes changes**, in the same PR that changes it:
+
+| What moved | What to edit |
+|---|---|
+| A branch opened, merged, or changed hands | §2 진행 중 |
+| A migration number claimed or applied | §3 대장 |
+| A next-task finished, or a new one jumped the queue | §4 다음에 할 것 |
+| A question answered by the president | §5 — delete it, and put the answer where the work is |
+| A decision made that the diff will not explain | §8 |
+
+Stamp the date and `dev`'s SHA at the top on every edit. **A handoff file nobody can date is
+worse than none** — a reader has no way to tell which parts are still true, so they either
+re-derive everything or trust something stale.
+
+Two things stay out of it. **Secrets and connection details** — the repository is public, and
+`.env.example` documents the shape. And **anything already true in the code**: a schema, a
+function body, a file list. Those are answerable by looking, and a copy of them here just
+becomes a second version to keep in sync.
 
 ## Environments
 
@@ -225,7 +1031,7 @@ All verified in source. Do not quietly "fix" them as a side effect of other work
 
 | Defect | Where | Note |
 |---|---|---|
-| Admin attendance check-in never persisted | `setAtt`/`togglePaid` `index.html:3780-3781`, state in `attRecords` `:1178` | No DB call anywhere in the path, and no attendance table exists. Lost on every refresh. |
+| ~~Admin attendance check-in never persisted~~ — **fixed upstream 2026-08-30** | was `setAtt`/`togglePaid`, state in `attRecords` | Fixed by a **new path beside the old one, not by repairing it**. `setAtt` is still memory-only; `saveAttendanceEvent(id)` resolves nicknames through `team_roster` and upserts into `attendance`, behind an explicit 출석 저장 button. So a check-in is still lost if the admin never presses save. **Ours must persist on the tap.** And the commit that claims this fix does not contain it — see the sidecar section below. |
 | Notice comments overwrite each other | `addComment()` `:2001` | Whole jsonb array replaced from a stale client copy, so concurrent comments silently destroy one another. Author is stored as a nickname string, not `member_id`. |
 | Training capacity race | `applyTraining()` `:2384` | Browser decides seat-vs-waitlist and computes `wait_order` from a cached count, then sends it. Simultaneous applicants overbook or collide on order. |
 | Attribute-context XSS in an admin render path | *(location withheld)* | A member-controlled value reaches a script context unescaped. A near-identical render a few lines away escapes correctly, so this is an omission rather than a policy. |
@@ -246,9 +1052,74 @@ Four of his recent changes contradict something we had already decided or built.
 
 It sits mid-way through `loadPersistentContent()`, so everything after it is dead: waitlist offers never render, the localStorage cache never refreshes, media, member avatars and notice attachments never load. `loginMember()` awaits it inside a try whose catch shows `로그인 중 오류가 발생했습니다` — **a fresh login fails outright**. A resumed session degrades silently.
 
-`final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer. Every release from `final66` to `final80` carries it — fourteen of them.
+`final64` had it right (`const historicalTrainingPromise = dbClient.rpc('get_historical_training_people_v1')` feeding a seventh `Promise.all` slot); `final66-app-icon` deleted the declaration and left the consumer.
+
+**It ran from `final66` to `final91` — 19 releases — and `final92-unregistered-roster` (`59a67e3`) fixed it.**
+
+*(That number was first written here as 26, and separately guessed at as 27, both by subtracting `66` from `91`. **His release numbers are not dense.** 67, 68, 74, 82, 84, 88 and 90 never shipped, so the run is 66, 69, 70, 71, 72, 73, 75, 76, 77, 78, 79, 80, 81, 83, 85, 86, 87, 89, 91 — nineteen. Counted by walking every commit and asking each one whether `index.html` used `historicalTrainingRes` without declaring it. **Subtracting two version numbers is arithmetic about a naming scheme, not a count of releases**, and the walk costs one loop.*
+
+*The first walk filtered to commits touching `index.html` and got the same 19 — but it also silently dropped `final59`, a release that changed only `sw.js`. That filter was wrong for the question being asked: a release that ships an untouched broken file still ships the bug. **The answer surviving the removal of a bad filter is evidence; the filter agreeing with the answer would not have been.**)* At `final91` the consumer sat at `index.html:1631` while `loadPersistentContent()` destructured six slots where `final64` destructured seven, so anything downstream of that line had never executed. `final92` put the seventh slot back and gave it a source:
+
+```diff
+- const [noticeRes,activityRes,memberRes,applicationRes,historyRes,raceHistoryRes]=await Promise.all([
++ const [noticeRes,activityRes,memberRes,applicationRes,historyRes,raceHistoryRes,historicalTrainingRes]=await Promise.all([
++  dbClient.rpc('team_attendance_canonical_v1')
+```
+
+Declared at `1572`, used at `1632`, and the same at the tip (`final93-owner-time`, `4475128`).
+
+**So the question below has a version boundary, and it is the whole of its meaning.** It applies to **`final66` through `final91`**. From `final92` on, `loadPersistentContent()` runs to completion and downstream code is observed behaviour again — porting from it under the old rule would throw away a working reference and re-decide semantics he has already settled.
+
+That boundary is the point worth keeping. **A rule derived from a bug expires when the bug is fixed, and nothing announces it** — this one was written on 2026-08-26 and was already false the same day. Any rule of this shape needs the version it was measured at written beside it, so the next reader can check whether it still holds instead of inheriting it.
 
 The lesson for us is narrow and important: **a feature we are porting may never have run in his app.** `final62-history-all-participants` and `final64-canonical-training-attendance` are both downstream of this, so reconstruct them from the `bc3523d` snapshot and do not assume he has validated their semantics against real data. Reported to the president separately; his own breakage, not exploitable, so naming the line here is safe.
+
+**So, when porting from a release between `final66` and `final91`, ask this first: is the feature's read path downstream of `index.html:1631`?** It is a mechanical question, not a judgement — find where the screen gets its data and see whether that runs inside `loadPersistentContent()` after the throwing line, or from somewhere else. (At `final92` and later the line no longer throws, so the answer is always "not downstream".)
+
+| answer | what you are porting from |
+|---|---|
+| **downstream** | Nothing. The code has never executed, so there is no observed behaviour to match. **The semantics are ours to decide, and the decisions go in the migration header marked as ours** — a reader in six weeks has to be able to tell a port from a choice. |
+| **not downstream** | A working reference. His app really does behave this way, so a difference between his screen and ours is a bug in ours. |
+
+Two worked examples, because the answer does not follow from how central the feature looks:
+
+- 영법별 랭킹 (`0041`) is **not** downstream. `openFunEventPage` hangs off an `onclick` and calls its own RPC, and it reads nothing `loadPersistentContent()` populates — the payload carries nicknames directly, so there is no `members` lookup to be starved. One grep for the call sites settled it.
+- His push subscription path is also **not** downstream, for the same structural reason — which is how we know its failure was a separate fault (`sw.js` could not parse) rather than another symptom of this one. Two independent faults were live at once from `final66` to `final83`, and assuming a single cause would have found the wrong one.
+
+The grep is for call sites, not for the definition. At `final92`, `openFunEventPage` appears four times: three `onclick` attributes and the definition. **What matters is who calls it, not where it lives** — and the count differs between releases, so read it out of the release you are porting rather than carrying a number across.
+
+**And no member of his club received a push notification before `final85`** — but the reason is not the obvious one, and the obvious one is wrong.
+
+`sw.js` fails to parse in **56 consecutive versions**, `final14-auth` through `final83-push-clean-start`. The cause is one character on line 3, where `e.waitUntil(` is closed and `self.addEventListener(` never is.
+
+*(This said **57** until it was measured. 57 is real, but it counts **commits that touched `sw.js`** and fail to parse; the sentence calls them versions, and two of those commits shared one VERSION string. Re-measured over the whole history: 73 distinct VERSION strings ever existed, **56** of them unparsable, occupying positions 11 through 66 of the sequence with no parsable version among them — so **consecutive is right, and only the number was wrong.***
+
+***Consecutive was checked by printing the sequence, not inferred from the count.** A count cannot establish consecutiveness: 56 broken out of 73 is equally consistent with them being scattered. Two separate claims live in that sentence and they need two separate measurements.*
+
+***And the unit that survives the filter is the one to quote.** Walking every commit instead of only those touching `sw.js` moves the commit figures — 74 → 80 commits carrying a `sw.js`, 57 → 62 of them unparsable — while the version count stays **56 either way**. A quantity that changes when you change which commits you look at is describing your walk; a quantity that does not is describing his releases. Same filter defect, same conclusion, as the `index.html` walk above.)*
+
+**A file that fails to parse is a rejected update, not an uninstall.** A member already holding a working worker keeps it; the browser simply declines the new one. So "there was no worker" would be false, and the conclusion has to rest on something else. It does:
+
+```
+480259d  final12-profile-role      parses   addEventListener('push')  0   <- last installable worker
+1d60225  final14-auth              FAILS                              0   <- break enters here
+1cf1697  final16-push-status…      FAILS                              1   <- push handling first appears
+…        54 more failing versions, all with a push handler
+265e14d  final85-push-true-reset   parses                             1   <- first file that does both
+```
+
+**The last worker that could install had no push handler, and every file that had one was rejected.** Push handling and a parsable file were never the same file until `final85`. That is why the run of five push releases — `push-repair` · `push-autofix` · `push-server-register` · `push-clean-start` — ends exactly there: he rewrote `sw.js` from scratch and the bracket went with it.
+
+Reproduce it over the whole history rather than the slice we can see; sweeping only `origin/main..upstream/main` gives 29 and reads as though the fault began at our fork point. Note the path filter is **gone** from the loop below — it is what produced the 57, and `-- sw.js` answers "which commits edited this file", not "which releases shipped it broken":
+
+```bash
+for c in $(git log --format=%h --reverse upstream/main); do
+  git show "$c:sw.js" > /tmp/sw.js
+  printf '%s ' "$c"; node --check /tmp/sw.js && echo ok
+done
+```
+
+Two things follow. His push problem and his notice-push problem have **different causes** — the first is a worker that could not install, the second is `historicalTrainingRes` throwing, and from `final66` to `final83` both were live at once. And our own `push-notify` 500 is a third, separate problem, so **there is nothing to take from those five releases.**
 
 **"이벤트" no longer means what it means in our code.** In his app the third activity kind is now labelled **기타**, and **이벤트** was reassigned to a rankings hub — a different feature entirely (출석왕 · 지각왕 · 단축왕). The database token stays `event`; only the Korean label changed, and he left the stored value alone too. Ours still renders '이벤트' for the kind, which now names the wrong thing to anyone reading both apps.
 
@@ -258,11 +1129,95 @@ Two things to know before implementing it. His client sends `created_by` from th
 
 **`activities.details` now carries canonical data, which revises the rule above it.** `historical_participants` (nickname array) and `historical_attendance` (nickname → status map) hold the club's paper attendance registers for trainings that predate the app. Unlike `participants`/`waitlist`/`offer` — still dead data, still rebuilt from `activity_applications` every load — these are **read-only canonical**: `index.html` reads them at `upstream:1300-1301` and writes them nowhere, so he backfills through the dashboard or SQL.
 
-Our schema cannot hold them. `attendance.member_id` is a FK to `members` (`0001:104`), so a past participant who never had an account cannot be stored at all, and `attendance_for_activity_v1` (`0001:258-269`) builds its roster solely from `activity_applications` participant rows, so a past training with no applications shows an empty list. Supporting this needs a decision on whether an attendance row may exist without a member row — not just an import script.
+**Our schema holds them already, and the sentence that used to stand here was wrong.** It said "our schema cannot hold them — `attendance.member_id` is a FK to `members`, so a past participant who never had an account cannot be stored at all." The FK asks for a **member row**, not an account, and a member row needs no `auth_user_id`. Measured 2026-08-26:
+
+```
+members | no_login | with_login        attendance | for_no_login
+     41 |       36 |          5               249 |          198
+```
+
+**79% of every attendance row we hold belongs to somebody who has never logged in** — the 36 whose rows came from the club spreadsheet, the same population `0035` counted in its own header. They reach the roster too: `0030` widened it to `activity_applications ∪ attendance`, and on the activity with the most attendance that returns 19 people of whom 17 have no login.
+
+Two lessons, and the second is the transferable one. `attendance_for_activity_v1`'s owner is **`0030`**, not the `0001:258-269` this file used to cite — **a `create or replace` leaves the old line reference looking valid**, so re-find a function by name before trusting a line number attached to it. And the claim itself had been repeated for two days without anybody running `select count(*) filter (where auth_user_id is null)`, which is the whole check. **A schema claim is answerable by the schema; ask it before writing the claim down.**
+
+What was genuinely missing was narrower: staff could *mark attended* a member who cannot sign in (`attendance_mark_v1` takes `p_member_id`) but could not *enrol* one, because `apply_to_activity` derives the member from the session and there was no staff-side path. `0042` adds one, and refuses to waitlist such a member — `offer_seat_to_next_waitlister()` picks by `wait_order` without asking whether the person can answer, so queueing an unreachable member parks a live seat for 12 hours per turn at everyone else's expense.
 
 **He removed the admin bypass from media management** (`canManageMediaOwner`, `upstream:2930`): owner-only now, where it used to be `isAdminUser() || owner`. **Closed in `0021`** — `media_folders_update`, `media_files_update` and `media_files_delete` are owner-only, `media_folders` has no DELETE policy at all (deletion goes through `delete_media_folder_v1`, which checks ownership), and the screens no longer offer staff a control the database would refuse. The cost is real and is his to revisit: no admin can take down another member's folder or file from inside the app any more.
 
 `0021` settled the other half of the same question too. **Creation in 미디어 and 자료실 is open to every approved member**, because his app is: `createFolder` (`upstream:2939`), `uploadToFolder` (`upstream:2946`) and `uploadResourceFiles` (`upstream:2960`) carry no role check, their buttons are always rendered (`upstream:1185-1187`), and `applyRole` (`upstream:1984-1994`) never touches a media control. Our screens had hidden all three behind `isStaff()` while RLS admitted anyone — the legacy flaw rebuilt — so the screens moved, not the policy. What `0021` did add is ours: an object may only be written at `<own member id>/(media|resources)/<name>`, and only where a `media_files` row already claims that exact path, so the bucket can no longer hold bytes nothing points at. `team_files_delete` keeps its staff arm on purpose — a folder owner cannot sweep another member's object, so somebody has to be able to.
+
+## His app is no longer one file, and three of the pieces are dead
+
+Measured at `upstream/main` `bd3a7b4`, 2026-08-31.
+
+`index.html` is still there, but **13 sidecar `.js` files now sit beside it**, and
+`index.html` **references none of them** — all 13 score 0 in it. They are reached
+one way only: `sw.js` precaches them and injects them.
+
+```
+13 sidecars
+   10  named by sw.js  ->  they really run, in any browser that installs the worker
+    3  named by nothing at all:
+          enhancements-v93.js        12,955 bytes
+          notice-fix-v95.js           7,032 bytes
+          attendance-sync-v104.js     1,417 bytes
+```
+
+**All 13 parse, and so does `sw.js`** (`node --check`, exit 0). That matters twice
+over. The 56-version bracket era documented above is **finished** — the worker
+installs now, so the 10 injected files are genuinely live. And the three dead ones
+are dead by **non-reference, not by syntax**: `enhancements-v93.js` is nearly 13KB
+of perfectly valid code that nothing loads.
+
+**So "does it parse" is no longer the question to ask about his code.** It was the
+right question while one character on line 3 broke everything; it now answers `ok`
+for a file that has never run. The question is whether anything names the file, and
+`grep -c '<basename>' sw.js index.html` settles it in one command.
+
+**And a commit message can promise a fix that its own diff does not contain.** This
+is the sharpest instance yet, because both halves shipped on the same day:
+
+```
+f639033  cutepms123-blip  2026-08-30  "Persist admin attendance changes"
+         -> attendance-sync-v104.js | 33 +++   and nothing else
+            that file is one of the three nothing references
+
+0149d73  team-eysl-bot    2026-08-30  "Persist attendance and late-fee status"
+         -> index.html | 97 +++ 5 ---          the actual fix
+```
+
+The commit whose subject names the defect **shipped dead code**; the fix arrived in
+a different commit, by a different author, through a different mechanism. `sw.js`'s
+VERSION string and `historicalTrainingRes` were the first two members of this family
+and both were about a *release* being misdescribed. This one is a single commit
+misdescribing itself, which no amount of reading subject lines can catch. **Read the
+diff, then check that the file the diff touches is reachable.**
+
+### Two changes to the gap list
+
+**활동 댓글 + 푸시 was a real gap, and it is closed** (`#54`, merged 2026-08-31).
+`activity-comments-v98.js` is one of the sidecars that run on his side: an
+`activity_comments` table, comments on the application screen of 훈련·대회·기타, and a
+`push-notify` call on each new comment. Ours is `0050_activity_comments.sql` plus
+`schedule/api.ts` and `ActivityDetailPage.tsx`.
+
+**The count that proved the gap is the thing that had to be re-run, and for months it was not.**
+This paragraph carried "`activity_comments`, `activityComment` and `ActivityComment` are **0
+files** across the 155 under `app/src`" long after the merge made it three. The zero was true
+when written and false when read, and a 2026-09-02 review caught it only because a reviewer
+re-ran the count. **A measurement written into this file inherits the date it was taken**; when
+the PR that closes it lands, the sentence describing the gap is part of what that PR has to
+update. Note this one even named its own successor — "already assigned — `feat/activity-comments`
+holds `0050`" — and still nobody came back to it.
+
+**활동 취합본 runs the scope rule backwards: he deleted it, and we still have it.**
+`remove-aggregation-v113.js` strips the menu and the page with a MutationObserver,
+and the v114 patch workflow enforces the removal in CI with
+`if grep -q "활동 취합본" index.html; then exit 1`. That is a verified deliberate
+deletion, not an omission. The scope rule says an implemented feature is a
+requirement — but that rule reads from *his* app, and his app now says no. **Ask him
+before removing ours.** A feature he cut and we kept is a question for him, not a
+defect to quietly fix.
 
 ## External integrations
 
@@ -271,11 +1226,22 @@ Our schema cannot hold them. `attendance.member_id` is a FK to `members` (`0001:
 <codex_delegation>
 Global `~/.claude/CLAUDE.md` already carries the full ruleset — do not duplicate it here. Project-specific only:
 
-- Verified on this machine 2026-08-24: `codex-cli 0.147.0`, model `gpt-5.6-sol`.
+- Verified on this machine 2026-09-02: `codex-cli 0.152.0`. `~/.codex/config.toml` already sets `model = "gpt-5.6-luna"` and `model_reasoning_effort = "xhigh"` as the defaults, so **the canonical call below passes no `-m` and no effort override** — an explicit `-m gpt-5.6-sol -c model_reasoning_effort="high"` was what this file used to prescribe, and it silently overrode both, which is how review cost climbed without anyone choosing it. Pass a flag only to go *below* the default for a routine diff.
 - Background sessions on this repo are forced into a git worktree, where a `codex exec "$(cat prompt.md)"` written inline is refused ("too complex to verify"). Put the invocation in a wrapper `.sh` and run it as one plain command instead.
 - Canonical call (the `-o` artifact is the source of truth, never stdout):
-  `codex exec -m gpt-5.6-sol -c model_reasoning_effort="high" --json -o /path/verdict.txt "$PROMPT"`
+  `codex exec --json -o /path/verdict.txt "$PROMPT"` — for a routine diff, step down explicitly with `-c model_reasoning_effort="medium"`.
+
+  **That bare form is only correct on a machine whose `~/.codex/config.toml` has been set up, and that file is not in this repository.** It lives in the operator's home directory, so a fresh checkout on a new machine inherits whatever that machine's codex defaults happen to be — possibly a different model and a different effort, silently. **Check before trusting the bare call**, and set it if it is missing:
+
+```toml
+# ~/.codex/config.toml
+model = "gpt-5.6-luna"
+model_reasoning_effort = "xhigh"
+```
+
+  The reason to keep the flags out of the canonical call rather than pinning them inline is that pinning is what went wrong before: the line used to read `-m gpt-5.6-sol -c model_reasoning_effort="high"`, which overrode both defaults on every review and made the choice invisible. **Configure once where it is visible; do not re-specify per call.** This is the same "state which tree you checked" problem in another costume — a command that reads config the repo does not carry is a command whose behaviour the repo cannot promise.
 - 2026-08-24, this repo: the `codex:rescue` skill returned a contentless `"Complete."` twice in a row despite 51 real `tool_uses` and 10+ min runtime; a `SendMessage` resume produced the same. A *completed* status with an empty result means the delivery channel failed, not that the work is absent. One retry, then drop the codex track and verify load-bearing facts directly.
+- **A missing `-o` artifact is not a delivery failure.** The rule above turns on the word *completed*: until the run reports completion, an absent or short artifact is indistinguishable from work still in progress. Reading it as a failure nearly discarded eight minutes of a live #22 re-review on 2026-08-26. The cheapest discriminator is the log's mtime against the clock — **`stat -c '%n %s bytes  mtime %y' <log>`**, which works today. **`ls -l --time-style=…` does not**: it printed empty output for a file already known to exist, which reads exactly like "no such file". Where mtime is ambiguous, parse the `--json` log — a run still going ends on `item.started` / `command_execution` / `web_search` with only short `agent_message`s (139–206 chars), while the verdict is a single closing `agent_message` of several thousand.
 </codex_delegation>
 
 ### HTML rendering convention

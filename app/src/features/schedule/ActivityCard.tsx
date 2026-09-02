@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import { myStatusTag } from './status'
+import { formatDateRange } from './calendar'
 import { formatDateLabel, formatTimeRange } from './order'
 import { KIND_LABEL, type ScheduleEntry } from './api'
 
@@ -35,7 +36,11 @@ export function ActivityCard({ entry, dimmed }: { entry: ScheduleEntry; dimmed: 
       </div>
 
       <p className="activityMeta">
-        <span>{formatDateLabel(activity.activity_date)}</span>
+        {/* A range when there is one, so a three-day meet does not read as a
+            single day everywhere except the calendar. */}
+        <span>
+          {formatDateRange(activity.activity_date, activity.end_date, formatDateLabel)}
+        </span>
         {time && <span>{time}</span>}
         {activity.place && <span>{activity.place}</span>}
         <span aria-hidden="true">·</span>

@@ -47,6 +47,14 @@ describe('the nickname prefix e2e owns', () => {
     )
   })
 
+  it('refuses a worktree-namespaced fixture prefix too', () => {
+    // E2E now writes names such as pwtesta1b2c3member. The namespace is an
+    // isolation detail, not a way for a workbook row to bypass the reservation.
+    expect(() => parseClubWorkbook(workbookWithName(2, 5, `${RESERVED_NICKNAME_PREFIX}a1b2c3회원`))).toThrow(
+      ReservedNicknameError,
+    )
+  })
+
   it('names the row and no member', () => {
     try {
       parseClubWorkbook(workbookWithName(2, 5, `${RESERVED_NICKNAME_PREFIX}비밀`))

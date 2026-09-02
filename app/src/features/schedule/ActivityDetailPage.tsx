@@ -2,19 +2,30 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
+import { RaceEntryCard } from './RaceEntryCard'
 import { SaveState } from '../../components/ui/SaveState'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { canEditActivity } from './permissions'
+import { isEmptyTrainingDetail } from './trainingDetail'
 import { formatCountdown, msUntil } from './countdown'
-import { formatDateLabel, formatTimeRange, todayKey } from './order'
+import { formatDateLabel, formatTimeRange, hasFinished, todayKey } from './order'
+import { viewerKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
+// Generic, no notices-specific state — the same relative-time formatter the
+// notice comment thread uses.
+import { formatRelative } from '../notices/relativeTime'
 import {
+  appendActivityComment,
   applyToActivity,
   cancelApplication,
   getScheduleEntry,
   KIND_LABEL,
+  listActivityComments,
   respondToOffer,
+  type ActivityComment,
   type MyApplication,
   type ScheduleEntry,
+  type TrainingDetail,
 } from './api'
 
 const CARD = {
@@ -49,10 +60,18 @@ const QUIET_BUTTON = {
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 export function ActivityDetailPage() {
+  const { session } = useSession()
   const { activityId = '' } = useParams()
 
   const query = useQuery({
-    queryKey: ['schedule-entry', activityId],
+    // The viewer goes LAST, after the activity id. This entry carries `mine`,
+    // so it must be per-viewer — and it must still be droppable for everyone
+    // when the activity changes. Those look like conflicting requirements and
+    // are not: react-query matches by prefix, so the five
+    // invalidateQueries({queryKey: ['schedule-entry', activityId]}) calls below
+    // reach every viewer's copy. Putting the viewer before the activity id
+    // would compile and silently narrow all five to one person.
+    queryKey: viewerKey(['schedule-entry', activityId], session?.user.id),
     queryFn: () => getScheduleEntry(activityId),
     enabled: !!activityId,
   })
@@ -80,7 +99,9 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
   const { activity, mine } = entry
   const { user } = useCurrentUser()
   const time = formatTimeRange(activity.start_time, activity.end_time)
-  const isPast = activity.activity_date < todayKey()
+  // hasFinished, not the start date: a three-day 대회 keeps its 신청 and 취소
+  // controls through day three.
+  const isPast = hasFinished(activity, todayKey())
   // Staff for anything, the creator for their own 기타 — the same question
   // activities_member_event_update asks, asked here only to decide what to draw.
   // A past activity keeps the link: fixing a wrong time after the fact is the
@@ -149,6 +170,8 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
         </p>
       </article>
 
+      <TrainingDetailCard detail={activity.detail} />
+
       <div style={{ marginTop: 14 }}>
         {isPast ? (
           <p style={{ ...META, textAlign: 'center' }}>지난 일정입니다</p>
@@ -156,7 +179,83 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
           <ApplicationSection entry={entry} activityId={activityId} />
         )}
       </div>
+
+      {/* Shown whether the activity is past or upcoming — a training that
+          already happened is exactly when someone asks about the set or the
+          result, and the thread should not vanish the moment 지난 일정 does. */}
+      <div style={{ marginTop: 14 }}>
+        <Comments activityId={activityId} />
+      </div>
     </>
+  )
+}
+
+/**
+ * Coach, gear, notes, plan and link — shown only when there is something to show.
+ *
+ * Renders nothing at all when every field is empty, rather than a card of dashes.
+ * His app prints '-' for each missing field (index.html:3319-3320), which fills
+ * a training that has no detail with rows that say nothing.
+ *
+ * The plan keeps its line breaks: it is written as a numbered set and collapsing
+ * it to one paragraph would make it unreadable. `white-space: pre-wrap` is what
+ * does that, not a <br> loop over user text.
+ */
+function TrainingDetailCard({ detail }: { detail: TrainingDetail }) {
+  if (isEmptyTrainingDetail(detail)) return null
+
+  const rows: Array<[string, string]> = []
+  if (detail.coach) rows.push(['코치', detail.coach])
+  if (detail.gear) rows.push(['준비물', detail.gear])
+  if (detail.info) rows.push(['상세 내용', detail.info])
+
+  return (
+    <article style={{ ...CARD, marginTop: 14 }}>
+      {rows.map(([label, value]) => (
+        <div key={label} style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
+          <span style={{ ...META, minWidth: 64, flexShrink: 0 }}>{label}</span>
+          <span style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{value}</span>
+        </div>
+      ))}
+
+      {detail.plan && (
+        <div style={{ marginTop: rows.length > 0 ? 12 : 0 }}>
+          <p style={{ ...META, margin: '0 0 6px' }}>훈련표</p>
+          <pre
+            style={{
+              margin: 0,
+              fontFamily: 'inherit',
+              fontSize: 14,
+              lineHeight: 1.7,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
+            {detail.plan}
+          </pre>
+        </div>
+      )}
+
+      {detail.link && (
+        // rel="noreferrer" because the target is a URL a staffer typed, and
+        // window.opener would otherwise be reachable from whatever it points at.
+        // The scheme was checked by 0048 before this ever got stored.
+        <a
+          href={detail.link}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: 'inline-block',
+            marginTop: 12,
+            fontSize: 14,
+            color: '#2b6cb0',
+            wordBreak: 'break-all',
+          }}
+        >
+          {detail.link}
+        </a>
+      )}
+    </article>
   )
 }
 
@@ -166,9 +265,32 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
 // the legacy race (index.html:2384) rebuilt in a new file.
 function ApplicationSection({ entry, activityId }: { entry: ScheduleEntry; activityId: string }) {
   const { mine } = entry
-  if (!mine) return <NotApplied entry={entry} activityId={activityId} />
-  if (mine.application_type === 'participant') return <Seated mine={mine} activityId={activityId} />
-  return <Waitlisted mine={mine} activityId={activityId} />
+  // 대회 신청 sits under whichever of the four bodies applies, not instead of
+  // one: the seat and the events are separate answers, and a member who is
+  // waitlisted still needs to say what they would swim. It is only offered for a
+  // 대회 — a 훈련 has no events to enter (0045 refuses one anyway).
+  const events = entry.activity.kind === 'race' ? <RaceEntryCard entry={entry} /> : null
+
+  if (!mine)
+    return (
+      <>
+        <NotApplied entry={entry} activityId={activityId} />
+        {events}
+      </>
+    )
+  if (mine.application_type === 'participant')
+    return (
+      <>
+        <Seated mine={mine} activityId={activityId} />
+        {events}
+      </>
+    )
+  return (
+    <>
+      <Waitlisted mine={mine} activityId={activityId} />
+      {events}
+    </>
+  )
 }
 
 function NotApplied({ entry, activityId }: { entry: ScheduleEntry; activityId: string }) {
@@ -463,6 +585,107 @@ function OfferCard({ mine, activityId }: { mine: MyApplication; activityId: stri
           state={state}
           onRetry={lastChoice === null || expired ? undefined : () => respond.mutate(lastChoice)}
         />
+      </div>
+    </section>
+  )
+}
+
+/**
+ * 일정 댓글. Same shape as notices/NoticeDetailPage.tsx's Comments component —
+ * same query/mutation pattern, same refetch-rather-than-append rule (a comment
+ * someone else wrote in the same second must show up too, which appending to a
+ * local copy would drop). No delete button here, matching notices' own comment
+ * thread, which the DB already permits (own or staff) but does not expose in
+ * this screen either — kept the same shape for consistency rather than adding
+ * an affordance notices does not have.
+ */
+function Comments({ activityId }: { activityId: string }) {
+  const qc = useQueryClient()
+  const [draft, setDraft] = useState('')
+  const [saveState, setSaveState] = useState<SaveStatus>('idle')
+
+  const query = useQuery({
+    queryKey: ['activity-comments', activityId],
+    queryFn: () => listActivityComments(activityId),
+    enabled: !!activityId,
+  })
+
+  const add = useMutation({
+    mutationFn: appendActivityComment,
+    onMutate: () => setSaveState('saving'),
+    onSuccess: async (_data, variables) => {
+      // Clears only if the draft still matches what was just submitted. The
+      // request stays in flight for a moment, and the box does not lock
+      // during it (see the textarea's onChange below) — a member who typed a
+      // second comment while the first was saving must not lose it here.
+      setDraft((current) => (current.trim() === variables.body ? '' : current))
+      await qc.invalidateQueries({ queryKey: ['activity-comments', activityId] })
+      setSaveState('saved')
+    },
+    // The draft stays in the box on failure, so a retry does not ask the
+    // member to retype what they wrote.
+    onError: () => setSaveState('error'),
+  })
+
+  const body = draft.trim()
+  const canSubmit = body.length > 0 && saveState !== 'saving'
+
+  function submit() {
+    if (!canSubmit) return
+    add.mutate({ activityId, body })
+  }
+
+  return (
+    <section>
+      <h2 className="listDivider">댓글</h2>
+
+      <AsyncSection
+        query={query}
+        isEmpty={(rows: ActivityComment[]) => rows.length === 0}
+        loading={<Shimmer rows={2} />}
+        empty="아직 댓글이 없습니다"
+        error="댓글을 불러오지 못했습니다"
+      >
+        {(rows: ActivityComment[]) => (
+          <ul className="list">
+            {rows.map((comment) => (
+              <li key={comment.id} className="comment">
+                <div className="commentHead">
+                  <b>{comment.nickname}</b>
+                  <span>{formatRelative(comment.created_at)}</span>
+                </div>
+                <p className="body">{comment.body}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </AsyncSection>
+
+      <div className="card commentForm">
+        <label htmlFor="activity-comment" className="sr-only">
+          댓글 입력
+        </label>
+        <textarea
+          id="activity-comment"
+          className="field"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            // Clears a stale 저장됨/실패 indicator once the member starts a
+            // new comment. Deliberately NOT while saving() — canSubmit reads
+            // this state too, so resetting it here would re-enable 등록
+            // mid-request and let the same click fire the RPC twice.
+            if (saveState === 'saved' || saveState === 'error') setSaveState('idle')
+          }}
+          placeholder="댓글을 입력하세요"
+          rows={3}
+        />
+        <div className="commentFormActions">
+          <SaveState state={saveState} onRetry={body ? submit : undefined} />
+          <button onClick={submit} disabled={!canSubmit} className="btn primary">
+            등록
+          </button>
+        </div>
       </div>
     </section>
   )

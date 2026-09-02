@@ -76,12 +76,27 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.1
 import { buildPayload, type PushEvent } from './payload.ts'
 import { sendToAll, type Recipient, type VapidDetails } from './send.ts'
 
-/** The three the president asked for. `self_test` is not among them on purpose. */
+/** The three the president asked for, plus activity comments (0050). `self_test` is not among them on purpose. */
 const TRIGGER_EVENTS: readonly PushEvent[] = [
   'notice_created',
   'activity_created',
   'waitlist_offered',
+  'activity_comment_created',
 ]
+
+/**
+ * A uuid in the one form Postgres emits: lowercase, hyphenated, 8-4-4-12.
+ *
+ * Deliberately narrower than what Postgres would *accept* on input — it also
+ * takes uppercase and braces. Every id this function is given comes from
+ * `jsonb_build_object('id', p_id)` over a uuid column, which renders canonically,
+ * so the narrow form cannot refuse a real call and does refuse the shapes a
+ * hand-written caller gets wrong.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/** Well-formed, and names nothing. Refused alongside the malformed ones. */
+const NIL_UUID = '00000000-0000-0000-0000-000000000000'
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -105,6 +120,19 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}): 
  * a limit held in memory is a limit that resets whenever the platform decides
  * to. Returns null when the send may proceed, or the refusal to return.
  */
+/**
+ * The SQLSTATE off a failed supabase-js call, or 'unknown'.
+ *
+ * Always a string, never absent: a body that sometimes omits the field cannot be
+ * told from one written before this existed, and distinguishing those is the
+ * entire job. 'unknown' is itself a useful answer — it means the failure never
+ * reached PostgreSQL, so the fetch is the suspect rather than the SQL.
+ */
+function errorCode(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code
+  return typeof code === 'string' && code !== '' ? code : 'unknown'
+}
+
 async function selfTestRateLimit(db: SupabaseClient, memberId: string): Promise<Response | null> {
   const { data, error } = await db.rpc('push_self_test_allow_v1', { p_member: memberId })
   if (error) {
@@ -204,6 +232,30 @@ async function authorize(
     }
     const id = typeof body.id === 'string' ? body.id : ''
     if (id === '') return json({ ok: false, error: 'id is required' }, 400)
+    // push_notify_context_v1's second parameter is `uuid`, so anything else is
+    // refused by PostgREST when the cast fails — which arrives here as an RPC
+    // error and leaves as a 500. A caller's malformed id is a 400; only our own
+    // failures are 500s.
+    //
+    // THIS IS NOT WHAT CAUSED THE 500s IN net._http_response. Every one of those
+    // came through request_push_notify(text, uuid), whose second parameter is a
+    // uuid column, so a non-uuid cannot reach the function that way — verified
+    // against the three triggers, and no script queues a hand-built body. The
+    // cause of those is still unknown; this closes a different hole that
+    // produces a byte-identical response, which is exactly why the discriminator
+    // below exists.
+    //
+    // Canonical form only, which is what Postgres renders a uuid as, so this
+    // cannot refuse a call the triggers actually make.
+    if (!UUID_PATTERN.test(id)) return json({ ok: false, error: 'id must be a uuid' }, 400)
+    // The nil uuid is well-formed and identifies nothing. Downstream it is
+    // already harmless — the RPC finds no row and answers 200 {skipped:true} —
+    // so this closes a hole in what this check CLAIMS rather than a defect in
+    // what the function does. Worth closing anyway: what is being refused here
+    // is "an id that cannot name a row", and the nil uuid is the clearest
+    // example of one. It is also what an uninitialised variable serialises to,
+    // which is precisely the caller mistake this check exists for.
+    if (id === NIL_UUID) return json({ ok: false, error: 'id must not be the nil uuid' }, 400)
     return { event: event as PushEvent, id }
   }
 
@@ -286,8 +338,21 @@ Deno.serve(async (request: Request): Promise<Response> => {
     p_id: authorized.id,
   })
   if (error) {
+    // The message stays here and only here: it can quote a value or name a
+    // relation, and this endpoint answers anyone holding the trigger secret.
     console.error('push-notify: context lookup failed', error.message)
-    return json({ ok: false, error: 'could not read the event' }, 500)
+    // The code goes in the body, and that is the whole point of this branch.
+    //
+    // Eight of these 500s sat in net._http_response with no way to tell them
+    // apart — a uuid cast failure, a permission change and a dropped connection
+    // all produce the identical sentence, and the real message exists only in a
+    // function log nobody investigating had access to. `content` is the only
+    // forensic record that survives, so it has to carry enough to sort the next
+    // one into a family: 22P02 is a malformed id, 42501 is a grant that moved,
+    // 08xxx is the connection. A SQLSTATE is a five-character class name — it
+    // discloses no table, column or value, which is why it can be said out loud
+    // when the message cannot.
+    return json({ ok: false, error: 'could not read the event', code: errorCode(error) }, 500)
   }
 
   // push_notify_context_v1 answers null when the event describes nothing to

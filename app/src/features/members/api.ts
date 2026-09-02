@@ -596,3 +596,191 @@ export async function setMemberBlocked(input: {
   })
   if (error) throw error
 }
+
+// ------------------------------------------------------------------ 회원 연결
+// The screen behind /members/link. Two jobs that look like one: giving a roster
+// member a way past the signup guard, and moving a new login onto the row that
+// already holds their history.
+
+/**
+ * One roster row as the link screen sees it.
+ *
+ * The field list is decided by member_link_summary_v1 (0035) and deliberately
+ * stops short of a dossier — no 생년월일, 메모, 가입 사유, 강습 or 수력. The
+ * three counts are the weight of what a 연결 would move, and they are why this
+ * type exists rather than reusing RosterMember: an admin about to do something
+ * irreversible needs to see what is at stake on the same card as the button.
+ */
+export type MemberLinkSummary = {
+  id: string
+  nickname: string
+  short_name: string | null
+  real_name: string | null
+  join_date_text: string | null
+  birth_year: number | null
+  gender: string | null
+  status: MemberStatus
+  /**
+   * ISO timestamp, or null when no pass stands.
+   *
+   * A DATE rather than a boolean, and that is not a detail. 0037 does not
+   * consume a pass on a successful signup — it stays live for its whole window
+   * so an applicant whose first attempt failed is not stranded — so a row keeps
+   * reading as 허용됨 until this moment passes. Rendering that as a bare
+   * "가입 허용됨" would be true on the first day and a lie on the eighth.
+   */
+  signup_pass_expires_at: string | null
+  attendance_count: number
+  record_count: number
+  application_count: number
+}
+
+/** A pending signup, with every roster row the guard's rule matches. */
+export type MemberLinkSignup = {
+  id: string
+  nickname: string
+  created_at: string
+  /**
+   * Plural on purpose. Two roster rows can share a name, birth year and gender
+   * — that collision is the whole reason the nickname format carries 지역 — so
+   * the screen offers the list and the admin picks. Taking [0] would be a guess
+   * dressed as an answer, on the one operation that cannot be undone.
+   */
+  candidates: MemberLinkSummary[]
+}
+
+export type MemberLinkBoard = {
+  signups: MemberLinkSignup[]
+  /** Every roster row with no login, whether or not a signup matched it. */
+  roster: MemberLinkSummary[]
+}
+
+/** What link_member_login_v1 hands back, so the screen can say what it moved. */
+export type MemberLinkResult = { member: MemberLinkSummary | null }
+
+// The RPCs return jsonb, which the generated types describe as `Json` — a union
+// that says nothing about shape. Narrowing happens here, once, rather than as a
+// cast at each render site. Every reader below tolerates a missing key instead
+// of throwing: a board that failed to parse would leave an admin at an error
+// screen where the honest answer is "this one row is incomplete".
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function asText(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+// jsonb renders count(*) as a JSON number, but bigint over the wire has bitten
+// enough projects that a string is worth tolerating. Anything unreadable
+// collapses to 0 rather than rendering as "NaN회" on a card somebody is about
+// to act on.
+function asCount(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
+function toSummary(value: unknown): MemberLinkSummary | null {
+  const row = asRecord(value)
+  const id = asText(row.id)
+  if (!id) return null
+  const birthYear = Number(row.birth_year)
+  return {
+    id,
+    nickname: asText(row.nickname) ?? '이름 없는 회원',
+    short_name: asText(row.short_name),
+    real_name: asText(row.real_name),
+    join_date_text: asText(row.join_date_text),
+    birth_year: Number.isFinite(birthYear) ? birthYear : null,
+    gender: asText(row.gender),
+    status: toStatus(asText(row.status)),
+    signup_pass_expires_at: asText(row.signup_pass_expires_at),
+    attendance_count: asCount(row.attendance_count),
+    record_count: asCount(row.record_count),
+    application_count: asCount(row.application_count),
+  }
+}
+
+function toSummaries(value: unknown): MemberLinkSummary[] {
+  if (!Array.isArray(value)) return []
+  const out: MemberLinkSummary[] = []
+  for (const entry of value) {
+    const summary = toSummary(entry)
+    if (summary) out.push(summary)
+  }
+  return out
+}
+
+/**
+ * Everything the link screen needs, in one round trip.
+ *
+ * Master-admin only, and member_link_board_v1 is where that holds — it raises
+ * 42501 for anyone else, verified against the dev database. RequireMasterAdmin
+ * on the route decides what renders; this call decides what exists.
+ */
+export async function getMemberLinkBoard(): Promise<MemberLinkBoard> {
+  const { data, error } = await supabase.rpc('member_link_board_v1')
+  if (error) throw error
+
+  const board = asRecord(data)
+  const signups = Array.isArray(board.signups) ? board.signups : []
+
+  return {
+    signups: signups.flatMap((entry) => {
+      const row = asRecord(entry)
+      const id = asText(row.id)
+      if (!id) return []
+      return [
+        {
+          id,
+          nickname: asText(row.nickname) ?? '이름 없는 신청',
+          created_at: asText(row.created_at) ?? '',
+          candidates: toSummaries(row.candidates),
+        },
+      ]
+    }),
+    roster: toSummaries(board.roster),
+  }
+}
+
+/**
+ * Move a pending signup's login onto an existing member row.
+ *
+ * The most dangerous write in this app, and none of that safety lives here:
+ * link_member_login_v1 (0035) checks the caller, refuses a target that already
+ * has a login, refuses anything but a pending signup, and proves the discarded
+ * row is empty by walking every foreign key that references members. This
+ * function's only job is to carry the two ids and hand back the receipt.
+ */
+export async function linkMemberLogin(input: {
+  signupMemberId: string
+  targetMemberId: string
+}): Promise<MemberLinkResult> {
+  const { data, error } = await supabase.rpc('link_member_login_v1', {
+    p_signup_member_id: input.signupMemberId,
+    p_target_member_id: input.targetMemberId,
+  })
+  if (error) throw error
+  return { member: toSummary(asRecord(data).member) }
+}
+
+/**
+ * 가입 허용: let one applicant matching this roster row past the signup guard.
+ *
+ * It grants nothing else — not a login, not an approval. The pending row it
+ * permits is worth what any other pending row is worth, which is nothing until
+ * an admin decides about it. Withdrawing is the same call with `allowed: false`,
+ * the shape set_member_blocked_v1 established.
+ */
+export async function setSignupPass(input: {
+  memberId: string
+  allowed: boolean
+}): Promise<void> {
+  const { error } = await supabase.rpc('set_signup_pass_v1', {
+    p_member_id: input.memberId,
+    p_allowed: input.allowed,
+  })
+  if (error) throw error
+}

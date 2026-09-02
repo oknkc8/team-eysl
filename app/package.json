@@ -1,6 +1,6 @@
 {
   "name": "team-eysl-app",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,8 @@
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --project=chromium",
+    "shots": "playwright test --project=screenshots",
     "test:e2e:ui": "playwright test --ui",
     "db:psql": "bash scripts/psql.sh",
     "db:migrate": "bash scripts/migrate.sh",

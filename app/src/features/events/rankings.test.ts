@@ -1,12 +1,19 @@
 import { describe, it, expect } from 'vitest'
 import {
   RankingsContractError,
+  TOP_RANK_LIMIT,
   countListsFor,
   formatSeconds,
   groupByStroke,
+  hasHiddenRanks,
   isRankingKind,
   isRankingsEmpty,
+  isStrokeRankingsEmpty,
+  parseStrokeRankings,
+  strokeRowsFor,
   parseRankings,
+  rankDisplay,
+  rankToggleLabel,
   type ImprovementRow,
 } from './rankings'
 
@@ -202,5 +209,117 @@ describe('isRankingKind', () => {
   it('rejects anything else, so a typed URL gets its own answer', () => {
     expect(isRankingKind('improvements')).toBe(false)
     expect(isRankingKind(undefined)).toBe(false)
+  })
+})
+
+describe('메달·등급', () => {
+  it('puts 금·은·동 on the podium and a number everywhere else', () => {
+    expect(rankDisplay(1)).toBe('🥇')
+    expect(rankDisplay(2)).toBe('🥈')
+    expect(rankDisplay(3)).toBe('🥉')
+    expect(rankDisplay(4)).toBe('4')
+    expect(rankDisplay(11)).toBe('11')
+  })
+
+  /*
+   * The case a fixture of all-distinct counts cannot see.
+   *
+   * team_event_rankings_v1 ranks with rank(), so tied members share a rank and
+   * the next distinct count skips the numbers they used up. A list whose top two
+   * are tied is therefore ranked 1, 1, 3 — and the screen shows two 🥇 followed
+   * by a 🥉 with NO 🥈 anywhere on it.
+   *
+   * That is correct: a real podium with two golds has no silver. But it looks
+   * exactly like a bug, and a lookup written as `MEDALS[index]` rather than
+   * `MEDALS[rank]` would render 🥇🥈🥉 here — wrong, while looking right. Every
+   * rank below is one the server can actually emit.
+   */
+  it('shares a medal on a tie and skips the rank the tie consumed', () => {
+    const tied = [1, 1, 3, 4, 5, 5, 7]
+    expect(tied.map(rankDisplay)).toEqual(['🥇', '🥇', '🥉', '4', '5', '5', '7'])
+    expect(tied.map(rankDisplay)).not.toContain('🥈')
+  })
+
+  it('gives silver only when exactly one member is first', () => {
+    expect([1, 2, 3].map(rankDisplay)).toEqual(['🥇', '🥈', '🥉'])
+  })
+
+  // Three-way tie for first: the next distinct count is rank 4, so the whole
+  // podium is gold and neither 🥈 nor 🥉 appears.
+  it('handles a three-way tie for first', () => {
+    expect([1, 1, 1, 4].map(rankDisplay)).toEqual(['🥇', '🥇', '🥇', '4'])
+  })
+})
+
+describe('전체 랭킹 보기', () => {
+  it('collapses only a list longer than the top five', () => {
+    expect(TOP_RANK_LIMIT).toBe(5)
+    expect(hasHiddenRanks(5)).toBe(false)
+    expect(hasHiddenRanks(6)).toBe(true)
+    expect(hasHiddenRanks(0)).toBe(false)
+  })
+
+  // The label names what the next tap does, not the current state — a button
+  // reading "전체 랭킹 보기" while the full list is already open is a lie.
+  it('labels the button by what tapping it will do', () => {
+    expect(rankToggleLabel(false)).toBe('전체 랭킹 보기')
+    expect(rankToggleLabel(true)).toBe('TOP5만 보기')
+  })
+})
+
+describe('parseStrokeRankings', () => {
+  const payload = {
+    year: 2026,
+    rows: [
+      { gender: '여', stroke: '자유형', nickname: '영희', rank: 1, pb_seconds: 32.8, score: 100 },
+      { gender: '여', stroke: '자유형', nickname: '철수', rank: 2, pb_seconds: 41.0, score: 80 },
+      { gender: '남', stroke: '평영', nickname: '길동', rank: 1, pb_seconds: 35.49, score: 100 },
+    ],
+  }
+
+  it('reads the payload the RPC sends', () => {
+    const data = parseStrokeRankings(payload)
+    expect(data.year).toBe(2026)
+    expect(data.rows).toHaveLength(3)
+    // pb_seconds -> pbSeconds: the wire is snake_case, the screen is not.
+    expect(data.rows[0]).toEqual({
+      gender: '여',
+      stroke: '자유형',
+      nickname: '영희',
+      rank: 1,
+      pbSeconds: 32.8,
+      score: 100,
+    })
+  })
+
+  it('refuses the unauthorized answer instead of rendering it', () => {
+    // The RPC answers a non-member with a 200 carrying {error}, exactly as
+    // team_event_rankings_v1 does, so it arrives as success.
+    expect(() => parseStrokeRankings({ error: 'unauthorized' })).toThrow(RankingsContractError)
+  })
+
+  it('refuses a payload with no year', () => {
+    expect(() => parseStrokeRankings({ rows: [] })).toThrow(RankingsContractError)
+  })
+
+  it('treats a missing rows list as empty rather than broken', () => {
+    // A club with no meet records yet is an ordinary state and the screen has
+    // an empty view for it; only a missing `year` is a broken contract.
+    const data = parseStrokeRankings({ year: 2026 })
+    expect(data.rows).toEqual([])
+    expect(isStrokeRankingsEmpty(data)).toBe(true)
+  })
+
+  it('picks out one gender and stroke, keeping server order', () => {
+    const data = parseStrokeRankings(payload)
+    expect(strokeRowsFor(data, '여', '자유형').map((r) => r.nickname)).toEqual(['영희', '철수'])
+    expect(strokeRowsFor(data, '남', '평영').map((r) => r.nickname)).toEqual(['길동'])
+    // An empty group is empty, not absent — the screen still renders its card.
+    expect(strokeRowsFor(data, '남', '접영')).toEqual([])
+  })
+
+  it('does not confuse the two genders', () => {
+    const data = parseStrokeRankings(payload)
+    expect(strokeRowsFor(data, '남', '자유형')).toEqual([])
   })
 })

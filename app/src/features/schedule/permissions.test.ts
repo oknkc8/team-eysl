@@ -8,7 +8,7 @@ const MEMBER_B = '33333333-3333-4333-8333-333333333333'
 const STAFF = '11111111-1111-4111-8111-111111111111'
 
 function user(id: string, role: Role, status: CurrentUser['status'] = 'approved'): CurrentUser {
-  return { id, nickname: '테스트', real_name: null, avatar_path: null, role, status }
+  return { id, nickname: '테스트', real_name: null, avatar_path: null, role, status, team_role: null }
 }
 
 const memberA = user(MEMBER_A, 'member')

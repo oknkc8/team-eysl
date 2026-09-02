@@ -41,6 +41,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           details: Json
+          end_date: string | null
           end_time: string | null
           id: string
           kind: string
@@ -55,6 +56,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           details?: Json
+          end_date?: string | null
           end_time?: string | null
           id?: string
           kind: string
@@ -69,6 +71,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           details?: Json
+          end_date?: string | null
           end_time?: string | null
           id?: string
           kind?: string
@@ -155,6 +158,52 @@ export type Database = {
           },
         ]
       }
+      activity_comments: {
+        Row: {
+          activity_id: string
+          body: string
+          created_at: string
+          id: string
+          member_id: string
+        }
+        Insert: {
+          activity_id: string
+          body: string
+          created_at?: string
+          id?: string
+          member_id: string
+        }
+        Update: {
+          activity_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+          member_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_comments_activity_id_fkey"
+            columns: ["activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_comments_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_comments_member_id_fkey"
+            columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attendance: {
         Row: {
           activity_id: string
@@ -221,6 +270,48 @@ export type Database = {
           {
             foreignKeyName: "attendance_member_id_fkey"
             columns: ["member_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      board_posts: {
+        Row: {
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          author_id: string
+          body: string
+          created_at?: string
+          id?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "board_posts_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "board_posts_author_id_fkey"
+            columns: ["author_id"]
             isOneToOne: false
             referencedRelation: "members"
             referencedColumns: ["id"]
@@ -338,6 +429,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -362,6 +454,7 @@ export type Database = {
           real_name?: string | null
           role?: string
           short_name?: string | null
+          signup_pass_expires_at?: string | null
           status?: string
           swim_experience?: string | null
           team_role?: string | null
@@ -386,6 +479,7 @@ export type Database = {
           real_name?: string | null
           role?: string
           short_name?: string | null
+          signup_pass_expires_at?: string | null
           status?: string
           swim_experience?: string | null
           team_role?: string | null
@@ -395,6 +489,7 @@ export type Database = {
       }
       messages: {
         Row: {
+          attachment_name: string | null
           attachment_path: string | null
           attachment_type: string | null
           body: string | null
@@ -405,6 +500,7 @@ export type Database = {
           sender_id: string
         }
         Insert: {
+          attachment_name?: string | null
           attachment_path?: string | null
           attachment_type?: string | null
           body?: string | null
@@ -415,6 +511,7 @@ export type Database = {
           sender_id: string
         }
         Update: {
+          attachment_name?: string | null
           attachment_path?: string | null
           attachment_type?: string | null
           body?: string | null
@@ -580,6 +677,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      pending_object_deletions: {
+        Row: {
+          requested_at: string
+          requested_by: string | null
+          storage_path: string
+        }
+        Insert: {
+          requested_at?: string
+          requested_by?: string | null
+          storage_path: string
+        }
+        Update: {
+          requested_at?: string
+          requested_by?: string | null
+          storage_path?: string
+        }
+        Relationships: []
       }
       push_endpoint_rejections: {
         Row: {
@@ -917,6 +1032,55 @@ export type Database = {
       }
     }
     Functions: {
+      activity_enrol_member_v1: {
+        Args: { p_activity_id: string; p_member_id: string }
+        Returns: {
+          activity_id: string
+          application_type: string
+          created_at: string
+          details: Json
+          id: string
+          member_id: string
+          offer_expires_at: string | null
+          offer_status: string
+          updated_at: string
+          wait_order: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_applications"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      activity_enrollable_members_v1: {
+        Args: { p_activity_id: string }
+        Returns: {
+          already_enrolled: boolean
+          member_id: string
+          nickname: string
+        }[]
+      }
+      activity_unenrol_member_v1: {
+        Args: { p_activity_id: string; p_member_id: string }
+        Returns: boolean
+      }
+      append_activity_comment: {
+        Args: { p_activity_id: string; p_body: string }
+        Returns: {
+          activity_id: string
+          body: string
+          created_at: string
+          id: string
+          member_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_comments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       append_notice_comment: {
         Args: { p_body: string; p_notice_id: string }
         Returns: {
@@ -1000,8 +1164,34 @@ export type Database = {
           title: string
         }[]
       }
+      board_post_text: {
+        Args: { p_field: string; p_max: number; p_value: string }
+        Returns: string
+      }
       can_manage_records: { Args: never; Returns: boolean }
+      clear_object_deletions_v1: {
+        Args: { p_paths: string[] }
+        Returns: string[]
+      }
+      create_board_post_v1: {
+        Args: { p_body: string; p_title: string }
+        Returns: {
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "board_posts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       current_member_id: { Args: never; Returns: string }
+      delete_board_post_v1: { Args: { p_post_id: string }; Returns: string }
       delete_media_folder_v1: {
         Args: { p_folder_id: string }
         Returns: string[]
@@ -1014,10 +1204,21 @@ export type Database = {
       is_master_admin: { Args: never; Returns: boolean }
       is_my_avatar_object_path: { Args: { p_path: string }; Returns: boolean }
       is_my_media_object_path: { Args: { p_path: string }; Returns: boolean }
+      is_my_team_file_path: { Args: { p_path: string }; Returns: boolean }
       is_push_endpoint: { Args: { p_endpoint: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      link_member_login_v1: {
+        Args: { p_signup_member_id: string; p_target_member_id: string }
+        Returns: Json
+      }
       media_object_is_claimed: { Args: { p_path: string }; Returns: boolean }
       member_is_staff: { Args: { p_member: string }; Returns: boolean }
+      member_link_board_v1: { Args: never; Returns: Json }
+      my_achievement_v1: { Args: { p_year?: number }; Returns: Json }
+      my_monthly_activity_v1: {
+        Args: { p_month: number; p_year: number }
+        Returns: Json
+      }
       offer_seat_to_next_waitlister: {
         Args: { p_activity_id: string }
         Returns: string
@@ -1079,8 +1280,37 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      save_activity_details_v1: {
+        Args: {
+          p_activity_id: string
+          p_coach: string
+          p_expected_updated_at: string
+          p_gear: string
+          p_info: string
+          p_link: string
+          p_plan: string
+        }
+        Returns: Json
+      }
+      save_notice_v1: {
+        Args: {
+          p_attachments: Json
+          p_body: string
+          // Restored by hand after `npm run db:types`, which drops it. A plpgsql
+          // parameter is nullable and the generator cannot see that:
+          // save_notice_v1 signals "create" by passing p_notice_id as null and
+          // branches on `p_notice_id is null`, so the generated `string` forbids
+          // the very call the function is written to accept. Same for the
+          // expected version, which must be null when creating.
+          p_expected_updated_at: string | null
+          p_notice_id: string | null
+          p_title: string
+        }
+        Returns: Json
+      }
       send_message_v1: {
         Args: {
+          p_attachment_name?: string
           p_attachment_path?: string
           p_attachment_type?: string
           p_body?: string
@@ -1088,6 +1318,7 @@ export type Database = {
           p_room_type: string
         }
         Returns: {
+          attachment_name: string | null
           attachment_path: string | null
           attachment_type: string | null
           body: string | null
@@ -1125,6 +1356,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1158,6 +1390,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1191,6 +1424,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1224,6 +1458,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1257,6 +1492,7 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1290,6 +1526,62 @@ export type Database = {
           real_name: string | null
           role: string
           short_name: string | null
+          signup_pass_expires_at: string | null
+          status: string
+          swim_experience: string | null
+          team_role: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "members"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_race_entry_v1: {
+        Args: { p_activity_id: string; p_entry: Json }
+        Returns: {
+          activity_id: string
+          application_type: string
+          created_at: string
+          details: Json
+          id: string
+          member_id: string
+          offer_expires_at: string | null
+          offer_status: string
+          updated_at: string
+          wait_order: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "activity_applications"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_signup_pass_v1: {
+        Args: { p_allowed: boolean; p_member_id: string }
+        Returns: {
+          auth_user_id: string | null
+          avatar_path: string | null
+          birth_date_text: string | null
+          birth_year: number | null
+          created_at: string
+          gender: string | null
+          historical_attendance_count_legacy: number
+          historical_late_count_legacy: number
+          id: string
+          join_date_text: string | null
+          join_reason: string | null
+          lesson_level: string | null
+          location: string | null
+          nickname: string
+          notes: string | null
+          real_name: string | null
+          role: string
+          short_name: string | null
+          signup_pass_expires_at: string | null
           status: string
           swim_experience: string | null
           team_role: string | null
@@ -1303,7 +1595,35 @@ export type Database = {
         }
       }
       signup_client_key: { Args: never; Returns: string }
+      stroke_rankings_v1: { Args: never; Returns: Json }
       team_event_rankings_v1: { Args: never; Returns: Json }
+      team_file_is_readable: { Args: { p_path: string }; Returns: boolean }
+      team_file_library_allows_me: {
+        Args: { p_path: string }
+        Returns: boolean
+      }
+      update_board_post_v1: {
+        Args: {
+          p_body: string
+          p_expected_updated_at: string
+          p_post_id: string
+          p_title: string
+        }
+        Returns: {
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "board_posts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       upsert_record: {
         Args: {
           p_category: string

@@ -1,16 +1,22 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { supabase } from '../../lib/supabase'
+import { viewerKey } from '../../lib/queryKeys'
+import { useSession } from '../auth/SessionProvider'
 import {
   ACTIVITY_KINDS,
   KIND_LABEL,
+  enrolMember,
   listApplicationSummaries,
+  listEnrollableMembers,
+  unenrolMember,
   type ActivityKind,
   type ApplicantName,
   type ApplicationSummary,
 } from './api'
+import { explainEnrolFailure } from './enrolment'
 import { formatDateLabel, formatTimeRange } from './order'
 
 const CARD = {
@@ -33,6 +39,7 @@ const FILTERS: readonly Filter[] = ['all', ...ACTIVITY_KINDS]
 const FILTER_LABEL: Record<Filter, string> = { all: '전체', ...KIND_LABEL }
 
 export function ApplicationAdminPage() {
+  const { session } = useSession()
   const [filter, setFilter] = useState<Filter>('all')
 
   // Asked of the server rather than read off the session, for the same reason
@@ -41,7 +48,11 @@ export function ApplicationAdminPage() {
   // history as though it were the club's roster. RequireStaff decides what
   // renders; this decides what the page is willing to claim.
   const staff = useQuery({
-    queryKey: ['is-staff'],
+    // The most identity-bound key on the list: it caches whether THE VIEWER is
+    // staff, and this screen decides what to render from it. Answered out of a
+    // previous reader's cache, it is the one entry here that could show a
+    // member the club's whole application roster.
+    queryKey: viewerKey(['is-staff'], session?.user.id),
     queryFn: async () => {
       const { data, error } = await supabase.rpc('is_staff')
       if (error) throw error
@@ -161,7 +172,142 @@ function SummaryCard({ summary }: { summary: ApplicationSummary }) {
         emptyText="신청한 회원이 없습니다"
       />
       {waitlist.length > 0 && <Group label="대기" people={waitlist} showOrder />}
+
+      <EnrolPanel activityId={activity.id} />
     </article>
+  )
+}
+
+/**
+ * 명단 추가 — the club's 36 members who have never had an account.
+ *
+ * Collapsed by default and fetched only when opened. This page lists up to 200
+ * activities and the list is per-activity, so eager loading would be 200 round
+ * trips for a panel almost nobody expands on any given card.
+ *
+ * Being inside the panel is also what marks who cannot be reached: everybody
+ * shown here is somebody who will not get a push and cannot answer a waitlist
+ * offer, and the ones with 명단에 있음 are the ones already on this activity.
+ */
+function EnrolPanel({ activityId }: { activityId: string }) {
+  const [open, setOpen] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+  const qc = useQueryClient()
+
+  const query = useQuery({
+    queryKey: ['enrollable-members', activityId],
+    queryFn: () => listEnrollableMembers(activityId),
+    enabled: open,
+  })
+
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['enrollable-members', activityId] })
+    void qc.invalidateQueries({ queryKey: ['application-summaries'] })
+  }
+
+  const add = useMutation({
+    mutationFn: (memberId: string) => enrolMember(activityId, memberId),
+    onMutate: () => setFailure(null),
+    onSuccess: refresh,
+    onError: (error) => setFailure(explainEnrolFailure(error)),
+  })
+
+  const remove = useMutation({
+    mutationFn: (memberId: string) => unenrolMember(activityId, memberId),
+    onMutate: () => setFailure(null),
+    onSuccess: refresh,
+    onError: (error) => setFailure(explainEnrolFailure(error)),
+  })
+
+  const busy = add.isPending || remove.isPending
+
+  return (
+    <section style={{ marginTop: 12, borderTop: '1px solid #f0f2f4', paddingTop: 10 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{
+          minHeight: 44,
+          padding: '0 14px',
+          borderRadius: 13,
+          border: '1px solid #e1e5ea',
+          background: '#fff',
+          color: '#111317',
+          fontSize: 13,
+        }}
+      >
+        {open ? '명단 추가 닫기' : '명단 추가'}
+      </button>
+
+      {open && (
+        <>
+          <p style={{ fontSize: 11, color: '#6b7178', margin: '9px 0 0' }}>
+            앱에 가입한 적이 없어 스스로 신청할 수 없는 회원입니다. 알림을 받지 못하고 대기 순번
+            제안에도 응답할 수 없습니다.
+          </p>
+
+          {failure && (
+            <p role="alert" style={{ fontSize: 12, color: '#b3261e', margin: '7px 0 0' }}>
+              {failure}
+            </p>
+          )}
+
+          <AsyncSection
+            query={query}
+            isEmpty={(rows) => rows.length === 0}
+            loading={<Shimmer rows={2} />}
+            empty="추가할 수 있는 회원이 없습니다"
+            error="회원 목록을 불러오지 못했습니다"
+          >
+            {(rows) => (
+              <ul
+                style={{
+                  listStyle: 'none',
+                  padding: 0,
+                  margin: '9px 0 0',
+                  display: 'grid',
+                  gap: 6,
+                }}
+              >
+                {rows.map((person) => (
+                  <li
+                    key={person.memberId}
+                    style={{ display: 'flex', alignItems: 'center', gap: 9 }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 13 }}>{person.nickname}</span>
+                    {person.alreadyEnrolled && (
+                      <span style={{ ...TAG, background: '#edf7f2', color: '#11805b' }}>
+                        명단에 있음
+                      </span>
+                    )}
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        person.alreadyEnrolled
+                          ? remove.mutate(person.memberId)
+                          : add.mutate(person.memberId)
+                      }
+                      style={{
+                        minHeight: 44,
+                        minWidth: 64,
+                        borderRadius: 13,
+                        border: '1px solid #e1e5ea',
+                        background: '#fff',
+                        color: person.alreadyEnrolled ? '#b3261e' : '#111317',
+                        fontSize: 13,
+                        opacity: busy ? 0.5 : 1,
+                      }}
+                    >
+                      {person.alreadyEnrolled ? '빼기' : '추가'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </AsyncSection>
+        </>
+      )}
+    </section>
   )
 }
 

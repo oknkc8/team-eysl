@@ -201,12 +201,19 @@ export function MediaItemActions({
       </div>
 
       {/* Deleting the row and deleting the object are two systems answering
-          separately, so when the bucket refuses we say so instead of reporting a
-          clean delete. Nothing in this app lists a bucket, so an unreported
-          orphan would stay invisible. */}
+          separately, so when the bucket does not answer we say so instead of
+          reporting a clean delete.
+
+          The wording changed with 0036 because the situation did. This used to
+          mean the object was lost — the row that made it visible was gone, so
+          nothing could ever remove it, and telling a 총관리자 was the only
+          recourse there was. Now it is queued, and the next session that can
+          reach it finishes the job, so what this reports is a delay rather than
+          damage. Sending people to ask for help they do not need would be the
+          worse message. */}
       {orphans > 0 && (
         <p style={{ fontSize: 11, color: '#925900', margin: '9px 0 0', lineHeight: 1.6 }}>
-          목록에서는 지워졌지만 저장소 파일 {orphans}개가 남아 있습니다. 총관리자에게 알려주세요.
+          목록에서는 지워졌습니다. 저장소 파일 {orphans}개는 곧 정리됩니다.
         </p>
       )}
     </div>

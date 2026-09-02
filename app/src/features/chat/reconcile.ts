@@ -22,6 +22,13 @@ export type ChatMessage = {
   body: string | null
   attachment_path: string | null
   attachment_type: string | null
+  /**
+   * The sender's own file name (0049), or null on a row written before it.
+   *
+   * Not derivable from the path: 0042 slugs object keys to ASCII because Storage
+   * refuses Hangul, so the key says `file.txt` where the member said 훈련일지.txt.
+   */
+  attachment_name: string | null
   created_at: string
   /**
    * Written but not yet acknowledged. Never true for a row that came back from
