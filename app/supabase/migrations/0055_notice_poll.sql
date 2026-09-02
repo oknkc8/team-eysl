@@ -446,6 +446,29 @@ begin
         using errcode = '42501';
     end if;
 
+    -- ANONYMITY IS A PROMISE MADE BEFORE THE VOTE, SO IT CANNOT BE WITHDRAWN
+    -- AFTER ONE.
+    --
+    -- Without this, the whole anonymity design is decoration: a manager creates
+    -- an anonymous poll, the screen tells members 「이름을 공개하지 않음」, they
+    -- vote on the strength of that, and the manager then saves the same poll
+    -- with anonymous = false. Every name that was collected under the promise
+    -- becomes visible, and it can be switched back afterwards so the exposure
+    -- leaves no trace on the poll.
+    --
+    -- get_notice_poll_v1 refusing to return voters for an anonymous poll is
+    -- exactly as strong as the flag it reads, and nothing else was defending
+    -- the flag.
+    --
+    -- Refused rather than repaired. Deleting the votes to permit the change
+    -- would silently discard what people actually said, and that is a decision
+    -- for a person who can go and ask them.
+    if v_poll.anonymous and not coalesce(p_anonymous, false)
+       and exists (select 1 from public.notice_poll_votes v where v.poll_id = v_poll.id) then
+      raise exception '이미 투표한 사람이 있어 익명을 해제할 수 없습니다. 익명으로 받은 이름은 공개하지 않습니다.'
+        using errcode = '42501';
+    end if;
+
     update public.notice_polls p
        set title            = v_title,
            option_kind      = v_kind,
@@ -508,8 +531,36 @@ begin
     v_order := v_order + 1;
   end loop;
 
-  -- Anything not named is gone, and its votes cascade with it. See the note
-  -- above the function: this is destructive on purpose.
+  -- Anything not named is gone — UNLESS SOMEBODY HAS VOTED FOR IT.
+  --
+  -- "The list you send is the final list" is a reasonable contract for a form,
+  -- and it becomes a data-loss bug the moment the poll can grow underneath the
+  -- form. With allow_option_add on, a member adds 「토요일 저녁」 and three
+  -- people vote for it; a staffer who opened the editor before that and then
+  -- changes only the notice BODY submits the options they loaded, which do not
+  -- include it. The member's option and every vote on it disappear, both
+  -- operations report success, and no screen ever mentions it.
+  --
+  -- The same shape reaches it by a second route: if an attachment upload fails
+  -- after the poll saved, the editor stays open holding the options it sent
+  -- rather than the ids the server returned, and a retry recreates them —
+  -- deleting the originals and any votes cast in between.
+  --
+  -- Refusing is the fix that does not require the editor to be right. A
+  -- staffer who genuinely means to remove an option that people have voted on
+  -- can clear it deliberately; what they cannot do any more is remove it by not
+  -- knowing it existed.
+  if exists (
+    select 1
+      from public.notice_poll_options o
+      join public.notice_poll_votes v on v.option_id = o.id
+     where o.poll_id = v_poll.id
+       and not (o.id = any (v_keep))
+  ) then
+    raise exception '이미 표가 찍힌 항목은 지울 수 없습니다. 화면을 새로 고쳐 최신 항목을 불러온 뒤 다시 저장해 주세요.'
+      using errcode = '42501';
+  end if;
+
   delete from public.notice_poll_options o
    where o.poll_id = v_poll.id
      and not (o.id = any (v_keep));
@@ -518,7 +569,7 @@ begin
 end $$;
 
 comment on function public.save_notice_poll_v1(uuid, text, text, jsonb, boolean, boolean, boolean, timestamptz) is
-  '공지 투표를 만들거나 고친다. p_options 는 최종 목록이며, 목록에서 빠진 항목은 삭제되고 그 항목에 찍힌 표도 함께 사라진다.';
+  '공지 투표를 만들거나 고친다. p_options 는 최종 목록이며 빠진 항목은 삭제된다. 다만 이미 표가 찍힌 항목은 삭제를 거부한다 — 오래된 편집 화면이 회원이 추가한 항목과 그 표를 조용히 지우는 것을 막기 위해서다. 표가 있는 익명 투표의 익명 해제도 거부한다.';
 
 -- ----------------------------------------------------------------------- vote
 -- The member's whole ballot in one call: everything they had is deleted and
@@ -560,7 +611,13 @@ begin
     raise exception 'no such poll' using errcode = '42704';
   end if;
 
-  if v_poll.closes_at is not null and v_poll.closes_at <= now() then
+  -- clock_timestamp(), NOT now(). now() is the TRANSACTION START time and does
+  -- not advance while this statement waits for the lock above — so a voter who
+  -- began at 12:00:00, blocked until 12:00:02, and found a deadline of 12:00:01
+  -- set by the transaction it was waiting for would compare 12:00:01 <= 12:00:00
+  -- and vote anyway. Taking the lock before reading closes_at is necessary and
+  -- was not sufficient; the timestamp has to be read after the wait as well.
+  if v_poll.closes_at is not null and v_poll.closes_at <= clock_timestamp() then
     raise exception '마감된 투표입니다' using errcode = '42501';
   end if;
 
@@ -646,7 +703,13 @@ begin
     raise exception 'this poll does not accept new options' using errcode = '42501';
   end if;
 
-  if v_poll.closes_at is not null and v_poll.closes_at <= now() then
+  -- clock_timestamp(), NOT now(). now() is the TRANSACTION START time and does
+  -- not advance while this statement waits for the lock above — so a voter who
+  -- began at 12:00:00, blocked until 12:00:02, and found a deadline of 12:00:01
+  -- set by the transaction it was waiting for would compare 12:00:01 <= 12:00:00
+  -- and vote anyway. Taking the lock before reading closes_at is necessary and
+  -- was not sufficient; the timestamp has to be read after the wait as well.
+  if v_poll.closes_at is not null and v_poll.closes_at <= clock_timestamp() then
     raise exception '마감된 투표입니다' using errcode = '42501';
   end if;
 
