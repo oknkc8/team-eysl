@@ -278,8 +278,12 @@ exact-ID 정리로 처리합니다. 패턴으로 지우는 로직을 되살리�
 ## 6-0. upstream 최신 — `v114` → `final124` (2026-09-02 조사)
 
 `upstream/main` = `4eadfd5` "Serve race time edit fix v124", `sw.js`의
-`VERSION='team-eysl-final124-race-time-fields'`. **v115부터 v124까지 열 개가 전부 09-02 하루에
-나왔습니다.**
+`VERSION='team-eysl-final124-race-time-fields'`. **09-02 하루에 릴리스 아홉 개가 나왔습니다** —
+`final115` · `116` · `117` · `118` · `119` · `121` · `122` · `123` · `124`.
+
+**번호로 빼면 열이고 실제로는 아홉입니다.** `final120`이 없기 때문입니다. 「115부터 124까지니까
+10개」는 이 파일이 다른 곳에서 이미 경고한 그 실수 — 세지 않고 빼는 것 — 이고, 초안에 실제로
+들어갔다가 리뷰에서 잡혔습니다.
 
 **`v114`는 VERSION 문자열이 아닙니다** — 커밋 제목에만 있고, `index.html`에
 `<!-- V114_DIRECT_INDEX -->` 마커로 직접 패치됐습니다. VERSION 워크에서 `final114`를 찾으면
@@ -297,11 +301,21 @@ exact-ID 정리로 처리합니다. 패턴으로 지우는 로직을 되살리�
    `enforceRaceTimeFields()` 하나뿐인 61줄입니다. 우리 대회 신청 화면이 이미 있어 이쪽이 훨씬
    작습니다.
 
-**`historicalTrainingRes` ReferenceError는 고쳐졌습니다.** `index.html:1605`에서 `Promise.all`
-구조분해의 7번째 슬롯으로 다시 선언되고 `:1667`에서 정상 소비됩니다. `final66`~`final80`
-열네 개 릴리스에 걸쳐 신규 로그인을 깨뜨리던 것이 사라졌습니다. **우리가 `bc3523d` 스냅샷에서
-재구성하기로 했던 이유가 없어졌으니**, `final62`/`final64` 계열을 포팅할 때는 이제 현재 head를
-읽으면 됩니다.
+**`historicalTrainingRes` ReferenceError는 `final124`에도 없습니다 — 다만 이건 새 소식이
+아닙니다.** `index.html:1605`에서 `Promise.all` 구조분해의 7번째 슬롯으로 선언되고 `:1667`에서
+정상 소비됩니다. **`CLAUDE.md`가 이미 답을 갖고 있었습니다**: 결함은 `final66`~`final91`
+**19개** 릴리스에 걸쳐 있었고 `final92-unregistered-roster`(`59a67e3`)가 고쳤습니다.
+
+**이 항목을 「오늘의 발견」으로 적었다가 리뷰에서 잡혔습니다.** 현재 head만 보고 "없다"를
+확인한 뒤, 언제부터 없었는지는 묻지 않고 오늘 고쳐진 것처럼 쓴 것입니다. 범위도 14개로
+줄어들어 있었습니다. **부재를 확인하는 것과 부재가 언제 시작됐는지 아는 것은 다른 질문**이고,
+전자만으로 후자를 쓰면 이미 문서에 있는 더 정확한 기록과 충돌합니다.
+
+**따라서 포팅 규칙은 `CLAUDE.md`의 것이 그대로 유효합니다** — 버전 경계는 `final66`~`final91`
+이고, 그 구간에서 포팅할 때만 「읽기 경로가 `index.html:1631` 하류인가」를 먼저 물어야 합니다.
+`final92` 이후 릴리스는 그 질문이 필요 없으므로, 오늘 포팅할 `final115`~`final124`는 현재
+head를 그대로 읽으면 됩니다. `bc3523d` 재구성 지침은 `final62`/`final64` 계열에만 걸리는
+것이라 폐기되지 않습니다.
 
 **그분의 작업 방식이 또 바뀌었습니다 — 진짜 CI/CD가 생겼습니다.** 기능마다
 `.github/workflows/apply-vNNN.yml`과 `scripts/patch_vNNN.py`가 한 쌍으로 붙습니다. 사람이
@@ -321,8 +335,12 @@ index.html:1772       final82-ios-push-recovery     <- register('/sw.js?v=…')
 index.html:5271       final121-notice-deadline-layout
 ```
 
-캐시 무효화는 둘을 같이 올려야 성립하는데 셋이 다 다릅니다. 이미 설치한 회원이 v122~v124를
-못 받을 수 있고, 화면상으로는 아무 이상이 없습니다.
+캐시 무효화는 둘을 같이 올려야 성립한다는 것이 이 저장소의 규칙인데 셋이 다 다릅니다.
+
+**다만 이것은 관측이지 확인된 결함이 아닙니다.** `sw.js` 내부의 캐시 키와 `register()`의 쿼리
+문자열은 서로 다른 무효화 지점일 수 있고, 브라우저가 실제로 새 워커를 집는지는 등록 상태를
+보거나 갱신을 재현해 봐야 압니다. 우리는 그분 앱을 띄워 보지 않았습니다. **「회원이 v122~v124를
+못 받는다」로 단정하지 말고 「검증 필요」로 두십시오** — 방장님께 알릴 때도 그 온도로 알립니다.
 
 **사이드카는 21개 중 3개가 죽어 있고, 지난 조사와 같은 셋입니다** — `enhancements-v93` ·
 `notice-fix-v95` · `attendance-sync-v104`. 나머지는 `index.html`에 `<script>` 태그가 없어도
@@ -432,8 +450,13 @@ libpq는 **keg-only**라 `/opt/homebrew`에 심볼릭 링크가 걸리지 않습
 
 ```bash
 brew install libpq
-export PATH="/opt/homebrew/opt/libpq/bin:$PATH"   # ~/.zshrc 에 넣으십시오
+echo 'export PATH="'"$(brew --prefix libpq)"'/bin:$PATH"' >> ~/.zshrc
+exec zsh          # 지금 셸에도 반영
 ```
+
+**경로를 손으로 적지 말고 `brew --prefix libpq`에 물으십시오.** Apple Silicon은
+`/opt/homebrew`, Intel Mac은 `/usr/local`이고, Homebrew prefix를 옮겨 쓰는 사람도 있습니다.
+하드코딩하면 다른 머신에서 조용히 틀립니다 — 이 파일의 목적이 바로 그 「다른 머신」입니다.
 
 **이것이 「빠진 도구가 다른 문제로 위장하는」 계열의 예입니다.** 실패 메시지는 `migrate.sh`
 안에서 나오므로 마이그레이션이나 접속 설정을 먼저 의심하게 되는데, 실제 원인은 PATH입니다.
