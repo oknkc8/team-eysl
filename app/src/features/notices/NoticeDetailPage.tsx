@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
@@ -14,6 +14,7 @@ import {
   type NoticeAttachment,
 } from './api'
 import { NoticePoll } from './NoticePoll'
+import { listNoticeReaders, markNoticeRead } from './api'
 import { formatRelative } from './relativeTime'
 
 export function NoticeDetailPage() {
@@ -25,6 +26,21 @@ export function NoticeDetailPage() {
     queryFn: () => getNotice(noticeId),
     enabled: !!noticeId,
   })
+
+  // Marked on open, not on a button.
+  //
+  // A receipt records that the notice was put in front of somebody, and a
+  // button would record something else — that they chose to say so — which is
+  // a different fact and one nobody would press. Staff want the first.
+  //
+  // Deliberately not surfaced to the member in any way: no toast, no error, no
+  // state. They came to read a 공지 and the receipt is for somebody else, so a
+  // failure here is not theirs to see. First open wins server-side, so running
+  // on every visit is harmless and re-running on a remount cannot move read_at.
+  useEffect(() => {
+    if (!noticeId) return
+    void markNoticeRead(noticeId).catch(() => {})
+  }, [noticeId])
 
   return (
     <div className="page">
@@ -60,6 +76,7 @@ export function NoticeDetailPage() {
           at all when the notice has no poll. */}
       <NoticePoll noticeId={noticeId} />
       <Attachments noticeId={noticeId} />
+      {isStaff(user) && <Readers noticeId={noticeId} />}
       <Comments noticeId={noticeId} />
     </div>
   )
@@ -202,6 +219,63 @@ function Comments({ noticeId }: { noticeId: string }) {
           </button>
         </div>
       </div>
+    </section>
+  )
+}
+
+/**
+ * Who has opened this notice. Staff only, and mounted only for staff — the
+ * function refuses anybody else with 42501, so this is belt and braces rather
+ * than the gate.
+ *
+ * WHAT THIS CANNOT SHOW, stated because the absence is the interesting part:
+ * there is no list of who has NOT read it, and no denominator. `0053` returns
+ * readers and nothing else, so "3 of 41" would mean joining this against the
+ * roster on the client — and the roster a member is allowed to see is not
+ * necessarily the roster the count should be over. That needs a decision and a
+ * v2 function rather than an arithmetic shortcut here.
+ *
+ * A reader who is later blocked disappears from this list while their receipt
+ * row stays, because the function joins member_public_v (0019 filters to
+ * approved). The count dropping with no event to explain it is documented in
+ * the migration; it is mentioned again here so the person reading the screen
+ * has the same information as the person reading the schema.
+ */
+function Readers({ noticeId }: { noticeId: string }) {
+  const query = useQuery({
+    queryKey: ['notice-readers', noticeId],
+    queryFn: () => listNoticeReaders(noticeId),
+    enabled: !!noticeId,
+  })
+
+  return (
+    <section className="section">
+      <h2>읽은 사람</h2>
+      <AsyncSection
+        query={query}
+        loading={<Shimmer rows={2} />}
+        error="열람 기록을 불러오지 못했습니다"
+      >
+        {(readers) =>
+          readers.length === 0 ? (
+            <p className="muted">아직 아무도 열어보지 않았습니다.</p>
+          ) : (
+            <>
+              <p className="muted">{readers.length}명이 읽었습니다.</p>
+              <ul className="list">
+                {readers.map((reader) => (
+                  <li key={reader.member_id}>
+                    {/* short_name is nullable and the generated types would
+                        claim otherwise — see NoticeReader in api.ts. */}
+                    <b>{reader.short_name ?? reader.nickname}</b>{' '}
+                    <span className="muted">{formatRelative(reader.read_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )
+        }
+      </AsyncSection>
     </section>
   )
 }
