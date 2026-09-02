@@ -65,6 +65,57 @@ set -euo pipefail
 # between two resolved paths and a symlink cannot slip between them.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 
+# ---------------------------------------------------------------------------
+# THIS REFUSES TO RUN UNTIL SOMEBODY DECIDES THE QUESTION BELOW.
+#
+# The importer this wraps is WRITE-ONCE, not a sync. Every statement it emits is
+# `on conflict ... do nothing` (13 of them), and toSql.ts:29-38 says so in as
+# many words: "This is a one-time backfill of a paper register, not a sync. Once
+# a row exists the app is the newer source, and the importer's job is finished."
+#
+# Run by hand that is correct, and deliberate — an earlier `do update` version
+# silently reverted members' own profile edits and admins' attendance
+# corrections. Put it on a SCHEDULE and the same property becomes a different
+# thing: a job that loads the president's FIRST version of every fact and then
+# ignores every correction he ever makes, forever, silently.
+#
+# The sharpest case, and it is not hypothetical. Activity ids are
+# md5('eysl-import:training:<date>')::uuid (toSql.ts:75-80), so THE DATE IS THE
+# IDENTITY. He corrects a training date — 1월 4일 to 1월 5일, about the most
+# likely edit anyone ever makes to a spreadsheet — and the next run mints a NEW
+# activity and loads the same people's attendance onto it. The old activity and
+# its rows survive, because `do nothing` never deletes. Every member who was
+# there is permanently +1 in 출석왕, and nobody spots a wrong number on a
+# leaderboard by eye (0016:8 makes exactly that argument about a different bug).
+#
+# `records` has the same shape: result_centiseconds is in the dedup key
+# (toSql.ts:308-310), so a corrected time inserts a second row and leaves the
+# wrong one, and the 단축 rankings then compare a real time against a stale one.
+#
+# WHAT IS ALREADY CLOSED: the identity-drift guard catches a renamed MEMBER, and
+# the double-count guard catches the legacy counters. Neither sees a moved DATE.
+#
+# WHAT WOULD CLOSE IT: refuse the import when the workbook's training-date set is
+# not a superset of the dates already loaded. A date that vanished or moved is a
+# correction, and a correction is a person's decision — this importer can only
+# ever add. That guard is not written yet.
+#
+# So everything below works and is tested, and running it unattended is the one
+# thing it must not do until that guard exists. Setting the variable is how you
+# say you have read this.
+# ---------------------------------------------------------------------------
+if [ "${EYSL_IMPORT_SCHEDULED_OK:-}" != "yes" ]; then
+  echo "refusing to run: the importer is write-once and this is the scheduled path." >&2
+  echo "  A scheduled run loads his first version of every fact and ignores every" >&2
+  echo "  correction after it. A corrected training DATE silently duplicates an" >&2
+  echo "  activity and permanently inflates 출석왕; no guard catches that yet." >&2
+  echo "" >&2
+  echo "  Run it by hand instead:  npm run db:import" >&2
+  echo "  Or, having read the header of this file and accepted it:" >&2
+  echo "    EYSL_IMPORT_SCHEDULED_OK=yes $0" >&2
+  exit 1
+fi
+
 # Logs go OUTSIDE the repository, and the check below is not decoration. The
 # import's stderr carries the parser's warnings, which quote spreadsheet rows,
 # and psql's errors name members — the double-count guard does so by design.
