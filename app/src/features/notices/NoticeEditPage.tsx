@@ -13,6 +13,14 @@ import {
   type Notice,
   type NoticeAttachment,
 } from './api'
+import {
+  emptyPollComposerState,
+  NoticePollComposer,
+  pollComposerStateFrom,
+  pollDraftFrom,
+  type PollComposerState,
+} from './NoticePollComposer'
+import { deletePoll, getPoll, savePoll, type Poll } from './pollApi'
 
 const CARD = {
   padding: 14,
@@ -90,10 +98,11 @@ function EditExisting({ noticeId }: { noticeId: string }) {
   // attachments already agreeing. Two separate queries would let the form mount
   // with a title and no attachments and then have them appear underneath the
   // person editing.
-  const [noticeQuery, attachmentsQuery] = useQueries({
+  const [noticeQuery, attachmentsQuery, pollQuery] = useQueries({
     queries: [
       { queryKey: ['notice', noticeId], queryFn: () => getNotice(noticeId) },
       { queryKey: ['notice-attachments', noticeId], queryFn: () => listAttachments(noticeId) },
+      { queryKey: ['notice-poll', noticeId], queryFn: () => getPoll(noticeId) },
     ],
   })
 
@@ -122,7 +131,29 @@ function EditExisting({ noticeId }: { noticeId: string }) {
               </p>
             )
           }
-          return <NoticeForm notice={notice} initialAttachments={attachmentsQuery.data} />
+          // THE POLL IS LOCKED FOR THE SAME REASON, and it is the same defect
+          // wearing different clothes. A failed poll fetch seeds the composer as
+          // "this notice has no poll", and the save path reads that as 투표 삭제 —
+          // so fixing a typo in the title would delete a poll and every vote in
+          // it. `isPending` is not enough on its own: an error also has to stop
+          // the form, because `null` is a real answer here (most notices have no
+          // poll) and is indistinguishable from a failure once it is state.
+          if (pollQuery.isPending) return <Shimmer rows={2} />
+          if (pollQuery.isError) {
+            return (
+              <p style={{ ...CARD, fontSize: 13, color: '#a33', lineHeight: 1.6 }}>
+                투표를 불러오지 못해 수정할 수 없습니다. 이대로 저장하면 기존 투표가 지워질 수 있어
+                화면을 잠갔습니다. 새로고침해 주세요.
+              </p>
+            )
+          }
+          return (
+            <NoticeForm
+              notice={notice}
+              initialAttachments={attachmentsQuery.data}
+              initialPoll={pollQuery.data ?? null}
+            />
+          )
         }}
       </AsyncSection>
     </Page>
@@ -144,9 +175,11 @@ function Page({ title, children }: { title: string; children: ReactNode }) {
 function NoticeForm({
   notice,
   initialAttachments,
+  initialPoll,
 }: {
   notice?: Notice
   initialAttachments?: NoticeAttachment[]
+  initialPoll?: Poll | null
 }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -169,32 +202,76 @@ function NoticeForm({
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   // Rows whose object never arrived. Shown rather than swallowed; see below.
   const [uploadFailures, setUploadFailures] = useState<string[]>([])
+  // The composer, seeded once from a prop the parent already proved it fetched.
+  const [poll, setPoll] = useState<PollComposerState>(() =>
+    initialPoll ? pollComposerStateFrom(initialPoll) : emptyPollComposerState(),
+  )
+  const [pollError, setPollError] = useState<string | null>(null)
   const pickerRef = useRef<HTMLInputElement>(null)
 
   const total = kept.length + files.length
 
   const save = useMutation({
-    mutationFn: () =>
-      saveNotice({
+    // TWO WRITES, IN THIS ORDER, AND THE SECOND CAN FAIL ON ITS OWN.
+    //
+    // A poll hangs off a notice_id, so on a new notice there is nothing to hang
+    // it on until save_notice_v1 has returned one — the two cannot be one
+    // transaction from here. That leaves the same accepted failure the
+    // attachment upload has: the notice is saved and the poll is not. It is
+    // reported rather than swallowed, and the screen stays put, exactly as an
+    // upload failure does.
+    //
+    // The draft is validated in submit() BEFORE any of this runs, so nothing
+    // here can throw for a reason the member could have fixed first. What is
+    // left to fail is the network and the server's own refusals.
+    mutationFn: async () => {
+      const result = await saveNotice({
         noticeId: saved?.id,
         title: title.trim(),
         body,
         keepAttachmentIds: kept.map((row) => row.id),
         files,
         expectedUpdatedAt: saved?.updated_at ?? null,
-      }),
+      })
+
+      let failure: string | null = null
+      try {
+        const draft = pollDraftFrom(poll)
+        // null means the composer is switched off, which is 투표 삭제 — and
+        // delete_notice_poll_v1 is a no-op on a notice that never had one, so
+        // this is safe to call on every save rather than only when one existed.
+        if (draft) await savePoll(result.notice.id, draft)
+        else await deletePoll(result.notice.id)
+      } catch (error) {
+        failure =
+          (error as { message?: string } | null)?.message ?? '투표를 저장하지 못했습니다.'
+      }
+      return { result, pollFailure: failure }
+    },
     onMutate: () => {
       setUploadFailures([])
       setConflict(null)
+      setPollError(null)
       setSaveState('saving')
     },
-    onSuccess: async (result) => {
+    onSuccess: async ({ result, pollFailure }) => {
       // Adopted before anything else can return early: from here on this form
       // is editing a row that exists, at the version the server just wrote.
       setSaved(result.notice)
       await qc.invalidateQueries({ queryKey: ['notices'] })
       await qc.invalidateQueries({ queryKey: ['notice', result.notice.id] })
       await qc.invalidateQueries({ queryKey: ['notice-attachments', result.notice.id] })
+      await qc.invalidateQueries({ queryKey: ['notice-poll', result.notice.id] })
+
+      // Same shape as the upload failure below: the notice is saved, one part
+      // of the save is not, and navigating away would hide that. Reported first
+      // because a poll the member believes they attached and did not is the
+      // more surprising of the two.
+      if (pollFailure) {
+        setPollError(pollFailure)
+        setSaveState('error')
+        return
+      }
 
       // THE ACCEPTED FAILURE, MADE VISIBLE. The notice and its attachment rows
       // are saved either way — that half is a transaction — but an object may
@@ -246,6 +323,18 @@ function NoticeForm({
 
   function submit() {
     if (!canSubmit) return
+    // Validated BEFORE the notice is written, so a poll with one option cannot
+    // leave a saved notice and a refused poll behind. pollDraftFrom throws a
+    // Korean sentence; the server refuses the same things, and this is what
+    // puts the sentence in front of the person instead of a PostgREST code.
+    try {
+      pollDraftFrom(poll)
+    } catch (error) {
+      setPollError((error as { message?: string } | null)?.message ?? '투표를 확인해 주세요.')
+      setSaveState('error')
+      return
+    }
+    setPollError(null)
     save.mutate()
   }
 
@@ -367,6 +456,27 @@ function NoticeForm({
         </p>
       </div>
 
+      {/* Below the attachments, above the save row: it is part of the notice
+          being composed, not a separate screen. Locked while a save is in
+          flight so the state the mutation read cannot move underneath it. */}
+      <NoticePollComposer state={poll} onChange={setPoll} disabled={saveState === 'saving'} />
+
+      {pollError && (
+        <p
+          style={{
+            ...CARD,
+            marginTop: 14,
+            background: '#fff0f0',
+            borderColor: '#fff0f0',
+            color: '#a33',
+            fontSize: 13,
+            lineHeight: 1.6,
+          }}
+        >
+          {pollError}
+        </p>
+      )}
+
       {conflict && (
         <p
           style={{
@@ -441,7 +551,12 @@ function NoticeForm({
       {saved && (
         <button
           onClick={() => {
-            if (window.confirm('이 공지를 삭제할까요? 댓글과 첨부파일도 함께 사라집니다.')) {
+            // 투표 was added to this sentence with the poll, not afterwards:
+            // notice_polls cascades from notices, so deleting a notice really
+            // does take the poll and every vote in it. A confirm that lists two
+            // of the three things it destroys is the kind of sentence this
+            // project keeps finding false.
+            if (window.confirm('이 공지를 삭제할까요? 댓글과 첨부파일, 투표도 함께 사라집니다.')) {
               remove.mutate(saved.id)
             }
           }}
