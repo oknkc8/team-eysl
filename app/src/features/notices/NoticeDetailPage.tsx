@@ -27,20 +27,42 @@ export function NoticeDetailPage() {
     enabled: !!noticeId,
   })
 
-  // Marked on open, not on a button.
+  // Marked when the notice has actually LOADED, not when the route mounts.
   //
   // A receipt records that the notice was put in front of somebody, and a
   // button would record something else — that they chose to say so — which is
   // a different fact and one nobody would press. Staff want the first.
   //
+  // But "put in front of them" has to be TRUE. Marking on mount recorded it even
+  // when getNotice failed, so staff could see a member as having read content
+  // that never rendered — a receipt for something that did not happen, which is
+  // worse than a missing one. `notice.isSuccess` is what makes the claim true.
+  //
   // Deliberately not surfaced to the member in any way: no toast, no error, no
   // state. They came to read a 공지 and the receipt is for somebody else, so a
-  // failure here is not theirs to see. First open wins server-side, so running
-  // on every visit is harmless and re-running on a remount cannot move read_at.
+  // failure here is not theirs to see.
+  //
+  // NOTHING RECORDS THE FAILURE ANYWHERE EITHER, and that is a gap rather than a
+  // decision. A renamed RPC or a permission regression would disable every
+  // receipt silently. It is not sent anywhere because this app has no logging
+  // channel at all — zero console calls and no error reporter anywhere in src —
+  // so there is nothing to send it to, and introducing the first one is a
+  // decision that should not ride along inside a notices PR.
+  //
+  // First open wins server-side, so running again on a remount or under
+  // StrictMode is harmless and cannot move read_at.
+  const qc = useQueryClient()
+
   useEffect(() => {
-    if (!noticeId) return
-    void markNoticeRead(noticeId).catch(() => {})
-  }, [noticeId])
+    if (!noticeId || !notice.isSuccess) return
+    void markNoticeRead(noticeId)
+      // The reader list is fetched beside this, and on a staff member's own
+      // first open the list can come back BEFORE this insert commits — so they
+      // are missing from their own list, and React Query caches that. Refetch
+      // once the row is actually in.
+      .then(() => qc.invalidateQueries({ queryKey: ['notice-readers', noticeId] }))
+      .catch(() => {})
+  }, [noticeId, notice.isSuccess, qc])
 
   return (
     <div className="page">
