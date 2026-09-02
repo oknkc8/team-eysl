@@ -6,19 +6,30 @@
  * screens import from here; the tests import from here; there is no third copy
  * of any of these rules living inside a component.
  *
- * WHY THE TOTALS ARE RECOMPUTED RATHER THAN SUMMED FROM `balance`.
- * `my_dues_summary_v1` and `dues_period_roster_v1` both return a `balance`
- * column, and it is correct — the SQL computes it as `due - paid` in the same
- * expression that reads the two. `summariseDues` below ignores that column and
- * recomputes from `due_amount` and `paid_amount` anyway.
+ * THERE IS NO BALANCE HERE, AND THAT IS THE POINT.
  *
- * That is the same belt-and-braces call `toPoll` makes about anonymity in
- * `notices/pollApi.ts`: the database is where the rule actually lives, and this
- * is the cheap second enforcement that stops a wrong payload becoming a wrong
- * number on a money screen. A stale deployed RPC, a hand-rolled response in a
- * test, a proxy that rewrote the body — any of them could send a `balance` that
- * disagrees with the two operands beside it, and a total built by summing that
- * column would quietly inherit the disagreement.
+ * An earlier draft of this file computed 잔액 as `due - paid` and summed a
+ * 총 납부 누계 across periods. Both are gone, and neither should come back
+ * without the thing they need first.
+ *
+ * A balance needs a credit side. The club's credit side is the workbook's
+ * `계좌거래내역` bank sheet, and `scripts/import/parse.ts` excludes it on
+ * purpose — its `XLSX.read` allowlist admits three sheets and skips the bank and
+ * 회비 sheets at parse time, because this repository is public and those hold
+ * bank data about named members. So the deposits are not in the database and are
+ * not coming.
+ *
+ * What `paid_amount` holds is what a staffer keyed in. Subtracting that from the
+ * charge yields a number that is wrong in a KNOWABLE direction: every member who
+ * really paid, but whose payment nobody has entered yet, reads as owing the full
+ * amount. On a money screen that is not a rough edge, it is the app telling a
+ * member they owe money they already handed over — and nobody catches a wrong
+ * balance by eye, because there is nothing on the screen to check it against.
+ *
+ * So the rule this module enforces: SUM THE CHARGE SIDE, COUNT THE ROWS, AND
+ * NEVER SUBTRACT THE TWO SIDES OR TOTAL THE MONEY RECEIVED. `소계`, `참여횟수`
+ * and the monthly buckets are all charge-side or counts, which is exactly why
+ * those three survive and the other two do not.
  */
 
 /** 상반기 or 하반기. The database CHECK is `half in (1, 2)`; this is that type. */
@@ -64,76 +75,67 @@ export function periodLabel(year: number, half: Half): string {
   return `${year}년 ${half === 1 ? '상반기' : '하반기'}`
 }
 
-// ------------------------------------------------------------------ balances
+// ------------------------------------------------------- recorded, not settled
 
 /**
- * The rule, in one line, mirroring 0057's `d.amount - coalesce(p.amount, 0)`.
+ * Whether a payment has been ENTERED for this row. Not whether the member paid.
  *
- * NOT clamped at zero. A member who pays both halves in one transfer overpays the
- * first, and the negative that comes back is the club owing them credit — a real
- * fact that `Math.max(0, …)` would silently destroy. `balanceLabel` is what turns
- * it into a sentence.
+ * The distinction is the whole of the module header. This function looks at the
+ * database and answers a question about the database — has somebody keyed
+ * anything in — and deliberately does not answer the question a member actually
+ * cares about, which is whether the club considers them square. That second
+ * question needs the bank sheet and cannot be answered here at all.
+ *
+ * Hence `> 0` rather than any comparison against `due_amount`: a partial entry is
+ * still an entry, and calling it 미납 would assert a shortfall this data cannot
+ * establish.
  */
-export function balanceOf(due: number, paid: number): number {
-  return due - paid
-}
-
-/** Settled means nothing is owed, which includes having overpaid. */
-export function isSettled(balance: number): boolean {
-  return balance <= 0
+export function hasRecordedPayment(row: DuesAmounts): boolean {
+  return row.paid_amount > 0
 }
 
 /**
- * The three states a balance can be in, as Korean a screen can print.
+ * What a row may be labelled, in Korean, without overclaiming.
  *
- * Three, not two. `완납` and `초과 납부` are both "nothing owed" and they are not
- * the same thing to tell somebody — one says you are square, the other says the
- * club is holding your money. Collapsing them is the same error as printing
- * "등록된 공지가 없습니다" over a failed fetch.
+ * 「납부 기록 있음」/「납부 기록 없음」 rather than 「완납」/「미납」. The first pair
+ * describes the record, which is what we have; the second pair adjudicates a
+ * debt, which is what we do not. A member who paid in cash last month and whose
+ * entry is still in somebody's notebook must not be shown the word 미납 by an app
+ * that has never seen the club's account.
  */
-export function balanceLabel(balance: number): string {
-  if (balance === 0) return '완납'
-  if (balance < 0) return `초과 납부 ${formatKrw(-balance)}`
-  return `미납 ${formatKrw(balance)}`
+export function recordLabel(row: DuesAmounts): string {
+  return hasRecordedPayment(row) ? '납부 기록 있음' : '납부 기록 없음'
 }
 
 // -------------------------------------------------------------------- totals
 
 export type DuesTotals = {
+  /** 소계 — the charge side, which IS fully known here. */
   due: number
-  paid: number
-  balance: number
-  /** Periods still owing something. A PARTIAL payment counts here. */
-  unpaidCount: number
-  /** Periods with nothing owed — fully paid or overpaid. */
-  settledCount: number
+  /** How many rows have a payment entered. A count, not a sum of money. */
+  recordedCount: number
+  unrecordedCount: number
 }
 
 /**
- * Roll a member's periods (or a period's members) into one set of totals.
+ * Roll a member's periods (or a period's members) into the totals that can be
+ * stated honestly.
  *
- * `balance` is the sum of the per-row balances rather than `due - paid` computed
- * once at the end. The two agree for these inputs, and summing per-row is the one
- * that keeps agreeing if a row is ever filtered out upstream.
- *
- * Note `unpaidCount` uses `> 0`, so a member who has paid 30,000 of 50,000 is
- * counted as unpaid. That is what a 미납자 list is for: they still owe.
+ * `due` is summed because every charge is in this database. There is no `paid`
+ * total and no `balance`: see the header. The counts are counts of ROWS — how
+ * many entries exist — which is a fact about our own table rather than a claim
+ * about the club's money.
  */
 export function summariseDues(rows: readonly DuesAmounts[]): DuesTotals {
   let due = 0
-  let paid = 0
-  let balance = 0
-  let unpaidCount = 0
+  let recordedCount = 0
 
   for (const row of rows) {
-    const rowBalance = balanceOf(row.due_amount, row.paid_amount)
     due += row.due_amount
-    paid += row.paid_amount
-    balance += rowBalance
-    if (rowBalance > 0) unpaidCount += 1
+    if (hasRecordedPayment(row)) recordedCount += 1
   }
 
-  return { due, paid, balance, unpaidCount, settledCount: rows.length - unpaidCount }
+  return { due, recordedCount, unrecordedCount: rows.length - recordedCount }
 }
 
 export type ActivityFeeTotals = {
