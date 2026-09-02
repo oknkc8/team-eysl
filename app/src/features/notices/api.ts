@@ -442,3 +442,62 @@ export async function uploadAttachmentObjects(
   return failures
 }
 
+// ---------------------------------------------------------------- read receipts
+
+/**
+ * A reader, as `get_notice_readers_v1` returns them.
+ *
+ * `short_name` and `avatar_path` ARE NULLABLE and the generated types would say
+ * otherwise. 0053's header records why: the function's OUT columns come through
+ * `supabase gen types` as plain `string`, so `reader.avatar_path.startsWith(...)`
+ * would compile and throw for any member who has not set an avatar. Written by
+ * hand as nullable here, deliberately, and the review that found it is linked
+ * from the migration.
+ */
+export type NoticeReader = {
+  member_id: string
+  nickname: string
+  short_name: string | null
+  avatar_path: string | null
+  read_at: string
+}
+
+/**
+ * Record that the caller has opened this notice.
+ *
+ * Fire-and-forget by design: the member came to read a 공지, and a failure to
+ * record that must not put an error in front of them. The receipt is for staff,
+ * so a lost one costs staff a name in a list — the member loses nothing, and
+ * showing them a failure about a thing they did not ask for would be worse than
+ * the missing row.
+ *
+ * First open wins server-side, so calling this on every visit is harmless.
+ */
+export async function markNoticeRead(noticeId: string): Promise<void> {
+  await readRpc('mark_notice_read_v1', { p_notice_id: noticeId })
+}
+
+/** Who has opened this notice. Staff only — the function raises 42501 otherwise. */
+export async function listNoticeReaders(noticeId: string): Promise<NoticeReader[]> {
+  return ((await readRpc('get_notice_readers_v1', { p_notice_id: noticeId })) ??
+    []) as NoticeReader[]
+}
+
+/**
+ * The narrow cast, confined to these two calls.
+ *
+ * 0053's functions are absent from the generated `database.ts` because
+ * regenerating it needs a Docker daemon that is not running on this machine, so
+ * `supabase.rpc('mark_notice_read_v1', ...)` does not typecheck. Same shape and
+ * same reason as `pollRpc` in pollApi.ts. Delete both after `npm run db:types`
+ * — and read CLAUDE.md's two post-regeneration checks before you do, because
+ * that command also reverts hand-maintained entries.
+ */
+async function readRpc(name: string, args: Record<string, unknown>): Promise<unknown> {
+  const client = supabase as unknown as {
+    rpc(fn: string, params: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }>
+  }
+  const { data, error } = await client.rpc(name, args)
+  if (error) throw error
+  return data
+}
