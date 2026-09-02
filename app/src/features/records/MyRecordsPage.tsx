@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
@@ -6,6 +7,8 @@ import { useSession } from '../auth/SessionProvider'
 import { viewerKey } from '../../lib/queryKeys'
 import { isStaff } from '../auth/schema'
 import { FilteredRecords, useRecordFilter } from './FilteredRecords'
+import { ProgressChart } from './ProgressChart'
+import { progressSeries } from './progress'
 import { RecordFilters } from './RecordFilters'
 import { getMyRecords, type MyRecords } from './api'
 
@@ -75,12 +78,19 @@ export function MyRecordsPage() {
  */
 function Filtered({ data }: { data: MyRecords }) {
   const { filter, setPartial } = useRecordFilter(data.history)
+  // Derived from the same fetch the list already renders — progressSeries()
+  // takes the unfiltered history, so the chart is not subject to the filter
+  // tabs and does not cost a second round trip.
+  const series = useMemo(() => progressSeries(data.history), [data.history])
 
   return (
     <>
       <RecordFilters rows={data.history} filter={filter} onChange={setPartial} />
       <div style={{ marginTop: 16 }}>
         <FilteredRecords rows={data.history} filter={filter} onChange={setPartial} />
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <ProgressChart series={series} />
       </div>
     </>
   )
