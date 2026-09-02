@@ -16,9 +16,14 @@ import { formatKrw } from './duesMath'
  *   amount = 0   somebody decided it is free
  *
  * 2026-05-31 is the real case — a training the club ran and charged nothing for.
- * With a nullable column on `activities` the two would be one NULL. So the
- * 참가비 해제 button below says what it destroys, because clearing also cascades
- * away every payment recorded against that session.
+ * With a nullable column on `activities` the two would be one NULL.
+ *
+ * Which is exactly why 참가비 해제 has to exist and has to be reachable from
+ * here. A distinction that can be entered and not left is not a distinction: a
+ * staffer who sets 0 on the wrong session would otherwise have recorded "this was
+ * free" permanently, with no way back to "undecided". The button says what it
+ * destroys, because clearing also cascades away every payment entry for that
+ * session.
  */
 export function SessionFeeAdminPage() {
   const feesQuery = useQuery({ queryKey: ['activity-fees'], queryFn: listActivityFees })
@@ -47,8 +52,7 @@ export function SessionFeeAdminPage() {
                   {row.activity_date} {row.title}
                   <span className="meta">
                     {row.place ? `${row.place} · ` : ''}
-                    {formatKrw(row.fee_amount)} · {row.paid_count}명 납부 ·{' '}
-                    {formatKrw(row.collected_amount)} 수납
+                    {formatKrw(row.fee_amount)} · 납부 기록 {row.paid_count}명
                   </span>
                 </Link>
                 <ClearFeeButton activityId={row.activity_id} title={row.title} />
@@ -171,7 +175,7 @@ function ClearFeeButton({ activityId, title }: { activityId: string; title: stri
       disabled={clear.isPending}
       onClick={() => {
         // Names the cascade. activity_fee_payments' FK points at activity_fees,
-        // so this takes the whole collection record with it — which is why the
+        // so this takes the whole set of entries with it — which is why the
         // sentence does not say "are you sure".
         if (
           window.confirm(

@@ -14,11 +14,11 @@ import {
   type DuesRosterRow,
 } from './api'
 import {
-  balanceLabel,
   formatKrw,
-  isSettled,
+  hasRecordedPayment,
   nextPeriod,
   periodLabel,
+  recordLabel,
   summariseDues,
   type Half,
 } from './duesMath'
@@ -36,6 +36,13 @@ import {
  * non-staff caller and on an unknown period id, so AsyncSection's error branch is
  * what a refusal looks like here — never a tidy empty list implying nobody owes
  * anything.
+ *
+ * NO 미수 합계. This screen shows what has been entered and what has not, and
+ * does not total up what the club is owed, because it cannot: the deposits are on
+ * a bank sheet the importer excludes on purpose. A staffer chasing payments needs
+ * the list of names with nothing recorded, which IS here — what they must not be
+ * given is a confident 미수 figure that is wrong by however many payments nobody
+ * has keyed in yet.
  */
 export function DuesAdminPage() {
   const periodsQuery = useQuery({ queryKey: ['dues-periods'], queryFn: listDuesPeriods })
@@ -56,10 +63,7 @@ export function DuesAdminPage() {
       </Link>
       <h1 className="title">반기 회비 관리</h1>
 
-      <AsyncSection
-        query={periodsQuery}
-        error="회비 기간을 불러오지 못했습니다"
-      >
+      <AsyncSection query={periodsQuery} error="회비 기간을 불러오지 못했습니다">
         {(rows) => (
           <>
             <PeriodForm periods={rows} />
@@ -213,11 +217,7 @@ function PeriodForm({ periods }: { periods: DuesPeriod[] }) {
       </div>
 
       <div className="actions">
-        <button
-          className="btn"
-          disabled={!valid || save.isPending}
-          onClick={() => save.mutate()}
-        >
+        <button className="btn" disabled={!valid || save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? '저장 중…' : '등록'}
         </button>
         {message && (
@@ -256,24 +256,23 @@ function PeriodRoster({
   return (
     <>
       <h2 className="listDivider">
-        {period ? periodLabel(period.year, period.half) : '납부 현황'}
+        {period ? periodLabel(period.year, period.half) : '납부 기록'}
       </h2>
 
       <AsyncSection
         query={rosterQuery}
         isEmpty={(rows) => rows.length === 0}
         empty="승인된 회원이 없습니다"
-        error="납부 현황을 불러오지 못했습니다"
+        error="납부 기록을 불러오지 못했습니다"
       >
         {(rows) => {
           const totals = summariseDues(rows)
           return (
             <>
               <div className="stats">
-                <Stat label="미납 인원" value={`${totals.unpaidCount}명`} />
-                <Stat label="완납 인원" value={`${totals.settledCount}명`} />
-                <Stat label="수납 합계" value={formatKrw(totals.paid)} />
-                <Stat label="미수 합계" value={formatKrw(totals.balance)} />
+                <Stat label="기록 없음" value={`${totals.unrecordedCount}명`} />
+                <Stat label="기록 있음" value={`${totals.recordedCount}명`} />
+                <Stat label="청구 합계" value={formatKrw(totals.due)} />
               </div>
 
               <ul className="list">
@@ -316,9 +315,13 @@ function PeriodRoster({
  *
  * The amount is a field rather than a checkbox because a 반기 회비 payment is a
  * number the club may receive in part — `set_dues_payment_v1` accepts less than
- * the period's amount, and more, and the balance says which. A checkbox would
- * throw that away and force a partial payment to be recorded as either nothing
- * or everything.
+ * the period's amount, and more. A checkbox would throw that away and force a
+ * partial payment to be recorded as either nothing or everything.
+ *
+ * 기록 삭제 is the delete path and it is not decoration. Without it a figure
+ * typed against the wrong member could only be overwritten with 0, which is a
+ * different claim — "we received nothing from them" rather than "we never
+ * recorded anything". See 0057's header.
  */
 function RosterRow({ periodId, row }: { periodId: string; row: DuesRosterRow }) {
   const queryClient = useQueryClient()
@@ -340,8 +343,7 @@ function RosterRow({ periodId, row }: { periodId: string; row: DuesRosterRow }) 
   }
 
   const save = useMutation({
-    mutationFn: (amount: number) =>
-      setDuesPayment({ periodId, memberId: row.member_id, amount }),
+    mutationFn: (amount: number) => setDuesPayment({ periodId, memberId: row.member_id, amount }),
     onMutate: () => setState('saving'),
     onSuccess: () => {
       setState('saved')
@@ -362,15 +364,14 @@ function RosterRow({ periodId, row }: { periodId: string; row: DuesRosterRow }) 
 
   const amount = Number(draft)
   const validAmount = Number.isInteger(amount) && amount >= 0
-  const balance = row.due_amount - row.paid_amount
-  const recorded = row.paid_on !== null || row.paid_amount > 0
+  const recorded = hasRecordedPayment(row) || row.paid_on !== null
 
   return (
     <li className="row">
       <span className="grow">
         {row.nickname}
         <span className="meta">
-          {balanceLabel(balance)}
+          {recordLabel(row)}
           {row.paid_on ? ` · ${row.paid_on}` : ''}
           {row.note ? ` · ${row.note}` : ''}
         </span>
@@ -397,18 +398,14 @@ function RosterRow({ periodId, row }: { periodId: string; row: DuesRosterRow }) 
         저장
       </button>
 
-      {/* Only offered where there is something to clear. Calling it on an absent
-          row is harmless — the RPC is deliberately idempotent — but a button
-          that does nothing is a button that teaches nothing. */}
+      {/* Only offered where there is something to remove. Calling it on an absent
+          row is harmless — the RPC is deliberately idempotent — but a button that
+          does nothing is a button that teaches nothing. */}
       {recorded && (
         <button className="btn outline" disabled={clear.isPending} onClick={() => clear.mutate()}>
           기록 삭제
         </button>
       )}
-
-      <span className={`tag ${isSettled(balance) ? 'ok' : 'wait'}`}>
-        {isSettled(balance) ? '완납' : '미납'}
-      </span>
 
       <SaveState state={state} onRetry={() => validAmount && save.mutate(amount)} />
     </li>

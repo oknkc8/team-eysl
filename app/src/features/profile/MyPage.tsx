@@ -61,7 +61,7 @@ function Profile({ profile }: { profile: MyProfile }) {
         <Tile to="/activity" title="월간 활동 요약" desc="달마다 훈련·대회·출석률" />
         {/* 반기 회비와 세션 참가비는 성격이 달라 화면 안에서 두 묶음으로 나뉘어
             있다. 여기서는 한 줄로 안내한다. */}
-        <Tile to="/dues" title="내 회비" desc="반기 회비와 세션 참가비 납부 현황" />
+        <Tile to="/dues" title="내 회비" desc="반기 회비와 세션 참가비 납부 기록" />
         <Tile to="/events" title="이벤트" desc="출석왕·지각왕·기록 단축왕" />
       </nav>
 

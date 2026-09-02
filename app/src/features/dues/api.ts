@@ -22,6 +22,13 @@ import type { Half } from './duesMath'
  * lost its `| null`. `save_dues_period_v1`'s `p_period_id` is one of those: null
  * means "create" and the generator cannot see that a plpgsql parameter is
  * nullable, so it will narrow it to bare `string` and break `saveDuesPeriod`.)
+ *
+ * NOTE ON WHAT IS ABSENT. There is no `balance` on any row type below and no
+ * `collected_amount` on the session list, because 0057 does not return them. See
+ * that migration's header: the credit side of the ledger is the club's bank
+ * sheet, `scripts/import/parse.ts` excludes it deliberately, and a subtraction
+ * without it tells a member who paid that they still owe. Do not add either
+ * field here "to save a round trip" — there is nothing to round-trip to.
  */
 
 // ------------------------------------------------------------------- the shim
@@ -69,9 +76,8 @@ export type MyDuesRow = {
   year: number
   half: Half
   due_amount: number
+  /** What a staffer entered. NOT what the club received — see the header. */
   paid_amount: number
-  /** Recomputed by summariseDues rather than trusted — see duesMath's header. */
-  balance: number
   paid_on: string | null
 }
 
@@ -92,7 +98,6 @@ export type DuesRosterRow = {
   avatar_path: string | null
   due_amount: number
   paid_amount: number
-  balance: number
   paid_on: string | null
   note: string | null
 }
@@ -114,8 +119,8 @@ export type ActivityFeeRow = {
   title: string
   place: string | null
   fee_amount: number
+  /** 참여횟수 for this session — a count of entries, not a sum of money. */
   paid_count: number
-  collected_amount: number
 }
 
 // ---------------------------------------------------------------------- reads
@@ -149,7 +154,7 @@ export async function getActivityFeeRoster(activityId: string): Promise<Activity
     []) as ActivityFeeRosterRow[]
 }
 
-/** Staff only. Sessions that have a fee set, with per-session collection totals. */
+/** Staff only. Sessions that have a fee set, with the count of entries per session. */
 export async function listActivityFees(): Promise<ActivityFeeRow[]> {
   return ((await duesRpc('list_activity_fees_v1')) ?? []) as ActivityFeeRow[]
 }
@@ -198,6 +203,11 @@ export async function setDuesPayment(input: {
   })
 }
 
+/**
+ * A DELETE PATH, and load-bearing rather than convenient. Without it a
+ * mis-entered figure could only be overwritten, never withdrawn, and the row
+ * would keep asserting a payment nobody made. See 0057's header.
+ */
 export async function clearDuesPayment(input: {
   periodId: string
   memberId: string
@@ -219,7 +229,11 @@ export async function setActivityFee(input: {
   })
 }
 
-/** Cascades the session's payment rows. Different from setting the fee to 0. */
+/**
+ * The other load-bearing delete. Returns a session to "no fee decided", which a
+ * fee of 0 does NOT do — 0 says the club decided it was free. Cascades the
+ * session's payment rows.
+ */
 export async function clearActivityFee(activityId: string): Promise<void> {
   await duesRpc('clear_activity_fee_v1', { p_activity_id: activityId })
 }
@@ -227,6 +241,9 @@ export async function clearActivityFee(activityId: string): Promise<void> {
 /**
  * A toggle, not an amount. The server copies the session's own fee onto the row,
  * so the client cannot name a price — which is what keeps the two from drifting.
+ *
+ * `paid: false` is the third delete path: it removes the row rather than writing
+ * a zero, so a mis-tap can be taken back.
  */
 export async function setActivityFeePayment(input: {
   activityId: string

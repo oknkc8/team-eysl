@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
-  balanceLabel,
-  balanceOf,
   comparePeriodsDesc,
   formatKrw,
   halfOfMonth,
-  isSettled,
+  hasRecordedPayment,
   nextPeriod,
   periodLabel,
+  recordLabel,
   summariseActivityFees,
   summariseDues,
   type PeriodKey,
@@ -25,6 +24,10 @@ import {
  * So each block below fixes an exact number, and the numbers are chosen so that
  * the obvious wrong implementation produces a DIFFERENT one — asymmetric inputs
  * rather than `1 + 1`, which survives being turned into multiplication.
+ *
+ * The block at the bottom is the unusual one: it asserts that certain figures
+ * are ABSENT. A test that guards an omission is the only thing standing between
+ * this module and somebody helpfully "finishing" the balance.
  */
 
 describe('formatKrw', () => {
@@ -40,7 +43,7 @@ describe('formatKrw', () => {
     expect(formatKrw(0)).toBe('0원')
   })
 
-  it('carries the sign of an overpayment', () => {
+  it('carries the sign of a negative amount', () => {
     expect(formatKrw(-10000)).toBe('-10,000원')
   })
 })
@@ -52,97 +55,73 @@ describe('periodLabel', () => {
   })
 })
 
-describe('balanceOf', () => {
-  it('is due minus paid, in that order', () => {
-    // Asymmetric on purpose: 50000 - 30000 is 20000, and the reversed subtraction
-    // gives -20000. A symmetric pair would let `paid - due` pass.
-    expect(balanceOf(50000, 30000)).toBe(20000)
+describe('hasRecordedPayment', () => {
+  it('asks whether anything was entered, not whether the charge was met', () => {
+    // A PARTIAL entry counts as recorded. Comparing against due_amount instead
+    // would make this false and would assert a shortfall the data cannot show.
+    expect(hasRecordedPayment({ due_amount: 50000, paid_amount: 30000 })).toBe(true)
+    expect(hasRecordedPayment({ due_amount: 50000, paid_amount: 50000 })).toBe(true)
+    expect(hasRecordedPayment({ due_amount: 50000, paid_amount: 1 })).toBe(true)
   })
 
-  it('goes negative when the member overpaid, rather than clamping', () => {
-    expect(balanceOf(50000, 60000)).toBe(-10000)
-  })
-
-  it('is zero when settled exactly', () => {
-    expect(balanceOf(50000, 50000)).toBe(0)
+  it('is false only when nothing has been entered', () => {
+    expect(hasRecordedPayment({ due_amount: 50000, paid_amount: 0 })).toBe(false)
   })
 })
 
-describe('isSettled', () => {
-  it('treats an overpayment as settled and a partial payment as not', () => {
-    expect(isSettled(0)).toBe(true)
-    expect(isSettled(-10000)).toBe(true)
-    // 1원 outstanding is still outstanding. `>= 0` instead of `> 0` upstream
-    // would make this true.
-    expect(isSettled(1)).toBe(false)
-    expect(isSettled(20000)).toBe(false)
-  })
-})
-
-describe('balanceLabel', () => {
-  it('says something different for each of the three states', () => {
-    expect(balanceLabel(0)).toBe('완납')
-    expect(balanceLabel(20000)).toBe('미납 20,000원')
-    // The minus is absorbed into the word 초과, so the number reads positive.
-    expect(balanceLabel(-10000)).toBe('초과 납부 10,000원')
+describe('recordLabel', () => {
+  it('describes the record and never adjudicates a debt', () => {
+    expect(recordLabel({ due_amount: 50000, paid_amount: 30000 })).toBe('납부 기록 있음')
+    expect(recordLabel({ due_amount: 50000, paid_amount: 0 })).toBe('납부 기록 없음')
   })
 
-  it('gives the three states three distinct strings', () => {
-    const labels = new Set([balanceLabel(0), balanceLabel(20000), balanceLabel(-10000)])
-    expect(labels.size).toBe(3)
+  it('never says 미납 or 완납', () => {
+    // The words this module must not put on screen. A partial payment is the
+    // case somebody would most naturally label 미납, so it is the one to pin.
+    const labels = [
+      recordLabel({ due_amount: 50000, paid_amount: 0 }),
+      recordLabel({ due_amount: 50000, paid_amount: 30000 }),
+      recordLabel({ due_amount: 50000, paid_amount: 50000 }),
+      recordLabel({ due_amount: 50000, paid_amount: 60000 }),
+    ]
+    for (const label of labels) {
+      expect(label).not.toContain('미납')
+      expect(label).not.toContain('완납')
+    }
   })
 })
 
 describe('summariseDues', () => {
-  // 2026 상반기 paid in full, 2026 하반기 paid partly, 2025 하반기 not paid.
-  // Every number below is distinct so a swapped field cannot pass.
+  // 2026 상반기 fully entered, 2026 하반기 partly, 2025 하반기 not at all.
+  // Every number is distinct so a swapped field cannot pass.
   const rows = [
     { due_amount: 50000, paid_amount: 50000 },
     { due_amount: 50000, paid_amount: 30000 },
     { due_amount: 40000, paid_amount: 0 },
   ]
 
-  it('totals the three columns', () => {
-    const totals = summariseDues(rows)
-    expect(totals.due).toBe(140000)
-    expect(totals.paid).toBe(80000)
-    expect(totals.balance).toBe(60000)
+  it('totals the charge side', () => {
+    // 소계. Every charge is in this database, so this one is honest.
+    expect(summariseDues(rows).due).toBe(140000)
   })
 
-  it('counts a PARTIAL payment as unpaid', () => {
+  it('counts rows with an entry, treating a PARTIAL entry as recorded', () => {
     const totals = summariseDues(rows)
-    // Two periods still owe: the partial one and the untouched one.
-    expect(totals.unpaidCount).toBe(2)
-    expect(totals.settledCount).toBe(1)
+    expect(totals.recordedCount).toBe(2)
+    expect(totals.unrecordedCount).toBe(1)
   })
 
-  it('does not count an overpaid period as unpaid', () => {
-    const totals = summariseDues([{ due_amount: 50000, paid_amount: 60000 }])
-    expect(totals.unpaidCount).toBe(0)
-    expect(totals.settledCount).toBe(1)
-    expect(totals.balance).toBe(-10000)
+  it('does NOT expose a paid total or a balance', () => {
+    // The guard on the omission. If somebody re-adds either field, this fails
+    // and they have to come and read the header before proceeding.
+    const totals = summariseDues(rows) as Record<string, unknown>
+    expect(totals).not.toHaveProperty('paid')
+    expect(totals).not.toHaveProperty('balance')
+    expect(Object.keys(totals).sort()).toEqual(['due', 'recordedCount', 'unrecordedCount'])
   })
 
   it('returns zeroes rather than NaN for no rows', () => {
-    // An empty club is a real state — a period created before anybody pays. The
-    // screen must be able to print these.
-    expect(summariseDues([])).toEqual({
-      due: 0,
-      paid: 0,
-      balance: 0,
-      unpaidCount: 0,
-      settledCount: 0,
-    })
-  })
-
-  it('ignores a balance the server sent that disagrees with its own operands', () => {
-    // The belt-and-braces rule from the module header. This payload could only
-    // come from a stale RPC or a rewritten body, and the total must follow the
-    // operands rather than the bogus column.
-    const bogus = [
-      { due_amount: 50000, paid_amount: 30000, balance: 999999 },
-    ] as unknown as { due_amount: number; paid_amount: number }[]
-    expect(summariseDues(bogus).balance).toBe(20000)
+    expect(summariseDues([])).toEqual({ due: 0, recordedCount: 0, unrecordedCount: 0 })
   })
 })
 
@@ -150,30 +129,34 @@ describe('summariseActivityFees', () => {
   const rows = [
     { fee_amount: 15000, paid: true, paid_amount: 15000 },
     { fee_amount: 20000, paid: false, paid_amount: 0 },
-    // Paid before the session's fee was corrected downward: collected 18,000
-    // against a session that now says 14,000. This row is why `outstanding`
-    // cannot be computed as (sum of all fees) - collected.
+    // Entered before the session's fee was corrected downward: 18,000 recorded
+    // against a session that now says 14,000. Kept as a row because it is what
+    // makes `chargeTotal` and any would-be 수납 합계 different numbers.
     { fee_amount: 14000, paid: true, paid_amount: 18000 },
   ]
 
-  it('counts settled sessions as 참여횟수', () => {
-    expect(summariseActivityFees(rows).paidCount).toBe(2)
-    expect(summariseActivityFees(rows).unpaidCount).toBe(1)
-    expect(summariseActivityFees(rows).sessionCount).toBe(3)
-  })
-
-  it('collects what was actually taken, not what the sessions now cost', () => {
-    // 15000 + 18000. Reading fee_amount instead of paid_amount gives 29000.
-    expect(summariseActivityFees(rows).collected).toBe(33000)
-  })
-
-  it('counts only unpaid sessions as outstanding', () => {
+  it('counts sessions with an entry as 참여횟수', () => {
     const totals = summariseActivityFees(rows)
-    // Just the 20,000 session. The whole-set formulation — every fee (49,000)
-    // minus collected (33,000) — gives 16,000, so this assertion is what pins
-    // the correct one.
-    expect(totals.outstanding).toBe(20000)
-    expect(totals.outstanding).not.toBe(49000 - totals.collected)
+    expect(totals.paidCount).toBe(2)
+    expect(totals.unpaidCount).toBe(1)
+    expect(totals.sessionCount).toBe(3)
+  })
+
+  it('totals what the sessions cost, over every row', () => {
+    // 15000 + 20000 + 14000. Counting only settled rows would give 29000.
+    expect(summariseActivityFees(rows).chargeTotal).toBe(49000)
+  })
+
+  it('does NOT expose a collected or outstanding figure', () => {
+    const totals = summariseActivityFees(rows) as Record<string, unknown>
+    expect(totals).not.toHaveProperty('collected')
+    expect(totals).not.toHaveProperty('outstanding')
+    expect(Object.keys(totals).sort()).toEqual([
+      'chargeTotal',
+      'paidCount',
+      'sessionCount',
+      'unpaidCount',
+    ])
   })
 
   it('returns zeroes rather than NaN for no rows', () => {
@@ -181,8 +164,7 @@ describe('summariseActivityFees', () => {
       sessionCount: 0,
       paidCount: 0,
       unpaidCount: 0,
-      collected: 0,
-      outstanding: 0,
+      chargeTotal: 0,
     })
   })
 })

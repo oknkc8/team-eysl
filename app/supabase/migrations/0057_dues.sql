@@ -211,12 +211,11 @@
 -- INSTALMENTS ARE NOT MODELLED. `dues_payments` is keyed (period_id, member_id),
 -- so a member has at most one 반기 회비 payment row per half. A partial payment
 -- is expressible — the row's amount is simply less than the period's — but a
--- member who pays 30,000
--- in March and 20,000 in May ends with one row and the later date. The sheet has
--- one cell per member per half and records exactly that much, so this matches the
--- source; a real instalment ledger means dropping this primary key for a
--- surrogate id and summing, which is a change to make when somebody asks for it
--- rather than in advance.
+-- member who pays 30,000 in March and 20,000 in May ends with one row and the
+-- later date. The sheet has one cell per member per half and records exactly that
+-- much, so this matches the source; a real instalment ledger means dropping this
+-- primary key for a surrogate id and summing, which is a change to make when
+-- somebody asks for it rather than in advance.
 --
 -- A PER-MEMBER SESSION AMOUNT IS NOT MODELLED. `set_activity_fee_payment_v1`
 -- takes a boolean and copies the session's own amount onto the row. Every cell in
@@ -542,13 +541,14 @@ begin
       left join public.dues_payments p
         on p.period_id = p_period_id
        and p.member_id = v.id
-     -- Unpaid first, so the list opens on the people the screen exists for, then
-     -- by nickname so the order is total and does not reshuffle between refreshes.
+     -- Members with nothing recorded first, so the list opens on the people the
+     -- screen exists for, then by nickname so the order is total and does not
+     -- reshuffle between refreshes.
      order by (p.member_id is not null), v.nickname;
 end $$;
 
 comment on function public.dues_period_roster_v1(uuid) is
-  '한 반기의 전체 회원 납부 현황. 운영진만 호출할 수 있고, 회원은 다른 사람의 회비 정보를 볼 수 없다.';
+  '한 반기의 전체 회원 납부 기록 현황. 운영진만 호출할 수 있고, 회원은 다른 사람의 회비 정보를 볼 수 없다.';
 
 -- ---------------------------------------------- 세션 참가비 roster (staff)
 create or replace function public.activity_fee_roster_v1(p_activity_id uuid)
@@ -920,7 +920,10 @@ begin
   end if;
 
   if not p_paid then
-    -- Same reasoning as clear_dues_payment_v1: absent is the state asked for.
+    -- THE CLEAR PATH. See the header: without it a mis-tapped payment could
+    -- never be withdrawn, and the row would assert a collection that did not
+    -- happen. Same reasoning as clear_dues_payment_v1 — absent is the state the
+    -- caller asked for, so no `if not found`.
     delete from public.activity_fee_payments
      where activity_id = p_activity_id
        and member_id = p_member_id;
@@ -951,7 +954,7 @@ begin
 end $$;
 
 comment on function public.set_activity_fee_payment_v1(uuid, uuid, boolean, date) is
-  '한 회원의 세션 참가비 납부 여부를 기록한다. 금액은 세션에 정해진 값을 서버가 복사하며 클라이언트가 정할 수 없다. 운영진만 호출할 수 있다.';
+  '한 회원의 세션 참가비 납부 여부를 기록하거나 취소한다. p_paid 가 false 면 기록을 지운다. 금액은 세션에 정해진 값을 서버가 복사하며 클라이언트가 정할 수 없다. 운영진만 호출할 수 있다.';
 
 -- ===========================================================================
 -- EXECUTE RIGHTS

@@ -1,5 +1,6 @@
 /**
- * 회비 arithmetic — the derived numbers 0057 deliberately refuses to store.
+ * 회비 arithmetic — the derived numbers 0057 deliberately refuses to store, and
+ * the two it deliberately refuses to compute at all.
  *
  * PURE, AND OUT HERE SO A TEST CAN REACH IT. Nothing in this file touches the
  * network, the clock (except where a `now` is passed in), or a React hook. The
@@ -57,8 +58,6 @@ export type ActivityFeeAmounts = {
  * depends on the ICU data the runtime happens to ship and this has to render the
  * same number in a member's browser, in CI, and in a test. A money format that
  * varies by environment is a money format nobody can assert on.
- *
- * Negative is a real input, not a defensive branch — see `balanceLabel`.
  */
 export function formatKrw(amount: number): string {
   const sign = amount < 0 ? '-' : ''
@@ -140,49 +139,40 @@ export function summariseDues(rows: readonly DuesAmounts[]): DuesTotals {
 
 export type ActivityFeeTotals = {
   sessionCount: number
-  /** 참여횟수 — sessions this member actually settled. */
+  /** 참여횟수 — sessions with a payment entered. A count of rows. */
   paidCount: number
   unpaidCount: number
-  /** 총 납부 누계 — what was actually collected. */
-  collected: number
-  /** What is still owed, counting ONLY the sessions that were not settled. */
-  outstanding: number
+  /** 소계 — what the sessions in this list cost in total. Charge side. */
+  chargeTotal: number
 }
 
 /**
- * The session-fee half of the same arithmetic.
+ * The session-fee half, under the same rule.
  *
- * `outstanding` sums `fee_amount` over UNPAID rows only. Summing it over every
- * row and subtracting `collected` would give the same answer whenever a payment
- * equals the session's fee — which is every row today, because
- * `set_activity_fee_payment_v1` copies the amount from the session. It stops
- * being the same answer the moment a session's fee is corrected after somebody
- * paid, which 0057 explicitly allows: the row keeps what was collected while the
- * session moves on. So the two formulations are not interchangeable, and this is
- * the one that means "what is still owed".
+ * 참여횟수 survives as a COUNT because it asks how many entries exist, which this
+ * database knows exactly. A 수납 합계 does not survive, for the reason in the
+ * header — it would read as the money the club took in, and the club's receipts
+ * are on a sheet we deliberately never import.
+ *
+ * `chargeTotal` sums `fee_amount` over every session, settled or not: it is what
+ * these sessions cost, which is a charge-side fact and complete.
  */
 export function summariseActivityFees(
   rows: readonly ActivityFeeAmounts[],
 ): ActivityFeeTotals {
   let paidCount = 0
-  let collected = 0
-  let outstanding = 0
+  let chargeTotal = 0
 
   for (const row of rows) {
-    if (row.paid) {
-      paidCount += 1
-      collected += row.paid_amount
-    } else {
-      outstanding += row.fee_amount
-    }
+    chargeTotal += row.fee_amount
+    if (row.paid) paidCount += 1
   }
 
   return {
     sessionCount: rows.length,
     paidCount,
     unpaidCount: rows.length - paidCount,
-    collected,
-    outstanding,
+    chargeTotal,
   }
 }
 
@@ -211,11 +201,10 @@ export function comparePeriodsDesc(a: PeriodKey, b: PeriodKey): number {
  * AND IT ROLLS OVER: the successor of 2026 하반기 is 2027 상반기, not 2027 하반기
  * and not 2026 하반기 again. Getting that wrong produces a form that proposes a
  * period which already exists, and `save_dues_period_v1` answers it with
- * `그 반기는 이미 등록되어 있습니다` — a refusal the member did nothing to earn.
+ * `그 반기는 이미 등록되어 있습니다` — a refusal the staffer did nothing to earn.
  *
  * `today` is a parameter rather than a `new Date()` inside, so a test can put the
- * clock in either half without faking timers. Same reason `isPollClosed` takes
- * one.
+ * clock in either half without faking timers.
  */
 export function nextPeriod(
   periods: readonly PeriodKey[],
