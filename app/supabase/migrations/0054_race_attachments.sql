@@ -657,3 +657,73 @@ grant execute on function public.team_file_is_readable(text)       to authentica
 -- grant would only make them callable directly.
 revoke all on function public.enqueue_object_deletion() from public, anon, authenticated;
 revoke all on function public.release_object_deletion() from public, anon, authenticated;
+
+-- ============================================================================
+-- CLOSING WHAT WIDENING A SHARED PREDICATE OPENED
+-- ============================================================================
+--
+-- Adding `races` to is_my_media_object_path above is right for STORAGE and
+-- wrong for everything else that calls the same function — and it took an
+-- adversarial review to notice that anything else does. Measured live:
+--
+--   storage.objects   team_files_insert / team_files_update    <- wants races
+--   public.media_files  media_files_insert / media_files_update  <- must not
+--
+-- media_files_insert's whole WITH CHECK is
+--   uploader_id = current_member_id() AND is_my_media_object_path(storage_path)
+-- so widening the regex widens that policy too. An approved member could then
+-- insert a media_files row claiming <own id>/races/<uuid>, and the consequence
+-- is not an odd row: enqueue_object_deletion treats ANY claim as a reason not
+-- to queue the object. Staff removes the race attachment, the bytes survive
+-- because a media_files row still claims them, and they surface as that
+-- member's own resource — reachable after the uploader has been demoted, and
+-- not removable by staff, because media_files rows are owner-only.
+--
+-- THE HOLE IS OLDER THAN THIS MIGRATION, which is the part worth writing down.
+-- The same predicate already admits `notices`, `records` and `chat`, so a
+-- member can claim any of those paths in media_files today. 0054 would have
+-- added a fourth library to a gap that was already three wide.
+--
+-- So the fix is not to un-widen the storage predicate — storage genuinely needs
+-- races. It is to stop media_files borrowing a predicate that answers a
+-- different question. media_files owns `media/` and `resources/`; every other
+-- library has its own claim table and always did.
+--
+-- The general shape, because this will happen again: WIDENING A PREDICATE
+-- WIDENS EVERY POLICY THAT CALLS IT. Before changing one, ask what else calls
+-- it —
+--   select tablename, policyname from pg_policies
+--    where coalesce(qual,'') || coalesce(with_check,'') like '%<fn>%';
+-- — rather than only whether the change reads correctly where you meant it. A
+-- diff that is a faithful one-line widening can still be wrong somewhere the
+-- diff does not show.
+
+create or replace function public.is_my_media_library_path(p_path text)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select p_path is not null
+     and public.current_member_id() is not null
+     and p_path ~ ('^' || public.current_member_id()::text
+                       || '/(media|resources)/[^/]+$')
+$$;
+
+comment on function public.is_my_media_library_path(text) is
+  'media_files 가 청구할 수 있는 경로인가. media/ 와 resources/ 만 해당하며, 다른 라이브러리는 각자의 청구 테이블을 가진다.';
+
+revoke all on function public.is_my_media_library_path(text) from public, anon;
+grant execute on function public.is_my_media_library_path(text) to authenticated;
+
+drop policy if exists media_files_insert on public.media_files;
+create policy media_files_insert on public.media_files
+  for insert to authenticated
+  with check (uploader_id = public.current_member_id()
+              and public.is_my_media_library_path(storage_path));
+
+drop policy if exists media_files_update on public.media_files;
+create policy media_files_update on public.media_files
+  for update to authenticated
+  using (uploader_id = public.current_member_id())
+  with check (uploader_id = public.current_member_id()
+              and public.is_my_media_library_path(storage_path));
+
