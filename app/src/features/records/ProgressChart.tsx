@@ -104,7 +104,23 @@ function ProgressCard({ series }: { series: ProgressSeries }) {
   const bestLabel = formatCentiseconds(series.best_centiseconds) ?? '-'
 
   return (
-    <div style={{ padding: 14, border: `1px solid ${LINE}`, borderRadius: 18, background: SURFACE }}>
+    // minWidth:0 is load-bearing, not tidying. This card is a grid item, and a
+    // grid item's default `min-width: auto` refuses to shrink below its content's
+    // min-content width — which here includes an SVG whose width is set in pixels
+    // and grows by POINT_GAP per swim. Without it the track widens to fit the
+    // chart, the overflow-x container below never becomes narrower than its
+    // contents, and so it never scrolls: the PAGE scrolls sideways instead. At
+    // 360px the card has 294px of content width and seven points draw 364px.
+    // https://www.w3.org/TR/css-grid/#min-size-auto
+    <div
+      style={{
+        minWidth: 0,
+        padding: 14,
+        border: `1px solid ${LINE}`,
+        borderRadius: 18,
+        background: SURFACE,
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <b style={{ fontSize: 13, flex: 1, color: INK }}>
           {categoryLabel(series.category)} · {series.stroke} {series.distance_m}m
@@ -128,6 +144,35 @@ function ProgressCard({ series }: { series: ProgressSeries }) {
       <div style={{ marginTop: 8, overflowX: 'auto' }}>
         <ProgressSvg points={series.points} />
       </div>
+
+      {/* The chart's data in text, positioned off-screen rather than hidden.
+          `display:none` and `visibility:hidden` are both skipped by screen
+          readers, so either would have removed the numbers from the only reader
+          that could not already see them. An SVG carrying one generic
+          aria-label tells a TalkBack user the graph exists and nothing about
+          what it says — not the dates, not the times, not whether the swimmer
+          got faster. */}
+      <ul
+        style={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          margin: -1,
+          padding: 0,
+          overflow: 'hidden',
+          clip: 'rect(0 0 0 0)',
+          clipPath: 'inset(50%)',
+          whiteSpace: 'nowrap',
+          border: 0,
+        }}
+      >
+        {series.points.map((p) => (
+          <li key={p.id}>
+            {p.event_date} {formatCentiseconds(p.result_centiseconds) ?? '-'}
+            {p.is_best_so_far ? ' 최고 기록' : ''}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -158,6 +203,8 @@ function ProgressSvg({ points }: { points: SeriesPoint[] }) {
       height={HEIGHT}
       viewBox={`0 0 ${width} ${HEIGHT}`}
       role="img"
+      // The shape only. Every value it encodes is also in the list beside it,
+      // which is what a screen reader actually reads — see ProgressCard.
       aria-label="기록 변화 그래프, 아래로 갈수록 빠른 기록"
     >
       {/* Axis anchor, drawn first so the line and points sit above it. */}

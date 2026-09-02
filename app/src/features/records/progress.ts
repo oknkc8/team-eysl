@@ -79,7 +79,60 @@ const CHARTED_STROKES = ['자유형', '배영', '평영', '접영'] as const
  * they are not.
  */
 export function normaliseStroke(stroke: string): string | null {
-  return CHARTED_STROKES.find((known) => stroke.startsWith(known)) ?? null
+  return CHARTED_STROKES.find((known) => bareStroke(stroke).startsWith(known)) ?? null
+}
+
+/**
+ * `핀 자유형` is 자유형 swum with fins.
+ *
+ * 0041 never had to handle this because it filters to `category = 'meet'` before
+ * it matches, so a finned swim is already gone by then. This module charts every
+ * category, so copying 0041's normalisation alone was not enough — a `핀 자유형`
+ * row matched none of the four and left the chart entirely, silently.
+ *
+ * Stripped rather than rejected, and paired with finnedStroke() below, so the
+ * swim keeps its line instead of disappearing.
+ */
+const FIN_MARKER = /^핀\s*/
+const bareStroke = (stroke: string) => stroke.replace(FIN_MARKER, '')
+
+/**
+ * Whether the stroke text itself says this was swum with fins.
+ *
+ * Read alongside the `category` column rather than instead of it. Fins are worth
+ * over twenty seconds on a 50 in this club's own data, so a row whose stroke says
+ * 핀 must never share a line with a pool swim — and trusting the category column
+ * alone would put a mislabelled row straight onto the meet line, which is the
+ * exact defect this module already had once.
+ */
+const finnedStroke = (stroke: string) => FIN_MARKER.test(stroke)
+
+/**
+ * Heats precede finals. That is a fact about how a meet runs, not a guess.
+ *
+ * It is needed because event_date is a bare date and created_at is the
+ * transaction time of the upload, so every swim of one meet carries the SAME
+ * created_at and the id — a random uuid — decides the order. Measured on the dev
+ * database: of the four same-day pairs in `records`, two were drawn final-first,
+ * so the chart showed a regression that ran backwards.
+ *
+ * 준결승 is tested before 결승 because it contains it.
+ *
+ * An unlabelled swim sits between 예선 and 준결승: it is definitely after an
+ * explicit heat and before an explicit final, and that is the whole of what can
+ * be known. Where two unlabelled swims share a day the order stays the id's, and
+ * no ordering rule could do better — the data carries no time of day. Ordering by
+ * result instead would fabricate a monotonic line, which is precisely the defect
+ * this file's tests now exist to catch.
+ */
+const ROUNDS: ReadonlyArray<readonly [string, number]> = [
+  ['예선', 0],
+  ['준결승', 2],
+  ['결승', 3],
+]
+function roundRank(stroke: string): number {
+  for (const [label, rank] of ROUNDS) if (stroke.includes(label)) return rank
+  return 1
 }
 
 // Same tiebreak as derive.ts's compareChronological, and for the same reason:
@@ -90,6 +143,7 @@ export function normaliseStroke(stroke: string): string | null {
 const chronological = (a: Swimmable, b: Swimmable) =>
   a.event_date.localeCompare(b.event_date) ||
   a.created_at.localeCompare(b.created_at) ||
+  roundRank(a.stroke) - roundRank(b.stroke) ||
   a.id.localeCompare(b.id)
 
 const rank = (stroke: string) => (CHARTED_STROKES as readonly string[]).indexOf(stroke)
@@ -126,12 +180,17 @@ export function progressSeries(records: readonly Swimmable[]): ProgressSeries[] 
     const stroke = normaliseStroke(record.stroke)
     if (stroke === null) continue
 
-    const key = `${record.category}|${stroke}|${record.distance_m}`
+    // A row whose stroke says 핀 is charted as a fin swim whatever the category
+    // column claims. The column is the usual source; the stroke text is the
+    // backstop, because putting a finned swim on the pool line is the one error
+    // here that invents a personal best nobody swam.
+    const bucket = finnedStroke(record.stroke) ? 'fin' : record.category
+    const key = `${bucket}|${stroke}|${record.distance_m}`
     const group = groups.get(key)
     if (group) group.rows.push(record)
     else
       groups.set(key, {
-        category: record.category,
+        category: bucket,
         stroke,
         distance_m: record.distance_m,
         rows: [record],
