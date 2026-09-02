@@ -63,26 +63,53 @@ run_once() {
 
 # Every column the import writes, plus updated_at. If a rerun touches any of
 # them, this hash moves.
+#
+# THAT SENTENCE WAS FALSE UNTIL 2026-09-03 AND THE OMISSION WAS THE DANGEROUS
+# HALF. The list below used to carry nine of the members columns and eight of
+# the records ones, against fifteen and eleven the importer actually writes.
+# Missing from members: birth_year, birth_date_text, join_date_text,
+# join_reason, lesson_level, swim_experience and both legacy counters. Missing
+# from records: member_id, distance_m, event_date, created_by — and
+# result_centiseconds, which is the swim time itself.
+#
+# So a rerun that changed a recorded time moved no hash and this script printed
+# PASS. A fingerprint exists precisely to catch the write that leaves row counts
+# alone, and it was blind to the column that matters most in the table where it
+# matters most.
+#
+# The check that finds nothing has to be able to find something, and the way to
+# keep this one honest is mechanical: the column list here must be the union of
+# every insert column list in toSql.ts. When you add a column there, add it
+# here, or this file goes back to agreeing with whatever you did.
 FINGERPRINT_SQL="
 select coalesce(md5(string_agg(x, '|' order by x)), 'empty') from (
   select m.id::text || m.nickname || coalesce(m.real_name,'') || coalesce(m.short_name,'')
-       || coalesce(m.gender,'') || coalesce(m.notes,'') || m.status || m.role
+       || coalesce(m.birth_year::text,'') || coalesce(m.birth_date_text,'')
+       || coalesce(m.gender,'') || coalesce(m.join_date_text,'')
+       || coalesce(m.join_reason,'') || coalesce(m.lesson_level,'')
+       || coalesce(m.swim_experience,'') || coalesce(m.notes,'')
+       || m.status || m.role
+       || m.historical_attendance_count_legacy::text
+       || m.historical_late_count_legacy::text
        || m.updated_at::text as x
     from public.members m
    where m.nickname not like 'pwtest%'
   union all
   select a.id::text || a.kind || a.title || a.activity_date::text || a.details::text
-       || a.updated_at::text
+       || coalesce(a.created_by::text,'') || a.updated_at::text
     from public.activities a
    where a.details->>'source' = 'club-workbook'
   union all
-  select t.id::text || t.status || t.marked_by::text || t.updated_at::text
+  select t.id::text || t.activity_id::text || t.member_id::text
+       || t.status || t.marked_by::text || t.updated_at::text
     from public.attendance t
     join public.activities ac on ac.id = t.activity_id
    where ac.details->>'source' = 'club-workbook'
   union all
-  select r.id::text || r.category || r.subcategory || r.stroke || r.event_name
-       || r.result_display || r.metadata::text || r.updated_at::text
+  select r.id::text || r.member_id::text || r.category || r.subcategory || r.stroke
+       || r.distance_m::text || r.event_name || r.event_date::text
+       || r.result_display || r.result_centiseconds::text
+       || r.metadata::text || coalesce(r.created_by::text,'') || r.updated_at::text
     from public.records r
    where r.metadata->>'source' = 'club-workbook'
 ) s;"
