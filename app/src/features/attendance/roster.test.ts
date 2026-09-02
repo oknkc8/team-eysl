@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isRegistered, rosterKey, type RosterIdentity } from './roster'
+import { explainMarkNameFailure, isRegistered, rosterKey, type RosterIdentity } from './roster'
 
 const member = (id: string, nickname = '회원'): RosterIdentity => ({ member_id: id, nickname })
 const named = (nickname: string): RosterIdentity => ({ member_id: null, nickname })
@@ -39,6 +39,37 @@ describe('rosterKey', () => {
   // than depending on a guarantee made two layers away.
   it('still returns something for an empty name', () => {
     expect(rosterKey(named(''))).toBe('name:')
+  })
+})
+
+describe('explainMarkNameFailure', () => {
+  // The three the function actually raises, each pointing at a different fix.
+  // Collapsing them into one sentence is what the review caught: a non-staff
+  // admin told "이미 가입한 회원의 이름입니다" goes off to rename a person.
+  it('names the member-nickname collision', () => {
+    expect(explainMarkNameFailure({ code: '23505' })).toContain('이미 가입한 회원')
+  })
+
+  it('names a blank name', () => {
+    expect(explainMarkNameFailure({ code: '22023' })).toContain('이름을 입력')
+  })
+
+  it('names a permission failure as a permission failure', () => {
+    const message = explainMarkNameFailure({ code: '42501' })
+    expect(message).toContain('권한')
+    // The point of the branch: it must NOT blame the name.
+    expect(message).not.toContain('이미 가입한 회원')
+  })
+
+  // onError receives whatever was thrown. A dropped connection arrives as a
+  // TypeError with no code; a caller that threw a string arrives as a string.
+  // Neither may become an unhandled property read.
+  it('falls back without throwing on anything that is not a PostgrestError', () => {
+    expect(explainMarkNameFailure(new TypeError('network'))).toContain('다시 시도')
+    expect(explainMarkNameFailure('boom')).toContain('다시 시도')
+    expect(explainMarkNameFailure(null)).toContain('다시 시도')
+    expect(explainMarkNameFailure(undefined)).toContain('다시 시도')
+    expect(explainMarkNameFailure({ code: 999 })).toContain('다시 시도')
   })
 })
 

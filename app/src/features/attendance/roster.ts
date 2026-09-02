@@ -45,3 +45,36 @@ export function rosterKey(row: RosterIdentity): string {
 export function isRegistered(row: RosterIdentity): boolean {
   return row.member_id !== null
 }
+
+/**
+ * Turn a failed name-only check-in into a sentence the admin can act on.
+ *
+ * The same shape as schedule/enrolment.ts's explainEnrolFailure, and for the
+ * same reason: `attendance_mark_name_v1` raises three different things and one
+ * message for all of them tells the reader to fix the wrong problem. A
+ * permission failure shown as "이미 가입한 회원의 이름입니다" sends somebody off
+ * to rename a person when the actual answer is that they are not staff.
+ */
+export function explainMarkNameFailure(error: unknown): string {
+  const code = readCode(error)
+  // 23505 — the name belongs to a member. They have to be marked by id, or the
+  // two rows never merge and only one of them counts toward anything.
+  if (code === '23505') return '이미 가입한 회원의 이름입니다. 위 명단에서 체크해 주세요.'
+  // 22023 — blank after trimming. The button already refuses this, so reaching
+  // it means the value arrived some other way.
+  if (code === '22023') return '이름을 입력해 주세요.'
+  if (code === '42501') return '출석을 기록할 권한이 없습니다.'
+  return '저장하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+}
+
+/**
+ * PostgrestError carries the SQLSTATE on `code`. Read defensively because this
+ * runs in a mutation's onError, which receives whatever was thrown: a network
+ * failure arrives as a TypeError with no code at all, and a caller that threw a
+ * string arrives as a string. Neither must become an unhandled read.
+ */
+function readCode(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null) return null
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' ? code : null
+}

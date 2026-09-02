@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  explainMarkNameFailure,
   getRoster,
   markAttendance,
   markNameAttendance,
@@ -18,7 +19,12 @@ const STATUSES: AttendanceStatus[] = ['present', 'late', 'absent']
 export function AdminCheckInPage() {
   const { activityId = '' } = useParams()
   const qc = useQueryClient()
+  // Keyed by activity AND row, not row alone. This component stays mounted when
+  // the route changes from one activity to another, so a bare row key would let
+  // the previous activity's 저장됨 — or its 오류, whose 다시 시도 button fires
+  // against whatever activity is on screen now — paint on the new roster.
   const [rowState, setRowState] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
+  const stateKey = (row: RosterRow) => `${activityId}:${rosterKey(row)}`
 
   const query = useQuery({
     queryKey: ['roster', activityId],
@@ -49,12 +55,12 @@ export function AdminCheckInPage() {
             status: v.status,
             lateFeePaid: v.lateFeePaid,
           }),
-    // Keyed by rosterKey, not by member id: every name-only row has null there,
-    // so an id-keyed map would collapse all of them onto one entry and paint one
-    // person's spinner on everybody else's row.
-    onMutate: (v) => setRowState((s) => ({ ...s, [rosterKey(v.row)]: 'saving' })),
+    // Keyed through stateKey, never by member id: every name-only row has null
+    // there, so an id-keyed map would collapse all of them onto one entry and
+    // paint one person's spinner on everybody else's row.
+    onMutate: (v) => setRowState((s) => ({ ...s, [stateKey(v.row)]: 'saving' })),
     onSuccess: (_d, v) => {
-      setRowState((s) => ({ ...s, [rosterKey(v.row)]: 'saved' }))
+      setRowState((s) => ({ ...s, [stateKey(v.row)]: 'saved' }))
       void qc.invalidateQueries({ queryKey: ['roster', activityId] })
       // 출석 배지 and 월간 활동 요약 are derived from exactly these rows, so a
       // correction that drops somebody below a threshold has to reach them.
@@ -66,7 +72,7 @@ export function AdminCheckInPage() {
     // Deliberately does not revert the row. The legacy screen had no state to
     // revert from and said nothing either way; showing the failure and letting
     // the admin retry beats silently undoing their tap.
-    onError: (_e, v) => setRowState((s) => ({ ...s, [rosterKey(v.row)]: 'error' })),
+    onError: (_e, v) => setRowState((s) => ({ ...s, [stateKey(v.row)]: 'error' })),
   })
 
   // 명단에 없는 사람 — the walk-in who never made an account, and every name on
@@ -125,7 +131,7 @@ export function AdminCheckInPage() {
                       </span>
                     )}
                     <SaveState
-                      state={rowState[rosterKey(row)] ?? 'idle'}
+                      state={rowState[stateKey(row)] ?? 'idle'}
                       onRetry={
                         row.status
                           ? () => mark.mutate({ row, status: row.status as AttendanceStatus })
@@ -206,7 +212,10 @@ export function AdminCheckInPage() {
                 padding: 12,
                 borderRadius: 13,
                 border: '1px solid #e1e5ea',
-                fontSize: 14,
+                // 16px, and it has to be 16px: iOS Safari zooms the page in
+                // when a focused input is any smaller. components.css:719 says so
+                // for the CSS controls; this inline one has to say it too.
+                fontSize: 16,
                 fontFamily: 'inherit',
                 boxSizing: 'border-box',
               }}
@@ -228,17 +237,16 @@ export function AdminCheckInPage() {
             </button>
           </div>
           <p style={{ fontSize: 12, color: '#6b7178', margin: '8px 0 0', lineHeight: 1.5 }}>
-            계정이 없는 참가자를 이름으로 기록합니다. 나중에 그 사람이 가입하면 회원과 연결할 수
-            있습니다.
+            계정이 없는 참가자를 이름으로 기록합니다. 기록만 남고 출석왕·배지 집계에는 들어가지
+            않습니다.
           </p>
           {addByName.isError && (
-            // The one refusal an admin will actually meet: the database rejects a
-            // name that already belongs to a member (23505), because that person
-            // has to be marked by id or their two rows never merge. Said in
-            // Korean here rather than surfacing a Postgres error.
+            // Branched by SQLSTATE rather than collapsed into one sentence.
+            // attendance_mark_name_v1 raises three different things, and telling
+            // a non-staff admin that the NAME is the problem sends them off to
+            // rename somebody. Same shape as schedule/enrolment.ts.
             <p role="alert" style={{ fontSize: 12, color: '#a33', margin: '8px 0 0' }}>
-              이미 가입한 회원의 이름이거나 저장에 실패했습니다. 명단에 있는 회원은 위에서 체크해
-              주세요.
+              {explainMarkNameFailure(addByName.error)}
             </p>
           )}
         </div>

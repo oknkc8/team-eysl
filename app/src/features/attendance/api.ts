@@ -34,7 +34,7 @@ export type RosterRow = {
 // Supabase client at import time, so anything testable had to move out from
 // under it. Same split as schedule/kinds.ts, and re-exported for the same
 // reason — call sites keep a single import.
-export { isRegistered, rosterKey } from './roster'
+export { explainMarkNameFailure, isRegistered, rosterKey } from './roster'
 
 export type HistoryRow = {
   activity_id: string

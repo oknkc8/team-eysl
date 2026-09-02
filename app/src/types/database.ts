@@ -1126,15 +1126,25 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      // Hand-corrected: four of these were declared non-null and are not. Three were
+      // already nullable before 0051, because the roster LEFT JOINs attendance and
+      // an unmarked member comes back with status/marked_at NULL and no avatar.
+      // 0051 added the fourth — the union branch selects `null::uuid` for a
+      // name-only row, which is the whole feature.
+      //
+      // Nothing failed, because `getRoster` casts the result to RosterRow[] and a
+      // cast believes whatever it is told. That is the shape worth naming: a
+      // wrong generated type plus a cast is not a type error anywhere, it is a
+      // runtime surprise with a green build in front of it.
       attendance_for_activity_v1: {
         Args: { p_activity_id: string }
         Returns: {
-          avatar_path: string
+          avatar_path: string | null
           late_fee_paid: boolean
-          marked_at: string
-          member_id: string
+          marked_at: string | null
+          member_id: string | null
           nickname: string
-          status: string
+          status: string | null
         }[]
       }
       // Added by hand, like the two exceptions elsewhere in this file, because
