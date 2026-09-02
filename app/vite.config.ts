@@ -48,5 +48,23 @@ export default defineConfig({
     // files before running a line. They belong to `npm run test:e2e`; this suite
     // stays fast and offline, and never opens a browser or the dev database.
     exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
+    // router.test.ts's beforeAll dynamically imports the router, which eagerly
+    // imports every page in the app. On an idle machine that finishes well
+    // inside vitest's 10s default; under load it does not, and the failure is
+    // `Hook timed out in 10000ms` — a hook, not an assertion, so all 55 of that
+    // file's tests are reported SKIPPED rather than failed and the total drops
+    // from 781 to 725. A run that lost 56 tests still prints a mostly-green
+    // summary, which is the shape this project keeps being fooled by.
+    //
+    // Measured 2026-09-03: three separate agents hit it independently while
+    // sharing this machine, and each ruled out their own change by removing it
+    // and watching the failure persist. It passes alone (55/55) and it passes
+    // at a raised timeout (781/781); nothing about the router changed.
+    //
+    // Raised here rather than passed on the command line because CI runs the
+    // bare `npm test` on a shared runner, so it meets the same wall with nobody
+    // watching. 30s is a timeout for a slow import, not for a hung one — a
+    // genuinely stuck hook still fails, three times later than before.
+    hookTimeout: 30_000,
   },
 })
