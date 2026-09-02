@@ -1118,15 +1118,24 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      // Only `member_id` goes back to non-null with 0052. The other three were
+      // nullable BEFORE 0051 and still are: the roster LEFT JOINs attendance, so
+      // an unmarked member returns status and marked_at as NULL, and
+      // members.avatar_path is nullable in its own right.
+      //
+      // The generated file has always declared them non-null and `getRoster`
+      // casts the result, so nothing ever failed. This is the shape worth
+      // naming: **a revert can undo a correct fix as easily as a wrong one**, and
+      // a cast means neither direction produces a type error.
       attendance_for_activity_v1: {
         Args: { p_activity_id: string }
         Returns: {
-          avatar_path: string
+          avatar_path: string | null
           late_fee_paid: boolean
-          marked_at: string
+          marked_at: string | null
           member_id: string
           nickname: string
-          status: string
+          status: string | null
         }[]
       }
       attendance_mark_v1: {

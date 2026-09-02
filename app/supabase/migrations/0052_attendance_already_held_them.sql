@@ -50,14 +50,25 @@
 
 -- Refuse to run if 0051's model was actually used. A clean revert is only clean
 -- while it is empty; this turns a silent data loss into a loud stop.
+-- Checks `display_name is not null` as well as `member_id is null`, because
+-- 0051's CHECK required only ONE of the two and so permitted a row carrying
+-- BOTH. Such a row survives `set not null` and then loses its name to
+-- `drop column` without a word. The UI never wrote that shape, but
+-- `service_role` and hand-written SQL can, and a guard that only covers the
+-- path the UI takes is not a guard.
 do $$
 declare v_rows bigint;
 begin
-  select count(*) into v_rows from public.attendance where member_id is null;
+  select count(*) into v_rows
+    from public.attendance
+   where member_id is null
+      or display_name is not null;
   if v_rows > 0 then
     raise exception
-      'attendance has % name-only row(s); link them to members before reverting 0051', v_rows
-      using errcode = 'P0001';
+      'attendance has % row(s) carrying 0051 data; resolve them before reverting', v_rows
+      using errcode = 'P0001',
+            hint = 'member_id null means a name-only row to link; display_name set '
+                   'beside a member_id means a name that drop column would discard';
   end if;
 end $$;
 
