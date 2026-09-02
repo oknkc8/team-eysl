@@ -322,6 +322,10 @@ Three later cases sharpened the same rule, each one a thing that reading the cod
 
 It was found by planting stale offers and waiting for a real scheduled tick. **A scheduled job is only verified by a run that had something to do.**
 
+**`scripts/migrate.sh` is the same shape, and it is ours.** It carries no `set -e`, so when `psql` is missing the loop runs to the end, every statement fails into the void, and the script prints `done: 0 applied` and **exits 0**. Measured 2026-09-03: it reported success while applying nothing, because libpq is keg-only on this machine and `psql` is not on `PATH`.
+
+Run it as `PATH="/opt/homebrew/opt/libpq/bin:$PATH" ./scripts/migrate.sh`, and read the output rather than the exit code — a real apply prints `CREATE TABLE` / `CREATE FUNCTION` / `INSERT 0 1` and ends with `done: N applied` for N > 0. The script wants `set -euo pipefail`; until it has it, its exit code is not evidence.
+
 **A view's grants are the whole gate.** `authenticated=arwdDxtm` on a table is unremarkable — RLS is what refuses. The identical string on a view means the opposite, because there is no RLS behind it: `member_public_v` was auto-updatable, DEFINER-mode, exposed `role`, and let any approved member PATCH themselves to `master_admin` (closed in `0019`). Three grant audits printed that string and read it as ordinary. When auditing, **split views from tables and read them under different rules.**
 
 **`npx tsc --noEmit` does not report the truth on this machine.** A wrapper rewrites its output to "TypeScript compilation completed" and swallows real errors; twelve of them sat behind that for hours while `npm run build` was failing. Run `./node_modules/.bin/tsc --noEmit` and check the exit code. The same caution applies to any tool whose output looks suspiciously tidy.
@@ -336,7 +340,11 @@ This is the most dangerous tool failure on the list, because every other one ann
 
 **The same wrapper rewrites `git` and `gh`, and it invents plausible answers rather than failing.** Verified 2026-08-26: `git status --short` printed the single word `ok` in a clean tree, and `gh pr list --state open --json …` printed `[]` while PR #8 was open — `gh pr list --state all` printed `[]` too, so even "there have never been any PRs" was on offer. The GitHub API returned the PR immediately.
 
-`[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Prefix with `rtk proxy` to get the real output, or ask the GitHub API directly. Never let a wrapper's empty listing be the reason you skipped a step.
+`[]` is worse than `ok`, because `ok` is obviously not git's output and an empty JSON array is exactly what the real command prints when there is nothing to list. The failure mode is identical to grep's and reaches further: **any workflow decision made from a listing** — no open PRs so nothing to review, no matches so the feature is missing, clean tree so nothing to commit. Ask the GitHub API directly, or read git through a Python `subprocess.run`, which nothing sits in front of. Never let a wrapper's empty listing be the reason you skipped a step.
+
+**Do not reach for `rtk proxy`. It is not installed on this machine** — `command -v rtk` finds nothing (verified 2026-09-03), and earlier revisions of this file prescribed it here and below as the remedy. That advice was worse than useless: `rtk proxy git status --short 2>/dev/null` exits non-zero with **empty stdout**, which is indistinguishable from a clean tree, so the prescribed cure reproduces the exact disease — and more quietly, because whoever ran it believes they took the precaution. Measured the same minute: the rtk form returned nothing while `subprocess.run(['git','status','--porcelain'])` returned two untracked files.
+
+Two rules fall out. **Never write `2>/dev/null` on a command whose emptiness is load-bearing** — that flag is what turns "the command does not exist" into "there is nothing there". And when a negative result is about to justify skipping a step, get it from a second tool that has no wrapper in its path.
 
 **`gh pr create` invents a reason rather than failing.** Two measurements on 2026-08-26. It answered `No commits between dev and <branch>` for a branch that was genuinely one commit ahead — `gh api repos/oknkc8/team-eysl/compare/dev...<branch>` returned `{"status":"ahead","ahead_by":1}` at the same moment. And it answered `Head sha can't be blank, Base sha can't be blank, … Head ref must be a branch` for two refs that both existed on the remote.
 
@@ -475,7 +483,7 @@ The two look identical on the terminal and share no cause: one is the anchor mov
 
 **`ps` is the worst of these, and the reason is that its lie is the answer you wanted.** `git status` printing `ok` is obviously not git's output. `gh pr list` printing `[]` at least looks odd for a repo with open PRs. But `ps | grep <anything>` returning nothing looks exactly like *"that program is not running"* — so it **confirms rather than contradicts**, and an investigation stops. Every "I checked, nothing was running" in this project's history was produced this way.
 
-**Read `/proc` instead.** `ls -d /proc/[0-9]* | wc -l` for a count, `/proc/<pid>/comm` and `/proc/<pid>/cmdline` for what a process is. Nothing sits between those files and the truth. `rtk proxy ps` also works, but it puts a wrapper in the path and wrappers are the subject.
+**Read `/proc` instead.** `ls -d /proc/[0-9]* | wc -l` for a count, `/proc/<pid>/comm` and `/proc/<pid>/cmdline` for what a process is. Nothing sits between those files and the truth. (An earlier revision offered `rtk proxy ps` as a second option here; `rtk` is not installed on this machine — see the git/gh section above. And `/proc` is Linux: this project is developed on darwin, where those paths do not exist, so on macOS read processes through a Python `subprocess.run(['ps', ...])` instead.)
 
 **And the interception depends on how the command is invoked, which is why two people measuring the same thing disagree.** Measured on 2026-08-26, same shell, seconds apart:
 
