@@ -204,37 +204,45 @@ export type Database = {
           },
         ]
       }
+      // Hand-corrected to match 0051, for the same reason as the two RPC entries
+      // above: db:types could not be run here. Checked against
+      // information_schema on the live database rather than inferred — member_id
+      // is now nullable and display_name exists, and leaving the old shape would
+      // have let a `.from('attendance')` caller assume an id that is not there.
       attendance: {
         Row: {
           activity_id: string
+          display_name: string | null
           id: string
           late_fee_amount: number | null
           late_fee_paid: boolean
           marked_at: string
           marked_by: string
-          member_id: string
+          member_id: string | null
           status: string
           updated_at: string
         }
         Insert: {
           activity_id: string
+          display_name?: string | null
           id?: string
           late_fee_amount?: number | null
           late_fee_paid?: boolean
           marked_at?: string
           marked_by: string
-          member_id: string
+          member_id?: string | null
           status: string
           updated_at?: string
         }
         Update: {
           activity_id?: string
+          display_name?: string | null
           id?: string
           late_fee_amount?: number | null
           late_fee_paid?: boolean
           marked_at?: string
           marked_by?: string
-          member_id?: string
+          member_id?: string | null
           status?: string
           updated_at?: string
         }
