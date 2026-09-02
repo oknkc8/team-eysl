@@ -804,6 +804,61 @@ export type Database = {
           },
         ]
       }
+      race_attachments: {
+        Row: {
+          activity_id: string
+          created_at: string
+          created_by: string
+          file_name: string
+          id: string
+          mime_type: string
+          sort_order: number
+          storage_path: string
+        }
+        Insert: {
+          activity_id: string
+          created_at?: string
+          created_by: string
+          file_name: string
+          id?: string
+          mime_type?: string
+          sort_order?: number
+          storage_path: string
+        }
+        Update: {
+          activity_id?: string
+          created_at?: string
+          created_by?: string
+          file_name?: string
+          id?: string
+          mime_type?: string
+          sort_order?: number
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "race_attachments_activity_id_fkey"
+            columns: ["activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "race_attachments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "member_public_v"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "race_attachments_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       record_uploads: {
         Row: {
           category: string
@@ -1032,6 +1087,10 @@ export type Database = {
       }
     }
     Functions: {
+      add_race_attachment_v1: {
+        Args: { p_activity_id: string; p_file_name: string; p_mime_type: string }
+        Returns: Json
+      }
       activity_enrol_member_v1: {
         Args: { p_activity_id: string; p_member_id: string }
         Returns: {
@@ -1263,6 +1322,10 @@ export type Database = {
       register_member_v1: {
         Args: { p_nickname: string; p_password: string }
         Returns: Json
+      }
+      remove_race_attachment_v1: {
+        Args: { p_attachment_id: string }
+        Returns: undefined
       }
       request_push_notify: {
         Args: { p_event: string; p_id: string }
