@@ -204,45 +204,37 @@ export type Database = {
           },
         ]
       }
-      // Hand-corrected to match 0051, for the same reason as the two RPC entries
-      // above: db:types could not be run here. Checked against
-      // information_schema on the live database rather than inferred — member_id
-      // is now nullable and display_name exists, and leaving the old shape would
-      // have let a `.from('attendance')` caller assume an id that is not there.
       attendance: {
         Row: {
           activity_id: string
-          display_name: string | null
           id: string
           late_fee_amount: number | null
           late_fee_paid: boolean
           marked_at: string
           marked_by: string
-          member_id: string | null
+          member_id: string
           status: string
           updated_at: string
         }
         Insert: {
           activity_id: string
-          display_name?: string | null
           id?: string
           late_fee_amount?: number | null
           late_fee_paid?: boolean
           marked_at?: string
           marked_by: string
-          member_id?: string | null
+          member_id: string
           status: string
           updated_at?: string
         }
         Update: {
           activity_id?: string
-          display_name?: string | null
           id?: string
           late_fee_amount?: number | null
           late_fee_paid?: boolean
           marked_at?: string
           marked_by?: string
-          member_id?: string | null
+          member_id?: string
           status?: string
           updated_at?: string
         }
@@ -1126,74 +1118,25 @@ export type Database = {
           isSetofReturn: false
         }
       }
-      // Hand-corrected: four of these were declared non-null and are not. Three were
-      // already nullable before 0051, because the roster LEFT JOINs attendance and
-      // an unmarked member comes back with status/marked_at NULL and no avatar.
-      // 0051 added the fourth — the union branch selects `null::uuid` for a
-      // name-only row, which is the whole feature.
+      // Only `member_id` goes back to non-null with 0052. The other three were
+      // nullable BEFORE 0051 and still are: the roster LEFT JOINs attendance, so
+      // an unmarked member returns status and marked_at as NULL, and
+      // members.avatar_path is nullable in its own right.
       //
-      // Nothing failed, because `getRoster` casts the result to RosterRow[] and a
-      // cast believes whatever it is told. That is the shape worth naming: a
-      // wrong generated type plus a cast is not a type error anywhere, it is a
-      // runtime surprise with a green build in front of it.
+      // The generated file has always declared them non-null and `getRoster`
+      // casts the result, so nothing ever failed. This is the shape worth
+      // naming: **a revert can undo a correct fix as easily as a wrong one**, and
+      // a cast means neither direction produces a type error.
       attendance_for_activity_v1: {
         Args: { p_activity_id: string }
         Returns: {
           avatar_path: string | null
           late_fee_paid: boolean
           marked_at: string | null
-          member_id: string | null
+          member_id: string
           nickname: string
           status: string | null
         }[]
-      }
-      // Added by hand, like the two exceptions elsewhere in this file, because
-      // `npm run db:types` could not be run here: gen-types.sh needs a Docker
-      // daemon and there is none on this machine. Copied from 0051's signatures
-      // rather than guessed.
-      //
-      // Worth knowing before you try it yourself: **a failed gen-types.sh
-      // destroys this file.** It redirects into the target before it knows
-      // whether the generator succeeded, so the Docker error left database.ts
-      // one line long. Copy it aside first.
-      attendance_link_name_v1: {
-        Args: {
-          p_activity_id: string
-          p_display_name: string
-          p_member_id: string
-        }
-        Returns: {
-          activity_id: string
-          display_name: string | null
-          id: string
-          late_fee_amount: number | null
-          late_fee_paid: boolean
-          marked_at: string
-          marked_by: string
-          member_id: string | null
-          status: string
-          updated_at: string
-        }
-      }
-      attendance_mark_name_v1: {
-        Args: {
-          p_activity_id: string
-          p_display_name: string
-          p_late_fee_paid?: boolean
-          p_status: string
-        }
-        Returns: {
-          activity_id: string
-          display_name: string | null
-          id: string
-          late_fee_amount: number | null
-          late_fee_paid: boolean
-          marked_at: string
-          marked_by: string
-          member_id: string | null
-          status: string
-          updated_at: string
-        }
       }
       attendance_mark_v1: {
         Args: {
