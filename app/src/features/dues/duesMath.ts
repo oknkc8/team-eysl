@@ -182,6 +182,22 @@ export function summariseActivityFees(
 export function halfOfMonth(month: number): Half {
   // <= 6, so June is 상반기 and July is 하반기. The club's sheet splits there:
   // `26년 상반기` covers the January–June sessions.
+  //
+  // THE SAME BOUNDARY IS DEFINED A SECOND TIME, IN SQL, AND THE TWO AGREE BY
+  // COINCIDENCE RATHER THAN BY CONSTRUCTION. `team_event_rankings_v1`
+  // (0016:127-131) fixes H1 as 1월1일–6월30일 and H2 as 7월1일–12월31일 for the
+  // ranking buckets. This line was written from the spreadsheet's own labels
+  // without reading that migration, and it happens to match.
+  //
+  // Left as two definitions rather than one because they answer different
+  // questions and the stakes are lopsided: 0016's boundary buckets ranking
+  // data, while this one only pre-fills a form field a staffer can overwrite.
+  // A divergence here is a mildly wrong default; a divergence there is wrong
+  // numbers on a leaderboard. Importing SQL's answer into TypeScript would mean
+  // a round trip for a default value.
+  //
+  // What that costs is that nothing connects them, so a change to one will not
+  // show up as a diff on the other. If 0016's dates ever move, move this too.
   return month <= 6 ? 1 : 2
 }
 
