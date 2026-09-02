@@ -204,14 +204,34 @@ Non-trivial feature work runs through a standing team of subagents, spawned in p
 |---|---|---|
 | Architect | `oh-my-claudecode:architect` (opus) | stack decisions, module boundaries, where authority lives |
 | PM | `oh-my-claudecode:planner` (opus) | scope, phasing, what ships in this slice |
-| DBA | `everything-claude-code:database-reviewer` | schema, RLS policies, constraints, migration safety |
+| DBA | `ecc:database-reviewer` | schema, RLS policies, constraints, migration safety |
 | UX | `oh-my-claudecode:designer` | IA, routes, component composition, states and save feedback |
-| Reviewer | codex `gpt-5.6-sol` via CLI | adversarial second opinion; see `<codex_delegation>` |
+| Reviewer | codex `gpt-5.6-luna` via CLI | adversarial second opinion; see `<codex_delegation>` |
+
+**Four of the five ship with plugins, and only one of those needs installing.** `architect`,
+`planner` and `designer` come from `oh-my-claudecode`, which is already present. The DBA does not:
+it lives in a marketplace that has since been **renamed**, so the agent id in the table is
+`ecc:database-reviewer` and not the `everything-claude-code:…` this file carried until 2026-09-02.
+
+```
+/plugin marketplace add affaan-m/ECC     # the repo redirects from affaan-m/everything-claude-code
+/plugin install ecc@ecc                  # marketplace "ecc", plugin "ecc"
+```
+
+**A missing agent does not announce itself as missing** — the brief simply never runs, and the
+role's work quietly becomes nobody's. Check the agent list before spawning the team, rather than
+after reading a plan with no schema review in it. Installing `ecc` also brings a **GateGuard hook**
+that demands a fact list before the first Bash command and before first touching each file; it is
+not a malfunction, and the facts it asks for are cheap on a file you have already read.
 
 Four things that cost real time when skipped:
 
 - **A teammate's idle notification is not a report.** Their final message does not reach the lead automatically — ask for the full deliverable via `SendMessage` (bare name, no `@session` suffix) or it is lost.
 - **An agent's self-report is not verification.** Demand file:line evidence and re-check the load-bearing claims yourself before acting on them.
+
+  **2026-09-02 is the cheapest example this project has.** An upstream survey came back with file:line evidence throughout and one confident conclusion: 자유게시판 is "완전히 새로운 기능, CLAUDE.md에 전혀 없음 … 우리 백로그에 없는 완전 신규 기능이라 별도 스코프 논의가 필요". Every word about *his* app was right. The claim about **ours** was wrong — we shipped it in `#13`, it has four components under `app/src/features/board/` and two migrations (`0033`, `0037`), and it is the **first item** in `HANDOFF.md`'s 「되는 것」 list.
+
+  The shape is worth naming, because "demand evidence" would not have caught it: the agent was asked to survey **upstream**, so it evidenced upstream thoroughly and asserted the *comparison* from memory. **An agent's evidence covers what you sent it to look at; the half of a comparison that lives on your side arrives unchecked.** Acting on it would have meant rebuilding a finished feature. One `git log --oneline | grep -i "free board"` refuted it.
 - **Hand out migration numbers up front; do not let agents pick.** Checking `ls` and the ledger immediately before writing narrows the race, it does not close it — `0020` and `0024` were each claimed twice on 2026-08-25, the second collision forty-eight seconds apart, by parties who had both just checked. Resolving it afterwards means renaming a file, deleting a ledger row and re-applying, with a window where the ledger and the directory disagree. Assign `0031` to one agent and `0032` to the next in their briefs, or give only one of them the task.
 
   **Where you look before handing a number out is the other half of the rule.** A local `ls` is not an answer — a worktree cannot see another worktree's unmerged files. That is exactly the 2026-08-26 failure: a directory listing was read in one worktree and the number judged free. There are two places to look.
@@ -228,7 +248,7 @@ Four things that cost real time when skipped:
 Every PR follows the same cycle, and it repeats without asking for approval between rounds:
 
 1. Open the PR (template filled, `/humanize-korean 가볍게` on the body).
-2. Self-review with codex: `gpt-5.6-sol`, `model_reasoning_effort=medium` for routine diffs, `high` when the diff touches auth, RLS, migrations, or money.
+2. Self-review with codex: `gpt-5.6-luna`, `model_reasoning_effort=medium` for routine diffs, `xhigh` when the diff touches auth, RLS, migrations, or money.
 3. Post the verdict as a PR comment — findings and their severity, in Korean.
 4. Fix every critical and high finding, push to the same branch, and note the fix in the thread.
 5. Merge into `dev` only when **all three** hold: CI is green, no critical or high finding is left open, and anything the change claims to do has actually been exercised (a migration applied and queried back, a screen loaded, a test run). Mediums and lows may ship with a note saying why they were deferred.
@@ -1195,10 +1215,10 @@ defect to quietly fix.
 <codex_delegation>
 Global `~/.claude/CLAUDE.md` already carries the full ruleset — do not duplicate it here. Project-specific only:
 
-- Verified on this machine 2026-08-24: `codex-cli 0.147.0`, model `gpt-5.6-sol`.
+- Verified on this machine 2026-09-02: `codex-cli 0.152.0`. `~/.codex/config.toml` already sets `model = "gpt-5.6-luna"` and `model_reasoning_effort = "xhigh"` as the defaults, so **the canonical call below passes no `-m` and no effort override** — an explicit `-m gpt-5.6-sol -c model_reasoning_effort="high"` was what this file used to prescribe, and it silently overrode both, which is how review cost climbed without anyone choosing it. Pass a flag only to go *below* the default for a routine diff.
 - Background sessions on this repo are forced into a git worktree, where a `codex exec "$(cat prompt.md)"` written inline is refused ("too complex to verify"). Put the invocation in a wrapper `.sh` and run it as one plain command instead.
 - Canonical call (the `-o` artifact is the source of truth, never stdout):
-  `codex exec -m gpt-5.6-sol -c model_reasoning_effort="high" --json -o /path/verdict.txt "$PROMPT"`
+  `codex exec --json -o /path/verdict.txt "$PROMPT"`  — inherits `gpt-5.6-luna` / `xhigh` from the config. For a routine diff, step down explicitly: `-c model_reasoning_effort="medium"`.
 - 2026-08-24, this repo: the `codex:rescue` skill returned a contentless `"Complete."` twice in a row despite 51 real `tool_uses` and 10+ min runtime; a `SendMessage` resume produced the same. A *completed* status with an empty result means the delivery channel failed, not that the work is absent. One retry, then drop the codex track and verify load-bearing facts directly.
 - **A missing `-o` artifact is not a delivery failure.** The rule above turns on the word *completed*: until the run reports completion, an absent or short artifact is indistinguishable from work still in progress. Reading it as a failure nearly discarded eight minutes of a live #22 re-review on 2026-08-26. The cheapest discriminator is the log's mtime against the clock — **`stat -c '%n %s bytes  mtime %y' <log>`**, which works today. **`ls -l --time-style=…` does not**: it printed empty output for a file already known to exist, which reads exactly like "no such file". Where mtime is ambiguous, parse the `--json` log — a run still going ends on `item.started` / `command_execution` / `web_search` with only short `agent_message`s (139–206 chars), while the verdict is a single closing `agent_message` of several thousand.
 </codex_delegation>

@@ -4,7 +4,7 @@
 누가 무엇을 들고 있는지, 어떤 마이그레이션 번호가 나갔는지, 무엇을 왜 그렇게 정했는지,
 그리고 아직 답을 못 받은 질문들.
 
-**마지막 갱신: 2026-08-31 · `origin/dev` = `123d47e`**
+**마지막 갱신: 2026-09-02 · `origin/dev` = `ba29f32`**
 
 갱신 규칙은 `CLAUDE.md`의 「Handoff log」 절에 있습니다.
 
@@ -40,9 +40,13 @@ dev 머지          56건 · 열린 PR 0건
 회원 연결 · 영법별 랭킹 · 공지 첨부 · 스태프 대리 참가자 등록 · 결과지 업로드 이력 ·
 채팅 첨부 · 대회 신청 · 코치 결과지 접근 · 훈련 상세 · **활동 댓글** · 알림 설정(등록까지)
 
-**방장님 앱에 있고 우리에게 없는 기능은 이제 없습니다.** 활동 댓글이 마지막 격차였고
-`#54`에서 닫혔습니다. 남은 차이는 반대 방향 하나뿐입니다 — 활동 취합본을 그분이 `v113`에서
-의도적으로 지웠고 우리는 아직 갖고 있습니다(5절 5번).
+**격차 없음은 2026-08-31에 참이었고 09-02에 깨졌습니다.** 활동 댓글이 그때의 마지막
+격차였고 `#54`에서 닫혔습니다. 그런데 **방장님이 09-02 하루에 릴리스 10개**(`final115` →
+`final124`)를 내면서 새 격차 두 계열이 열렸습니다 — 6절을 보십시오.
+
+**이 항목은 날짜를 달고 읽어야 합니다.** 「격차 없음」은 상태가 아니라 **측정**이고, 그분이
+지금도 매일 만들고 계시므로 오늘 참이어도 내일 거짓입니다. 따라가기 전에 `git fetch upstream`
+후 `sw.js`의 VERSION을 다시 세십시오.
 
 **안 되는 것**: **알림 발송.** 운영 서버가 없어 VAPID 키가 없습니다. 등록은 되고 보내는
 쪽이 안 됩니다. 화면이 그 사실을 직접 표시합니다 — 스크린샷의 알림 화면은 「기능이 도는
@@ -271,7 +275,69 @@ exact-ID 정리로 처리합니다. 패턴으로 지우는 로직을 되살리�
 
 ---
 
-## 6. 방장님 upstream — `final93` → `v114`
+## 6-0. upstream 최신 — `v114` → `final124` (2026-09-02 조사)
+
+`upstream/main` = `4eadfd5` "Serve race time edit fix v124", `sw.js`의
+`VERSION='team-eysl-final124-race-time-fields'`. **v115부터 v124까지 열 개가 전부 09-02 하루에
+나왔습니다.**
+
+**`v114`는 VERSION 문자열이 아닙니다** — 커밋 제목에만 있고, `index.html`에
+`<!-- V114_DIRECT_INDEX -->` 마커로 직접 패치됐습니다. VERSION 워크에서 `final114`를 찾으면
+없으니 놓친 줄 알고 헤매게 됩니다. `final120`도 마찬가지로 어디에도 없습니다(예약 후 미사용).
+
+**새 격차 두 계열 — 이것이 다음 할 일입니다.**
+
+1. **공지 투표 + 읽음 확인** (`final115`~`final119`, `final121`). 서버 함수 7개가 새로
+   생겼습니다 — `save_notice_poll_v1` · `get_notice_poll_v1` · `cast_notice_poll_vote_v1` ·
+   `add_notice_poll_option_v1` · `delete_notice_poll_v1` · `mark_notice_read_v1` ·
+   `get_notice_readers_v1`. 옵션 타입(텍스트/날짜), 복수선택, 익명, 마감시간, 마감 후 투표자
+   공개, 읽음 현황(운영진만). 우리는 스키마부터 필요합니다.
+2. **대회 첨부 · 기록 입력 필드** (`final122`~`final124`). `race-attachment-v123.js`는
+   `activities` 테이블에 직접 쓰고 새 RPC가 없습니다. `race-time-fields-v124.js`는
+   `enforceRaceTimeFields()` 하나뿐인 61줄입니다. 우리 대회 신청 화면이 이미 있어 이쪽이 훨씬
+   작습니다.
+
+**`historicalTrainingRes` ReferenceError는 고쳐졌습니다.** `index.html:1605`에서 `Promise.all`
+구조분해의 7번째 슬롯으로 다시 선언되고 `:1667`에서 정상 소비됩니다. `final66`~`final80`
+열네 개 릴리스에 걸쳐 신규 로그인을 깨뜨리던 것이 사라졌습니다. **우리가 `bc3523d` 스냅샷에서
+재구성하기로 했던 이유가 없어졌으니**, `final62`/`final64` 계열을 포팅할 때는 이제 현재 head를
+읽으면 됩니다.
+
+**그분의 작업 방식이 또 바뀌었습니다 — 진짜 CI/CD가 생겼습니다.** 기능마다
+`.github/workflows/apply-vNNN.yml`과 `scripts/patch_vNNN.py`가 한 쌍으로 붙습니다. 사람이
+"Add vNNN shell patch"를 올리면 워크플로가 파이썬 패치를 돌리고, `grep`으로 패치가 실제
+먹었는지 검증한 뒤, `team-eysl-bot` 계정이 `index.html`/`sw.js`에 커밋·푸시합니다. 커밋 162개
+중 봇이 10개입니다.
+
+**그래서 그분 커밋을 읽는 법이 달라집니다.** 사람 커밋(+0900)은 *의도*, 봇 커밋(+0000)이
+*실제 배포*입니다. 「Persist admin attendance changes」가 죽은 사이드카만 추가하고 진짜 수정은
+한참 뒤 봇 커밋에서 왔던 그 함정의 구조적 버전이고, 이제는 **규칙적으로** 그렇습니다.
+
+**보고할 결함 하나 — 버전 문자열 셋이 어긋나 있습니다.**
+
+```
+sw.js                 final124-race-time-fields
+index.html:1772       final82-ios-push-recovery     <- register('/sw.js?v=…')
+index.html:5271       final121-notice-deadline-layout
+```
+
+캐시 무효화는 둘을 같이 올려야 성립하는데 셋이 다 다릅니다. 이미 설치한 회원이 v122~v124를
+못 받을 수 있고, 화면상으로는 아무 이상이 없습니다.
+
+**사이드카는 21개 중 3개가 죽어 있고, 지난 조사와 같은 셋입니다** — `enhancements-v93` ·
+`notice-fix-v95` · `attendance-sync-v104`. 나머지는 `index.html`에 `<script>` 태그가 없어도
+`sw.js`가 네비게이션마다 주입하므로 **살아 있습니다.** 태그 없음을 죽음으로 읽지 마십시오.
+
+**출석 테이블이 미결 설계 질문에 답을 줍니다.** 그분 스키마는
+`activity_id, member_id, roster_id, display_name, status, late_fee_paid, checked_by, checked_at`이고
+upsert 충돌 기준이 **`(activity_id, display_name)`** 입니다. 즉 **계정 없는 사람의 출석이
+이름으로 저장됩니다.** 우리는 `member_id uuid not null references members(id)`라 구조적으로
+불가능하고, 그래서 과거 종이 출석부 백필이 막혀 있었습니다. 「출석 행이 회원 행 없이 존재해도
+되는가」는 이제 우리가 정할 문제가 아니라 **그분이 이미 정한 것**입니다.
+
+---
+
+## 6. 방장님 upstream — `final93` → `v114` (2026-08-26 조사, 이력용)
 
 **작업 방식이 바뀌었습니다.** 사이드카 JS가 13개로 늘었고, `.github` 워크플로와 `scripts`가
 생겼습니다.
@@ -355,7 +421,24 @@ select count(*) from public.attendance;   -- 234
 
 ```bash
 cd app && npm ci          # node_modules 는 따라오지 않습니다
+npx playwright install chromium   # 브라우저도 npm ci 로 안 옵니다
 ```
+
+**`psql`도 따라오지 않고, 설치해도 PATH에 안 잡힙니다.** 2026-09-02에 새 머신에서
+확인했습니다. `brew install libpq`가 맞는 패키지인데(전체 postgres 서버가 아니라 클라이언트만),
+libpq는 **keg-only**라 `/opt/homebrew`에 심볼릭 링크가 걸리지 않습니다. 그래서 설치 직후에도
+새 셸에서는 `psql: command not found`이고, `npm run db:migrate`가 마이그레이션 문제처럼 보이는
+얼굴로 죽습니다.
+
+```bash
+brew install libpq
+export PATH="/opt/homebrew/opt/libpq/bin:$PATH"   # ~/.zshrc 에 넣으십시오
+```
+
+**이것이 「빠진 도구가 다른 문제로 위장하는」 계열의 예입니다.** 실패 메시지는 `migrate.sh`
+안에서 나오므로 마이그레이션이나 접속 설정을 먼저 의심하게 되는데, 실제 원인은 PATH입니다.
+`command -v psql`을 **새 로그인 셸에서** 물어보는 것이 판별법입니다 — 지금 셸에서 export를
+해두었다면 그 셸에서는 계속 참이라 아무것도 알려주지 않습니다.
 
 **`.env`가 둘입니다** — 둘 다 git-ignored라 새 체크아웃에 없습니다.
 
