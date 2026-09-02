@@ -210,8 +210,8 @@
 --
 -- INSTALMENTS ARE NOT MODELLED. `dues_payments` is keyed (period_id, member_id),
 -- so a member has at most one 반기 회비 payment row per half. A partial payment
--- is expressible — the row's amount is simply less than the period's, and the
--- balance the functions compute is the difference — but a member who pays 30,000
+-- is expressible — the row's amount is simply less than the period's — but a
+-- member who pays 30,000
 -- in March and 20,000 in May ends with one row and the later date. The sheet has
 -- one cell per member per half and records exactly that much, so this matches the
 -- source; a real instalment ledger means dropping this primary key for a
@@ -274,7 +274,7 @@ create table if not exists public.dues_payments (
   primary key (period_id, member_id)
 );
 comment on table public.dues_payments is
-  '반기 회비 납부 기록. (기간, 회원) 한 쌍당 한 행이며 amount 는 실제로 받은 금액이다. 잔액은 저장하지 않고 계산한다.';
+  '반기 회비 납부 기록. (기간, 회원) 한 쌍당 한 행이며 amount 는 운영진이 입력한 금액이다. 잔액은 저장하지도 계산하지도 않는다. 입금 내역이 이 데이터베이스에 없기 때문이며 자세한 이유는 0057 헤더에 있다.';
 
 -- The primary key leads with period_id, so the roster read and the cascade from
 -- dues_periods are both covered. member_id is not, and its own FK cascades too —
@@ -339,7 +339,7 @@ revoke all on public.activity_fee_payments from public, anon, authenticated;
 
 -- ------------------------------------------------------------ the periods
 -- Readable by any approved member: a member has to be able to see that 2026
--- 상반기 costs 50,000 in order to make sense of their own balance. It carries no
+-- 상반기 costs 50,000 in order to make sense of their own row. It carries no
 -- per-member data at all, so there is nothing here to gate on beyond membership.
 create or replace function public.list_dues_periods_v1()
 returns table (
@@ -421,7 +421,7 @@ begin
 end $$;
 
 comment on function public.my_dues_summary_v1() is
-  '호출한 회원의 반기 회비 현황. 기간별 청구액·납부액·잔액을 돌려주며 잔액은 저장값이 아니라 계산값이다.';
+  '호출한 회원의 반기 회비 현황. 기간별 청구액과 기록된 납부액을 돌려준다. 잔액은 넣지 않는다. 입금 내역이 이 데이터베이스에 없어서 뺄셈을 하면 이미 낸 회원에게 미납이라고 말하게 된다.';
 
 -- ---------------------------------------------------- my 세션 참가비 state
 create or replace function public.my_activity_fees_v1(
@@ -655,7 +655,7 @@ begin
 end $$;
 
 comment on function public.list_activity_fees_v1(date, date) is
-  '참가비가 정해진 세션 목록과 세션별 납부 인원·수납 합계. 운영진만 호출할 수 있다.';
+  '참가비가 정해진 세션 목록과 세션별 납부 인원. 운영진만 호출할 수 있다. 수납 합계는 넣지 않는다. 사람 수는 다 알 수 있지만 실제로 들어온 돈은 이 데이터베이스가 알지 못한다.';
 
 -- ===========================================================================
 -- WRITES — all staff-only
@@ -773,9 +773,9 @@ begin
 
   -- Deliberately NOT capped at the period's amount. Overpayment happens — a
   -- member pays both halves in one transfer, or rounds up — and a cap would
-  -- refuse to record money the club has actually received. my_dues_summary_v1
-  -- returns a negative balance for it rather than clamping, so the screen can
-  -- show it as credit instead of losing it.
+  -- refuse to record money the club has actually received. What the screen does
+  -- with a paid_amount larger than the due_amount is the screen's business; this
+  -- function's job is not to lose the figure a staffer was given.
 
   insert into public.dues_payments
     (period_id, member_id, amount, paid_on, note, recorded_by)
@@ -795,7 +795,7 @@ begin
 end $$;
 
 comment on function public.set_dues_payment_v1(uuid, uuid, int, date, text) is
-  '한 회원의 반기 회비 납부액을 기록하거나 수정한다. 기간 금액을 넘겨도 받으며 초과분은 잔액이 음수로 나온다. 운영진만 호출할 수 있다.';
+  '한 회원의 반기 회비 납부액을 기록하거나 수정한다. 기간 금액보다 적어도 많아도 그대로 받는다. 운영진만 호출할 수 있다.';
 
 -- ---------------------------------------------- clear a 반기 회비 payment
 create or replace function public.clear_dues_payment_v1(
