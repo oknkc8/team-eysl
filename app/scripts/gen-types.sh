@@ -23,8 +23,19 @@ DB_URL="postgresql://${PGUSER}:${ENC_PW}@${PGHOST}:${PGPORT}/${PGDATABASE}"
 # Recovering it needed a backup somebody had thought to take. Now it needs
 # nothing: on failure the old file is untouched and the exit code says so.
 set -o pipefail
-TMP="$(mktemp)"
+# BESIDE $OUT, NOT IN $TMPDIR. mktemp's default lands in the system temp
+# directory, and on Linux or CI that is usually a different mount from the
+# checkout — so `mv` degrades to copy-then-delete and an interruption partway
+# through leaves database.ts half written, which is the exact failure this
+# rewrite exists to prevent. Same filesystem means the rename is atomic.
+#
+# The mode matters too: mktemp creates 0600, and moving that over a tracked
+# 0644 file silently changes its permissions. Set it before the rename rather
+# than after, so no window exists where the file is in place with the wrong
+# mode.
+TMP="$(mktemp "${OUT}.tmp.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
+chmod 644 "$TMP"
 
 if ! npx --yes supabase@latest gen types typescript --db-url "$DB_URL" > "$TMP"; then
   echo "gen types failed; $OUT left unchanged" >&2
