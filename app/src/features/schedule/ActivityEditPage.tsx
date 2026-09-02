@@ -11,8 +11,11 @@ import {
   deleteActivity,
   getActivity,
   getReservedSeats,
+  clearsExistingTimes,
   KIND_LABEL,
+  kindHasClock,
   saveTrainingDetail,
+  timesForKind,
   updateActivity,
   type Activity,
   type ActivityInput,
@@ -158,7 +161,8 @@ function Refusal({ children }: { children: ReactNode }) {
 // A `time` column comes back as 'HH:MM:SS'; the input wants 'HH:MM' and hands
 // back the same, which Postgres accepts unchanged.
 const toTimeInput = (value: string | null) => value?.slice(0, 5) ?? ''
-const fromTimeInput = (value: string) => (value === '' ? null : value)
+// The reverse direction now lives in kinds.ts as part of timesForKind, so the
+// empty-box rule and the per-kind rule cannot disagree about what '' means.
 const trimToNull = (value: string) => {
   const trimmed = value.trim()
   return trimmed === '' ? null : trimmed
@@ -271,9 +275,25 @@ function ActivityForm({
   // only the form saying which number is in the way.
   const belowReserved =
     reservedSeats !== null && capacityValue !== null && capacityValue < reservedSeats
+  // A 대회 has no clock. The president removed these two boxes for races in
+  // final124 (`race-time-fields-v124.js`), and the reason is in the domain rather
+  // than the UI: a meet occupies a day, and the times that matter are per-event
+  // and live in the entry, not on the activity.
+  //
+  // He hides the wrapper and blanks the inputs from a `change` listener because
+  // he is patching a rendered page. We can simply not render them, which also
+  // means there is no window where a stale value is still in the DOM.
+  //
+  // The rule itself lives in kinds.ts so that "what to render" and "what to
+  // send" below cannot drift apart, and so it is testable without a DOM.
+  const raceHasNoClock = !kindHasClock(kind)
   // An end before a start is the one cross-field rule worth catching here; the
-  // database has no constraint for it.
-  const timesOrdered = startTime === '' || endTime === '' || startTime <= endTime
+  // database has no constraint for it. A race has no times to order, so the rule
+  // is vacuously satisfied rather than checked against values the form is about
+  // to discard — otherwise switching a training with 20:00–19:00 over to 대회
+  // would leave the submit button disabled by boxes nobody can see.
+  const timesOrdered =
+    raceHasNoClock || startTime === '' || endTime === '' || startTime <= endTime
   // Empty is the ordinary case — most activities last a day. The CHECK in the
   // database refuses a backwards range too; this is what keeps a member from
   // meeting that refusal as a raw Postgres error.
@@ -297,8 +317,13 @@ function ActivityForm({
       // An empty box is null, not ''. A `date` column refuses the empty string,
       // and null is what "single day" means everywhere else.
       end_date: endDate === '' ? null : endDate,
-      start_time: fromTimeInput(startTime),
-      end_time: fromTimeInput(endTime),
+      // Null for a race whatever the boxes hold. The form stops rendering them
+      // when the kind flips, but React keeps the state, so a training that was
+      // given times and then switched to 대회 would otherwise save them from a
+      // control the author can no longer see. Deciding at the submit boundary
+      // rather than in an effect keeps "what gets saved" readable in one place —
+      // and means switching the kind back restores the times the user typed.
+      ...timesForKind(kind, startTime, endTime),
       place: trimToNull(place),
       capacity: capacityValue,
       // Merged into whatever the row already holds, never rebuilt: our imported
@@ -422,42 +447,60 @@ function ActivityForm({
           </p>
         )}
 
-        <div style={{ display: 'flex', gap: 9, marginTop: 14 }}>
-          <div style={{ flex: 1 }}>
-            <label htmlFor="activity-start" style={LABEL}>
-              시작 시간
-            </label>
-            <input
-              id="activity-start"
-              type="time"
-              value={startTime}
-              onChange={(e) => {
-                setStartTime(e.target.value)
-                touched()
-              }}
-              style={FIELD}
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label htmlFor="activity-end" style={LABEL}>
-              종료 시간
-            </label>
-            <input
-              id="activity-end"
-              type="time"
-              value={endTime}
-              onChange={(e) => {
-                setEndTime(e.target.value)
-                touched()
-              }}
-              style={FIELD}
-            />
-          </div>
-        </div>
-        {!timesOrdered && (
-          <p role="alert" style={{ fontSize: 12, color: '#a33', margin: '8px 0 0' }}>
-            종료 시간이 시작 시간보다 빠릅니다.
+        {clearsExistingTimes(kind, activity) && (
+          // Not a refusal — 대회 having no clock is the decision. But this row
+          // HAS times, and dropping them during an edit somebody opened to fix a
+          // title is precisely the shape of the president's own worst defect.
+          // The save still goes through; it just stops being silent.
+          <p
+            role="status"
+            style={{ fontSize: 12, color: '#925900', margin: '14px 0 0', lineHeight: 1.5 }}
+          >
+            대회에는 시작·종료 시간이 없습니다. 저장하면 이 일정에 남아 있는 시간(
+            {activity?.start_time?.slice(0, 5) ?? '—'} ~ {activity?.end_time?.slice(0, 5) ?? '—'})이
+            지워집니다.
           </p>
+        )}
+        {!raceHasNoClock && (
+          <>
+            <div style={{ display: 'flex', gap: 9, marginTop: 14 }}>
+              <div style={{ flex: 1 }}>
+                <label htmlFor="activity-start" style={LABEL}>
+                  시작 시간
+                </label>
+                <input
+                  id="activity-start"
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => {
+                    setStartTime(e.target.value)
+                    touched()
+                  }}
+                  style={FIELD}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label htmlFor="activity-end" style={LABEL}>
+                  종료 시간
+                </label>
+                <input
+                  id="activity-end"
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => {
+                    setEndTime(e.target.value)
+                    touched()
+                  }}
+                  style={FIELD}
+                />
+              </div>
+            </div>
+            {!timesOrdered && (
+              <p role="alert" style={{ fontSize: 12, color: '#a33', margin: '8px 0 0' }}>
+                종료 시간이 시작 시간보다 빠릅니다.
+              </p>
+            )}
+          </>
         )}
 
         <label htmlFor="activity-place" style={{ ...LABEL, marginTop: 14 }}>
