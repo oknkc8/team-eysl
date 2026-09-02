@@ -4,7 +4,7 @@
 누가 무엇을 들고 있는지, 어떤 마이그레이션 번호가 나갔는지, 무엇을 왜 그렇게 정했는지,
 그리고 아직 답을 못 받은 질문들.
 
-**마지막 갱신: 2026-09-02 · `origin/dev` = `c9fd126`**
+**마지막 갱신: 2026-09-02 · `origin/dev` = `6318401`** (`#72` 머지 직후)
 
 갱신 규칙은 `CLAUDE.md`의 「Handoff log」 절에 있습니다.
 
@@ -26,7 +26,23 @@ dev 머지          62건 · 열린 PR 1건 (이 문서를 올리는 #73 자신)
 따라가는데 `main` 이 08-26 의 v0.3.0 에 멈춰 있어서, 그 뒤 55커밋이 배포된 적이 없었습니다.
 릴리스 때 `dev` 의 버전이 `0.2.0`, `main` 이 `0.3.0` 으로 어긋나 있던 것도 함께 정리해
 `0.4.0` 으로 맞췄습니다 — 범프가 릴리스 브랜치에서 `main` 으로만 들어가고 `dev` 로 돌아오지
-않아 생긴 차이입니다. `package-lock.json` 도 v0.3.0 이래 `0.2.0` 에 남아 있었고 같이 올렸습니다.
+않아 생긴 차이입니다.
+
+**`package-lock.json` 도 같이 올렸고, 어긋나 있던 쪽은 `dev` 가 아니라 릴리스 라인이었습니다.**
+태그별로 읽으면 이렇습니다.
+
+```
+v0.1.0   package.json 0.1.0   lock 없음
+v0.2.0   package.json 0.2.0   lock 0.1.0
+v0.3.0   package.json 0.3.0   lock 0.1.0     <- 두 번 올라가는 동안 lock 은 그대로
+dev      package.json 0.2.0   lock 0.2.0     <- 여기서는 둘이 맞았다
+v0.4.0   package.json 0.4.0   lock 0.4.0
+```
+
+즉 `dev` 에서는 두 파일이 일치했고, **릴리스 커밋이 `package.json` 만 건드려서** `main` 쪽에서만
+벌어졌습니다. 「dev 의 lock 이 뒤처져 있었다」고 적었다가 리뷰에서 잡혔고, 태그를 하나씩 읽어
+확인했습니다. **어긋남을 발견하면 어느 쪽이 움직였는지까지 봐야 합니다** — 두 값이 다르다는
+것만으로는 범인을 지목할 수 없습니다.
 
 **다만 Deployment Protection 이 Production 까지 걸려 있어 로그인 없이는 열리지 않습니다.**
 대시보드 설정이라 코드로는 못 끕니다. `Settings → Deployment Protection → Disabled`.
@@ -134,9 +150,41 @@ dev 머지          62건 · 열린 PR 1건 (이 문서를 올리는 #73 자신)
 DDL 은 그대로이고 `create or replace` 와 `grant` 만 바뀐 경우라 **함수 구간만 잘라 따로
 적용**했습니다. 파일 전체를 다시 돌리면 `add column` 과 `drop constraint` 가 터집니다.
 
-앞으로 같은 상황이면 셋 중 하나입니다. 함수만 바뀌었으면 그 구간만 적용하고, DDL 이 바뀌었으면
-새 번호로 후속 마이그레이션을 쓰고, 아직 아무 데도 안 나갔으면 대장 행을 지우고 다시 돌립니다.
-**공유 dev DB 이므로 세 번째는 남이 이미 그 위에 쌓았는지 먼저 확인해야 합니다.**
+앞으로 같은 상황이면 셋 중 하나이고, **어느 쪽인지는 「무엇이 바뀌었나」가 정합니다.**
+
+**A. 함수 본문만 바뀐 경우 — 그 구간만 적용합니다.** `create or replace` 와 `grant` 는 몇 번
+실행해도 같으므로 안전합니다. 파일 전체를 다시 돌리면 `add column`·`drop constraint` 가 터집니다.
+
+```bash
+# 파일에서 첫 create or replace 이후만 잘라 낸다
+python3 -c "s=open('app/supabase/migrations/00NN_x.sql').read(); \
+  i=s.find('create or replace function'); open('/tmp/fns.sql','w').write(s[i:])"
+bash app/scripts/psql.sh -v ON_ERROR_STOP=1 --single-transaction -f /tmp/fns.sql
+```
+
+`--single-transaction` 이 중요합니다. 중간에 실패하면 절반만 적용된 상태로 남지 않습니다.
+
+**B. DDL 이 바뀐 경우 — 새 번호로 후속 마이그레이션을 씁니다.** 이미 적용된 파일을 고치는 것이
+아니라, 차이를 메우는 마이그레이션을 하나 더 쓰는 것입니다. 다른 사람이 이미 원래 것을 적용한
+DB 가 있을 수 있으므로 이쪽이 유일하게 안전합니다.
+
+**C. 대장 행 삭제 — 조건이 맞을 때만입니다.** 잘못 쓰면 **이미 적용된 DDL 을 다시 실행**하게
+되고, 공유 dev DB 에서는 남의 작업 위에서 그렇게 됩니다.
+
+```sql
+-- 1. 정확한 version 을 확인한다. migrate.sh 는 번호가 아니라 전체 파일명으로 skip 한다
+select version from public.schema_migrations where version like '00NN%';
+-- 2. 그 마이그레이션의 DDL 이 실제로 적용돼 있는지 본다 (컬럼·제약·인덱스를 직접 확인)
+select column_name from information_schema.columns
+ where table_schema='public' and table_name='<table>';
+```
+
+**2번이 「적용돼 있다」로 나오면 C 는 쓸 수 없습니다.** 행만 지우고 다시 돌리면 그 DDL 이
+두 번째로 실행되어 실패하거나, 더 나쁘게는 성공하면서 다른 것을 덮습니다. C 는 **DDL 이 아직
+적용되지 않았는데 대장 행만 남은 경우** — 즉 A 나 손수 실행이 어긋나게 만든 상태 — 에만
+해당합니다.
+
+그리고 어느 경우든 먼저 **지금 누가 이 DB 를 쓰고 있는지** 확인하십시오. 공유입니다.
 
 **`psql -f`로 마이그레이션을 돌리면 대장에 남지 않습니다. 반드시 `migrate.sh`를 쓰십시오.**
 
@@ -520,15 +568,39 @@ exec zsh          # 지금 셸에도 반영
 있으므로, 잃으면 생성기가 되돌려 주지 않는 것까지 함께 잃습니다.
 
 ```bash
-cp app/src/types/database.ts /tmp/database.ts.bak   # 돌리기 전에 반드시
+# 백업 -> 실행 -> 망가졌으면 복원. 세 줄을 한 세트로 쓰십시오.
+cp app/src/types/database.ts /tmp/database.ts.bak
 cd app && npm run db:types
+# 실패했거나 파일이 짧아졌으면:
+cp /tmp/database.ts.bak app/src/types/database.ts
 ```
 
-Docker 가 없으면 대안은 **손으로 넣는 것**이고, 그 파일은 이미 그렇게 유지되는 예외를 둘
-갖고 있으므로 새로 만드는 관례가 아닙니다. 다만 손으로 넣을 때는 마이그레이션이 아니라
-**라이브 `information_schema`와 대조**하십시오 — `0051` 때 컬럼 nullable 여부가 마이그레이션
-문면과 실제 사이에서 갈릴 수 있다는 것을 확인했고, 실제로 `Tables.attendance`가 낡은 채로
-남아 있던 것을 그렇게 잡았습니다.
+**복원이 필요한지 판단하는 법은 줄 수입니다.** 정상이면 1800줄 언저리이고, 실패하면 1줄이
+됩니다. `wc -l app/src/types/database.ts` 로 즉시 압니다. `/tmp` 는 재부팅에 사라지므로,
+바로 되돌리지 않을 거면 백업을 다른 곳에 두십시오.
+
+**Docker 가 없으면 대안은 손으로 넣는 것**이고, 그 파일은 이미 그렇게 유지되는 예외를 둘 갖고
+있으므로 새로 만드는 관례가 아닙니다. 절차는 이렇습니다.
+
+1. 라이브 DB 에 실제 모양을 묻습니다. **마이그레이션 문면이 아니라 카탈로그입니다.**
+
+```sql
+-- 테이블: 컬럼과 nullable 여부
+select column_name, data_type, is_nullable from information_schema.columns
+ where table_schema='public' and table_name='<table>' order by ordinal_position;
+-- 함수: 인자와 반환 타입
+select pg_get_function_arguments(oid), pg_get_function_result(oid)
+  from pg_proc where proname='<fn>' and pronamespace='public'::regnamespace;
+```
+
+2. `Tables.<t>` 의 `Row`/`Insert`/`Update` 세 곳과 `Functions.<fn>` 을 **함께** 고칩니다.
+   `0051` 때 `Functions` 만 고치고 `Tables.attendance` 를 빠뜨렸고, 그다음 라운드에서
+   `Functions.attendance_for_activity_v1` 의 반환 타입을 또 빠뜨렸습니다. 한 번에 하나씩
+   고치면 매번 하나가 남습니다.
+
+3. 고친 뒤 **타입체크만으로는 확인되지 않는다는 것**을 기억하십시오. `getRoster` 처럼 결과를
+   캐스트하는 호출부가 있으면 틀린 타입도 조용히 통과합니다. 캐스트하는 곳을 먼저 찾아
+   그쪽 기대값과 대조하는 편이 빠릅니다.
 
 **`.env`가 둘입니다** — 둘 다 git-ignored라 새 체크아웃에 없습니다.
 
