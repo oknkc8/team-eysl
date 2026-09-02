@@ -111,26 +111,11 @@ export async function markNameAttendance(input: {
   if (error) throw error
 }
 
-/**
- * Attach a name-only register row to the member it turned out to be.
- *
- * Merges rather than updates. If that member already has a row for the same
- * activity — the ordinary state of any training marked on paper AND in the app —
- * a bare update would raise 23505 against `attendance_one_row_per_member`. The
- * function keeps the member's row and discards the paper copy.
- */
-export async function linkNameToMember(input: {
-  activityId: string
-  displayName: string
-  memberId: string
-}) {
-  const { error } = await supabase.rpc('attendance_link_name_v1', {
-    p_activity_id: input.activityId,
-    p_display_name: input.displayName,
-    p_member_id: input.memberId,
-  })
-  if (error) throw error
-}
+// `attendance_link_name_v1` (0051) attaches a name-only row to the member it
+// turned out to be, merging when that member already has a row for the same
+// activity. Its wrapper is deliberately NOT here yet: nothing calls it, and an
+// exported function with no caller is a claim the next reader has to check.
+// It arrives with the screen that uses it.
 
 // Takes no member id — the server derives it from the session.
 export async function getMyHistory(): Promise<HistoryRow[]> {
