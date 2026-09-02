@@ -165,6 +165,144 @@ describe('dedupeRecords', () => {
   })
 })
 
+describe('double-count guard', () => {
+  it('runs inside the transaction and before anything is written', () => {
+    const out = sql()
+    const guard = out.indexOf('-- Double-count guard.')
+    expect(guard).toBeGreaterThan(-1)
+    // Inside, so a refusal aborts rather than leaving half an import behind.
+    expect(out.indexOf('begin;')).toBeLessThan(guard)
+    expect(guard).toBeLessThan(out.indexOf('commit;'))
+    // Before every write, the temp table included.
+    expect(guard).toBeLessThan(out.indexOf('create temporary table _imp_ctx'))
+    expect(guard).toBeLessThan(out.indexOf('insert into public.members'))
+  })
+
+  it('reads both counters, since 0016 adds both', () => {
+    // 0016:154-157 computes legacy_present + count(present|late) AND
+    // legacy_late + count(late). Checking only the attendance column would pass
+    // a member whose LATE total is the one already counted, and a doubled 지각왕
+    // is small enough to stay plausible — so it would never be questioned.
+    //
+    // Exercised against the live database on 2026-09-03, all three cases, each
+    // inside a rolled-back transaction: (0, 7) raises, (7, 0) raises, (0, 0)
+    // passes and reaches the echo after the block. The last one matters — a
+    // guard that refuses everything would satisfy the first two.
+    const out = sql()
+    expect(out).toContain('coalesce(m.historical_attendance_count_legacy, 0)')
+    expect(out).toContain('+ coalesce(m.historical_late_count_legacy, 0) <> 0;')
+    // The comparison is on the SUM. Were it on either column alone, one of the
+    // two single-counter cases above would pass.
+    expect(out).not.toContain('historical_attendance_count_legacy, 0) <> 0')
+  })
+
+  it('keys on the same lowercased nickname the attendance insert joins on', () => {
+    // A guard keyed differently from the write it guards passes exactly the
+    // rows the write then loads.
+    const out = sql()
+    expect(out).toContain('where lower(m.nickname) in (')
+    expect(out).toContain('join public.members m on lower(m.nickname) = lower(v.nickname)')
+  })
+
+  it('names the members rather than only saying that some exist', () => {
+    const out = sql()
+    expect(out).toContain("select string_agg(m.nickname, ', ' order by m.nickname)")
+    expect(out).toMatch(/raise exception 'refusing to import: the attendance grid names/)
+  })
+
+  it('emits nothing at all when there is no attendance to load', () => {
+    // No grid, nothing to double-count. An unconditional guard would emit an
+    // `in ()` that does not parse.
+    const out = toSql({
+      members: [],
+      trainings: [],
+      attendance: [],
+      meets: [],
+      relays: [],
+      warnings: [],
+      records: [record()],
+    })
+    expect(out).not.toContain('-- Double-count guard.')
+    expect(out).not.toContain('lower(m.nickname) in (')
+  })
+
+  it('escapes a nickname rather than ending the literal', () => {
+    const out = toSql({
+      members: [],
+      trainings: [{ date: '2026-01-03', half: 'H1', label: '1월 3일' }],
+      attendance: [{ date: '2026-01-03', nickname: "O'Brien", status: 'present' }],
+      meets: [],
+      relays: [],
+      warnings: [],
+      records: [],
+    })
+    expect(out).toContain("'o''brien'")
+  })
+})
+
+describe('identity-drift guard', () => {
+  it('runs inside the transaction and before anything is written', () => {
+    const out = sql()
+    const guard = out.indexOf('-- Identity-drift guard.')
+    expect(guard).toBeGreaterThan(-1)
+    expect(out.indexOf('begin;')).toBeLessThan(guard)
+    expect(guard).toBeLessThan(out.indexOf('create temporary table _imp_ctx'))
+    expect(guard).toBeLessThan(out.indexOf('insert into public.members'))
+  })
+
+  it('matches on real name AND birth date, not either alone', () => {
+    // real_name is editable through set_my_real_name, so it is not by itself a
+    // safe identity. Requiring both is what keeps a member who corrected their
+    // own name from being reported as a duplicate of themselves.
+    const out = sql()
+    expect(out).toContain('on m.real_name = v.real_name')
+    expect(out).toContain('and m.birth_date_text = v.birth_date_text')
+    expect(out).toContain('and lower(m.nickname) <> lower(v.nickname)')
+  })
+
+  it('ignores sheet rows whose nickname is already a member', () => {
+    // Those rows hit `on conflict (lower(nickname)) do nothing` and cannot
+    // produce a second copy. Without this clause the guard fires on every run
+    // for the pair that legitimately shares a short name.
+    expect(sql()).toContain('where not exists (select 1 from public.members e')
+  })
+
+  it('says what to do rather than only that something is wrong', () => {
+    const out = sql()
+    expect(out).toMatch(/raise exception 'refusing to import: the sheet names member\(s\)/)
+    expect(out).toContain('rename the existing member')
+  })
+
+  it('emits nothing when no member carries both fields', () => {
+    const out = toSql({
+      members: [
+        {
+          no: 1,
+          nickname: '일',
+          sourceRow: 5,
+          shortName: '일',
+          realName: '',
+          birthYear: 1998,
+          birthDateText: '',
+          gender: '남',
+          joinDateText: '',
+          joinReason: '',
+          lessonLevel: '',
+          swimExperience: '',
+          notes: '',
+        },
+      ],
+      trainings: [],
+      attendance: [],
+      meets: [],
+      relays: [],
+      warnings: [],
+      records: [],
+    })
+    expect(out).not.toContain('-- Identity-drift guard.')
+  })
+})
+
 describe('verification', () => {
   it('reads the counts back after committing', () => {
     const out = sql()

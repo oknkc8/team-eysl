@@ -1,6 +1,10 @@
 // CLI: club workbook in, idempotent SQL out.
 //
-//   node scripts/import/run.ts <workbook.xlsx> [--year=2026] [--summary]
+//   node scripts/import/run.ts [<workbook.xlsx>|<url>] [--year=2026] [--summary]
+//
+// With no argument the source is the published sheet named by
+// EYSL_WORKBOOK_SHEET_ID in ./.env — see source.ts for why the id lives there
+// and not in this repository.
 //
 // SQL goes to stdout so it can be piped into psql; the summary and every
 // warning go to stderr so the two never mix. --summary parses and reports
@@ -8,21 +12,27 @@
 //
 // Run through scripts/import-club-workbook.sh rather than by hand: that wrapper
 // sources _env.sh, whose project allowlist is what keeps club data out of the
-// president's live database.
+// president's live database, and whose .env supplies the sheet id.
 //
 // Nothing here writes a file. The generated SQL carries real names and birth
 // dates, and this repository is public — so it exists only as a pipe.
 
 import { readFileSync } from 'node:fs'
 import { parseClubWorkbook } from './parse.ts'
+import { fetchWorkbook, resolveSource } from './source.ts'
 import { dedupeRecords, toSql } from './toSql.ts'
 
-function main(argv: string[]): number {
+async function main(argv: string[]): Promise<number> {
   const args = argv.slice(2)
-  const path = args.find((a) => !a.startsWith('--'))
-  if (!path) {
+  const positional = args.find((a) => !a.startsWith('--'))
+
+  let source
+  try {
+    source = resolveSource(positional, process.env)
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`)
     process.stderr.write(
-      'usage: node scripts/import/run.ts <workbook.xlsx> [--year=2026] [--summary]\n',
+      'usage: node scripts/import/run.ts [<workbook.xlsx>|<url>] [--year=2026] [--summary]\n',
     )
     return 2
   }
@@ -34,12 +44,21 @@ function main(argv: string[]): number {
     return 2
   }
 
-  const file = readFileSync(path)
-  // Hand XLSX its own bytes rather than the pooled Node Buffer: readFileSync can
-  // return a view into a shared ArrayBuffer, and passing that whole buffer would
-  // give the reader bytes belonging to somebody else's allocation.
-  const bytes = new Uint8Array(file.byteLength)
-  bytes.set(file)
+  let bytes: Uint8Array
+  if (source.kind === 'url') {
+    // fetchWorkbook already copies, and refuses a non-200 or a body that is not
+    // a zip — a Google error page is HTML, and SheetJS given HTML fails as
+    // "corrupt workbook" rather than as "wrong URL".
+    process.stderr.write(`fetching ${source.label}…\n`)
+    bytes = await fetchWorkbook(source.url)
+  } else {
+    const file = readFileSync(source.path)
+    // Hand XLSX its own bytes rather than the pooled Node Buffer: readFileSync can
+    // return a view into a shared ArrayBuffer, and passing that whole buffer would
+    // give the reader bytes belonging to somebody else's allocation.
+    bytes = new Uint8Array(file.byteLength)
+    bytes.set(file)
+  }
 
   const data = parseClubWorkbook(
     bytes,
@@ -82,10 +101,14 @@ function main(argv: string[]): number {
   process.stderr.write(lines.join('\n'))
 
   if (!args.includes('--summary')) {
-    process.stdout.write(toSql(data, { sourceLabel: path.split('/').pop() ?? path }))
+    process.stdout.write(toSql(data, { sourceLabel: source.label }))
   }
 
   return 0
 }
 
-process.exitCode = main(process.argv)
+// Top-level await rather than .then(): a throw inside main — DuplicateRecordError,
+// a refused fetch — has to keep reaching stderr as a stack and a non-zero exit,
+// and a rejected promise assigned to process.exitCode would exit 0 with the
+// SQL half-written.
+process.exitCode = await main(process.argv)

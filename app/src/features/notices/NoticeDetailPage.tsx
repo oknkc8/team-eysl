@@ -13,6 +13,7 @@ import {
   listComments,
   type NoticeAttachment,
 } from './api'
+import { NoticePoll } from './NoticePoll'
 import { formatRelative } from './relativeTime'
 
 export function NoticeDetailPage() {
@@ -53,6 +54,11 @@ export function NoticeDetailPage() {
         )}
       </AsyncSection>
 
+      {/* Above 첨부파일 and 댓글, where his own client puts it: a poll is
+          something to answer, and burying it under the comment thread means it
+          is read after people have already stopped scrolling. Renders nothing
+          at all when the notice has no poll. */}
+      <NoticePoll noticeId={noticeId} />
       <Attachments noticeId={noticeId} />
       <Comments noticeId={noticeId} />
     </div>

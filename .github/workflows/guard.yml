@@ -128,6 +128,39 @@ jobs:
           fi
           echo "ok: no secret-shaped strings"
 
+      - name: No Google Sheet id, which is a credential here
+        run: |
+          # EYSL_WORKBOOK_SHEET_ID is a secret and does not look like one.
+          #
+          # It is a plain alphanumeric string with no prefix, so the key-shape
+          # check above cannot see it, and the spreadsheet check only catches a
+          # committed FILE. But the sheet is published: its export URL takes no
+          # authentication, so anyone holding the id downloads the whole club
+          # workbook — forty real people's names, birth dates and phone numbers.
+          # Publishing the id is publishing the workbook, one step removed.
+          #
+          # The id cannot be written into this file to search for it, because
+          # writing it here IS the leak. So this matches the two shapes it can
+          # only appear in: a Sheets URL carrying a document id, and the env
+          # variable carrying a non-empty value.
+          #
+          # .env.example is deliberately in scope. It is the one env file that is
+          # meant to be committed, which makes it the likeliest place for someone
+          # to paste a real value while "filling in the example".
+          if git grep -nIE 'docs\.google\.com/spreadsheets/d/[A-Za-z0-9_-]{20,}' \
+               -- . ':!.github/workflows/guard.yml'; then
+            echo "::error::A Google Sheets document id is committed."
+            echo "::error::That URL needs no login and downloads the club workbook."
+            exit 1
+          fi
+          if git grep -nIE 'EYSL_WORKBOOK_SHEET_ID[[:space:]]*=[[:space:]]*[A-Za-z0-9_-]{10,}' \
+               -- . ':!.github/workflows/guard.yml'; then
+            echo "::error::EYSL_WORKBOOK_SHEET_ID is committed with a value."
+            echo "::error::It belongs in .env only; .env.example keeps the name and an empty value."
+            exit 1
+          fi
+          echo "ok: no sheet id"
+
   production-isolation:
     runs-on: ubuntu-latest
     steps:

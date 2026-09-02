@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AsyncSection, Shimmer } from '../../components/ui/AsyncSection'
 import { RaceEntryCard } from './RaceEntryCard'
+import { RaceAttachments } from './RaceAttachments'
 import { SaveState } from '../../components/ui/SaveState'
 import { useCurrentUser } from '../auth/useCurrentUser'
 import { canEditActivity } from './permissions'
@@ -171,6 +172,12 @@ function ActivityBody({ entry, activityId }: { entry: ScheduleEntry; activityId:
       </article>
 
       <TrainingDetailCard detail={activity.detail} />
+
+      {/* 요강 and 편성표, for a 대회 only — 0054's RPCs refuse any other kind, so
+          offering the control elsewhere would be a button that cannot work.
+          Shown for a past 대회 too: the 편성표 is what somebody comes back to
+          when they are checking a result against the heat they swam. */}
+      {activity.kind === 'race' && <RaceAttachments activityId={activityId} />}
 
       <div style={{ marginTop: 14 }}>
         {isPast ? (

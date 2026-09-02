@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 # Import the club master workbook into the dev database.
 #
-#   bash scripts/import-club-workbook.sh <workbook.xlsx>              apply
-#   bash scripts/import-club-workbook.sh <workbook.xlsx> --summary    parse only
+#   bash scripts/import-club-workbook.sh                              apply, from the sheet
+#   bash scripts/import-club-workbook.sh --summary                    parse only, from the sheet
+#   bash scripts/import-club-workbook.sh <workbook.xlsx>              apply, from a file
+#   bash scripts/import-club-workbook.sh <url> --summary              parse only, from a URL
+#
+# WITH NO ARGUMENT the source is the published sheet named by
+# EYSL_WORKBOOK_SHEET_ID in ./.env, which _env.sh sources below. The id is not
+# in this repository and must not be put here: the export URL takes no
+# credentials, so the id is the only thing standing between a public repo and
+# forty people's names, birth dates and phone numbers. See scripts/import/source.ts.
 #
 # THERE IS NO --print. It existed to eyeball the generated SQL, and that SQL
 # carries every member's name and birth date in plain text — so its whole job
@@ -32,16 +40,32 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-WORKBOOK="${1:-}"
-if [ -z "$WORKBOOK" ]; then
-  echo "usage: bash scripts/import-club-workbook.sh <workbook.xlsx> [--summary|--print]" >&2
-  exit 2
-fi
-if [ ! -f "$WORKBOOK" ]; then
-  echo "error: $WORKBOOK not found" >&2
-  exit 1
-fi
-shift
+# The workbook, if one was named. Empty means "the sheet in .env", which run.ts
+# resolves — the wrapper deliberately does not build that URL itself, so there
+# is one place that knows how.
+WORKBOOK=""
+case "${1:-}" in
+  '') ;;                       # nothing at all: the sheet
+  --*) ;;                      # only options: also the sheet, leave them for the loop
+  http://*|https://*)
+    WORKBOOK="$1"; shift ;;
+  *)
+    if [ ! -f "$1" ]; then
+      echo "error: $1 not found (and it is not an http(s) URL)" >&2
+      exit 1
+    fi
+    WORKBOOK="$1"; shift ;;
+esac
+
+# One place that decides whether a positional argument is passed on, so `set -u`
+# never meets an empty "$WORKBOOK" that node would read as an empty path.
+run_import() {
+  if [ -n "$WORKBOOK" ]; then
+    node "$SCRIPT_DIR/import/run.ts" "$WORKBOOK" "$@"
+  else
+    node "$SCRIPT_DIR/import/run.ts" "$@"
+  fi
+}
 
 MODE=apply
 for arg in "$@"; do
@@ -60,12 +84,12 @@ done
 case "$MODE" in
   summary)
     # Parses and reports without emitting SQL, and without connecting.
-    node "$SCRIPT_DIR/import/run.ts" "$WORKBOOK" --summary
+    run_import --summary
     ;;
   apply)
     # Straight down a pipe into psql: the SQL is never a file, not even briefly.
     # pipefail is set by _env.sh, so a parser failure fails the pipeline rather
     # than feeding psql a truncated script.
-    node "$SCRIPT_DIR/import/run.ts" "$WORKBOOK" | psql -v ON_ERROR_STOP=1 -X -f -
+    run_import | psql -v ON_ERROR_STOP=1 -X -f -
     ;;
 esac

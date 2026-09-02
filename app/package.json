@@ -18,7 +18,9 @@
     "test:e2e:ui": "playwright test --ui",
     "db:psql": "bash scripts/psql.sh",
     "db:migrate": "bash scripts/migrate.sh",
-    "db:types": "bash scripts/gen-types.sh"
+    "db:types": "bash scripts/gen-types.sh",
+    "db:import": "bash scripts/import-club-workbook.sh",
+    "db:import:verify": "bash scripts/import/verify-idempotence.sh"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.4",
