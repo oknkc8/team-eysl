@@ -42,6 +42,10 @@ import { StrokeRankingPage } from '../features/events/StrokeRankingPage'
 import { ChatPage } from '../features/chat/ChatPage'
 import { DmPage } from '../features/chat/DmPage'
 import { NotificationSettingsPage } from '../features/push/NotificationSettingsPage'
+import { MyDuesPage } from '../features/dues/MyDuesPage'
+import { DuesAdminPage } from '../features/dues/DuesAdminPage'
+import { SessionFeeAdminPage } from '../features/dues/SessionFeeAdminPage'
+import { SessionFeeRosterPage } from '../features/dues/SessionFeeRosterPage'
 import { BoardListPage } from '../features/board/BoardListPage'
 import { BoardDetailPage } from '../features/board/BoardDetailPage'
 import { BoardEditPage } from '../features/board/BoardEditPage'
@@ -107,6 +111,12 @@ export const router = createBrowserRouter([
           // the whole gate this route needs.
           { path: '/mypage', element: <MyPage /> },
           { path: '/attendance', element: <MyAttendancePage /> },
+          // 내 회비. Both RPCs behind it (my_dues_summary_v1, my_activity_fees_v1)
+          // take no member id and derive the caller from the session, so there is
+          // no URL that reaches somebody else's dues and RequireAuth is the whole
+          // gate this route needs — the same reasoning as /activity and
+          // /schedule/mine above.
+          { path: '/dues', element: <MyDuesPage /> },
           // 월간 활동 요약, his `#activity` page. Every approved member reads
           // their own month and my_monthly_activity_v1 (0034) takes no member id,
           // so RequireAuth is the whole gate — the server cannot be asked for
@@ -251,6 +261,25 @@ export const router = createBrowserRouter([
               // screen asks is_staff() itself and prints a Korean refusal rather
               // than rendering one member's history as if it were the club's.
               { path: '/admin/applications', element: <ApplicationAdminPage /> },
+              // 회비 관리. RequireStaff rather than RequireMasterAdmin: every RPC
+              // behind these three gates on is_staff(), so a master-admin-only
+              // route would keep an 운영진 off screens the database answers for
+              // them — the mismatch that put the record screens under the wrong
+              // guard until RequireRecordManager was added.
+              //
+              // Presentation, like every guard in this tree. dues_period_roster_v1
+              // and its siblings raise 42501 themselves rather than returning an
+              // empty roster, so a member who types the URL meets a refusal and
+              // never a club where nobody appears to owe anything.
+              { path: '/admin/dues', element: <DuesAdminPage /> },
+              // `sessions` plural is a literal sibling of /admin/dues, and the
+              // roster below hangs off it by activity id. Two literal segments
+              // before the parameter, so ranked matching never has to choose.
+              { path: '/admin/dues/sessions', element: <SessionFeeAdminPage /> },
+              {
+                path: '/admin/dues/sessions/:activityId',
+                element: <SessionFeeRosterPage />,
+              },
               // 기록 추가 · 결과지 업로드 · 결과지 목록 moved to RequireRecordManager
               // below. They were here, and that was the bug: can_manage_records()
               // admits a 코치 and isStaff() does not, so a coach the database trusts
