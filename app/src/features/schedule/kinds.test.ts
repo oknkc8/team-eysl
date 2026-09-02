@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { ACTIVITY_KINDS, KIND_LABEL, kindHasClock, toKind } from './kinds'
+import {
+  ACTIVITY_KINDS,
+  clearsExistingTimes,
+  KIND_LABEL,
+  kindHasClock,
+  timesForKind,
+  toKind,
+} from './kinds'
 
 describe('kindHasClock', () => {
   it('gives 훈련 and 기타 a clock', () => {
@@ -24,6 +31,66 @@ describe('kindHasClock', () => {
     const withClock = ACTIVITY_KINDS.filter(kindHasClock)
     expect(withClock).toEqual(ACTIVITY_KINDS.filter((k) => k !== 'race'))
     expect(withClock).not.toContain('race')
+  })
+})
+
+describe('timesForKind', () => {
+  it('keeps the typed times for a kind that has a clock', () => {
+    expect(timesForKind('training', '19:00', '20:30')).toEqual({
+      start_time: '19:00',
+      end_time: '20:30',
+    })
+    expect(timesForKind('event', '10:00', '')).toEqual({ start_time: '10:00', end_time: null })
+  })
+
+  it('reads an empty box as null, not as an empty string', () => {
+    // A `time` column refuses '', so this is not cosmetic — it is the difference
+    // between "no end time" and a 400 from PostgREST.
+    expect(timesForKind('training', '', '')).toEqual({ start_time: null, end_time: null })
+  })
+
+  // The half nobody sees, and the reason this function was pulled out of the
+  // form. Hiding the inputs is visible on screen; sending null is visible only
+  // in the row afterwards. A member fills in a training's times, switches the
+  // kind to 대회, and saves — React still holds '19:00' in state.
+  it('sends null for a race even when the form still holds times', () => {
+    expect(timesForKind('race', '19:00', '20:30')).toEqual({
+      start_time: null,
+      end_time: null,
+    })
+  })
+
+  // And the state is kept rather than cleared, so switching back restores what
+  // the user typed. This asserts the pair: the same two inputs give times again
+  // the moment the kind has a clock.
+  it('gives the times back when the kind changes away from 대회', () => {
+    expect(timesForKind('training', '19:00', '20:30').start_time).toBe('19:00')
+  })
+})
+
+describe('clearsExistingTimes', () => {
+  const withTimes = { start_time: '09:00:00', end_time: '17:00:00' }
+  const withoutTimes = { start_time: null, end_time: null }
+
+  // The finding this answers: a 대회 that already has times loses them when
+  // somebody edits the title. The save still happens — 대회 having no clock is
+  // the decision — but the screen has to say so first.
+  it('is true for a race whose row still has times', () => {
+    expect(clearsExistingTimes('race', withTimes)).toBe(true)
+    expect(clearsExistingTimes('race', { start_time: '09:00:00', end_time: null })).toBe(true)
+  })
+
+  it('is false when there is nothing to lose', () => {
+    expect(clearsExistingTimes('race', withoutTimes)).toBe(false)
+    // Creating: no existing row at all.
+    expect(clearsExistingTimes('race', undefined)).toBe(false)
+  })
+
+  // A kind that keeps its clock never warns, however the row looks — otherwise
+  // every training edit would carry a notice about times it is about to keep.
+  it('is false for any kind that has a clock', () => {
+    expect(clearsExistingTimes('training', withTimes)).toBe(false)
+    expect(clearsExistingTimes('event', withTimes)).toBe(false)
   })
 })
 

@@ -9,7 +9,7 @@ import { dedupeRaceHistory, type RaceHistoryRow } from './raceHistory'
 // The kind vocabulary lives in kinds.ts, which imports nothing: this module
 // loads the Supabase client at import time, so anything testable had to move out
 // from under it. Re-exported so call sites keep a single import.
-export { ACTIVITY_KINDS, KIND_LABEL, kindHasClock, toKind } from './kinds'
+export { ACTIVITY_KINDS, clearsExistingTimes, KIND_LABEL, kindHasClock, timesForKind, toKind } from './kinds'
 export type { ActivityKind } from './kinds'
 export type { TrainingDetail } from './trainingDetail'
 import { toTrainingDetail, type TrainingDetail } from './trainingDetail'

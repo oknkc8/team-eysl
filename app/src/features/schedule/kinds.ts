@@ -52,3 +52,46 @@ export function toKind(value: string): ActivityKind {
 export function kindHasClock(kind: ActivityKind): boolean {
   return kind !== 'race'
 }
+
+/**
+ * What actually goes in `start_time`/`end_time` for this kind.
+ *
+ * Out here rather than inline in the form because it is the half nobody sees.
+ * Hiding two inputs is visible the moment you look at the screen; sending null
+ * for them is visible only in the row afterwards, and a review can only check it
+ * by reading. Extracted so a test can ask the question directly.
+ *
+ * Takes the raw input strings — 'HH:MM' or '' — and returns the column values,
+ * so the conversion and the kind rule cannot disagree about what empty means.
+ */
+export function timesForKind(
+  kind: ActivityKind,
+  startInput: string,
+  endInput: string,
+): { start_time: string | null; end_time: string | null } {
+  if (!kindHasClock(kind)) return { start_time: null, end_time: null }
+  return {
+    start_time: startInput === '' ? null : startInput,
+    end_time: endInput === '' ? null : endInput,
+  }
+}
+
+/**
+ * Whether saving would drop times this activity already has.
+ *
+ * A 대회 always saves null, which is the ported product decision — but doing it
+ * to a row that HAS times, during an edit the author opened to change the title,
+ * is the shape this project keeps getting bitten by: the president's own
+ * `registerSchedule` destroys a backfilled attendance register exactly that way.
+ *
+ * So the rule stays and the silence goes. The form asks this and says so before
+ * the save. No row in the dev database currently has times on a 대회 — 0 of 14 —
+ * so this is a guard against a state we can reach rather than one we are in.
+ */
+export function clearsExistingTimes(
+  kind: ActivityKind,
+  existing: { start_time: string | null; end_time: string | null } | undefined,
+): boolean {
+  if (kindHasClock(kind)) return false
+  return !!existing && (existing.start_time !== null || existing.end_time !== null)
+}

@@ -11,9 +11,11 @@ import {
   deleteActivity,
   getActivity,
   getReservedSeats,
+  clearsExistingTimes,
   KIND_LABEL,
   kindHasClock,
   saveTrainingDetail,
+  timesForKind,
   updateActivity,
   type Activity,
   type ActivityInput,
@@ -159,7 +161,8 @@ function Refusal({ children }: { children: ReactNode }) {
 // A `time` column comes back as 'HH:MM:SS'; the input wants 'HH:MM' and hands
 // back the same, which Postgres accepts unchanged.
 const toTimeInput = (value: string | null) => value?.slice(0, 5) ?? ''
-const fromTimeInput = (value: string) => (value === '' ? null : value)
+// The reverse direction now lives in kinds.ts as part of timesForKind, so the
+// empty-box rule and the per-kind rule cannot disagree about what '' means.
 const trimToNull = (value: string) => {
   const trimmed = value.trim()
   return trimmed === '' ? null : trimmed
@@ -317,11 +320,10 @@ function ActivityForm({
       // Null for a race whatever the boxes hold. The form stops rendering them
       // when the kind flips, but React keeps the state, so a training that was
       // given times and then switched to 대회 would otherwise save them from a
-      // control the author can no longer see. Clearing at the submit boundary
+      // control the author can no longer see. Deciding at the submit boundary
       // rather than in an effect keeps "what gets saved" readable in one place —
       // and means switching the kind back restores the times the user typed.
-      start_time: raceHasNoClock ? null : fromTimeInput(startTime),
-      end_time: raceHasNoClock ? null : fromTimeInput(endTime),
+      ...timesForKind(kind, startTime, endTime),
       place: trimToNull(place),
       capacity: capacityValue,
       // Merged into whatever the row already holds, never rebuilt: our imported
@@ -445,6 +447,20 @@ function ActivityForm({
           </p>
         )}
 
+        {clearsExistingTimes(kind, activity) && (
+          // Not a refusal — 대회 having no clock is the decision. But this row
+          // HAS times, and dropping them during an edit somebody opened to fix a
+          // title is precisely the shape of the president's own worst defect.
+          // The save still goes through; it just stops being silent.
+          <p
+            role="status"
+            style={{ fontSize: 12, color: '#925900', margin: '14px 0 0', lineHeight: 1.5 }}
+          >
+            대회에는 시작·종료 시간이 없습니다. 저장하면 이 일정에 남아 있는 시간(
+            {activity?.start_time?.slice(0, 5) ?? '—'} ~ {activity?.end_time?.slice(0, 5) ?? '—'})이
+            지워집니다.
+          </p>
+        )}
         {!raceHasNoClock && (
           <>
             <div style={{ display: 'flex', gap: 9, marginTop: 14 }}>
